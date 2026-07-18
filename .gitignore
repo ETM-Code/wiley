@@ -1,0 +1,10 @@
+node_modules/
+out/
+release/
+coverage/
+.env
+.board-ai/
+.DS_Store
+*.log
+test-results/
+playwright-report/
