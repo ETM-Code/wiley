@@ -223,7 +223,46 @@ Notes on the pieces:
 
 The voice model's tool calls land here:
 
-Every task automatically carries the voice transcript, so pi sees the whole exchange by default and can catch the voice model summarizing badly. Two rules: never re-append transcript pi has already seen (earlier attachments are still in its session context), and cap any single attachment at 750,000 characters:
+Every task automatically carries the voice transcript, so pi sees the whole exchange by default and can catch the voice model summarizing badly. Two rules: never re-append transcript pi has already seen (earlier attachments are still in its session context), and cap any single attachment at 750,000 characters.
+
+One piece of plumbing is load-bearing here: **all deliveries into the main session go through a single-flight lock.** Deliveries arrive concurrently (the user speaks while a subagent finishes; two subagents finish together), and interleaved `abort()` + `prompt()` calls would throw pi's "already processing" error and silently drop a message. The lock covers only the delivery window (abort + prompt acceptance, via `preflightResult`), never the run itself, so interruption still works:
+
+```typescript
+// main/agent.ts
+let mainLock: Promise<unknown> = Promise.resolve();
+function withMainLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = mainLock.then(fn, fn);
+  mainLock = run.catch(() => {});
+  return run;
+}
+
+// Resolves at prompt ACCEPTANCE, not run completion; the run continues after.
+function promptAccepted(session: AgentSession, text: string, opts?: object): Promise<void> {
+  return new Promise((accepted) => {
+    void session.prompt(text, { ...opts, preflightResult: () => accepted() });
+  });
+}
+
+// The one entry point for everything entering the main session: user tasks,
+// subagent results, subagent questions. Interrupt-first by default.
+export function injectMain(
+  session: AgentSession,
+  origin: string, // e.g. "[new user message]", "[update from your own background work]"
+  text: string,
+  opts?: { queue?: boolean },
+): Promise<void> {
+  return withMainLock(async () => {
+    if (session.isStreaming && opts?.queue) {
+      await promptAccepted(session, text, { streamingBehavior: "steer" });
+    } else if (session.isStreaming) {
+      await session.abort();
+      await promptAccepted(session, `${INTERRUPT_NOTE}\n${origin}\n${text}`);
+    } else {
+      await promptAccepted(session, text);
+    }
+  });
+}
+```
 
 ```typescript
 // Every interrupted agent, at every layer, gets the same discipline: know you
@@ -238,13 +277,19 @@ export const INTERRUPT_NOTE =
 const MAX_TRANSCRIPT_CHARS = 750_000;
 let transcriptCursor = 0; // how many transcript entries pi has already seen
 
-// Send a task to the agent. Resolves when the agent goes idle.
+// Send a task to the agent. Interrupts in-progress work by default: the user
+// spoke, and nothing waits for tasks to finish. The aborted turn stays in the
+// session, so no context is lost; the agent verifies what its cut-off action
+// did, triages, and resumes whatever still matters. queue=true opts into
+// non-interrupting delivery after the current turn.
 export async function runTask(session: AgentSession, task: string, opts?: { queue?: boolean }) {
   const transcript = getVoiceTranscript();
   let fresh = transcript.slice(transcriptCursor);
   transcriptCursor = transcript.length;
 
-  // Cap by dropping oldest entries before stringifying, so the JSON stays valid.
+  // Cap by dropping oldest entries before stringifying, so the JSON stays
+  // valid. Dropped entries are gone for good (resending them later, out of
+  // order, would be worse); at 750k chars this should not fire in practice.
   while (fresh.length > 1 && JSON.stringify(fresh).length > MAX_TRANSCRIPT_CHARS) {
     fresh = fresh.slice(Math.ceil(fresh.length / 10));
   }
@@ -258,19 +303,7 @@ export async function runTask(session: AgentSession, task: string, opts?: { queu
     "</voice_conversation_context>",
   ].join("\n");
 
-  if (session.isStreaming && opts?.queue) {
-    // Opt-in queueing: delivered after the current turn's tool calls finish.
-    await session.prompt(message, { streamingBehavior: "steer" });
-  } else if (session.isStreaming) {
-    // Default: interrupt NOW. The user spoke; nothing waits for tasks to
-    // finish. The aborted turn stays in the session, so no context is lost;
-    // the agent verifies what its cut-off action did, triages, and resumes
-    // whatever still matters.
-    await session.abort();
-    await session.prompt(`${INTERRUPT_NOTE}\n[new user message]\n${message}`);
-  } else {
-    await session.prompt(message);
-  }
+  await injectMain(session, "[new user message]", message, opts);
 }
 ```
 
@@ -549,8 +582,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { pushToVoice, askViaVoice } from "./voice-bridge";
 
-export const voiceTools = [
-  defineTool({
+export const tellUserTool = defineTool({
     name: "tell_user",
     label: "Tell User",
     description:
@@ -563,9 +595,9 @@ export const voiceTools = [
       pushToVoice(`[agent progress] ${params.message}`, { interrupt: params.interrupt });
       return { content: [{ type: "text", text: "Narrated to user." }], details: {} };
     },
-  }),
+});
 
-  defineTool({
+export const askUserTool = defineTool({
     name: "ask_user",
     label: "Ask User",
     description:
@@ -577,15 +609,18 @@ export const voiceTools = [
       const answer = await askViaVoice(params.question, signal);
       return { content: [{ type: "text", text: `User answered: ${answer}` }], details: {} };
     },
-  }),
-];
+});
+
+export const voiceTools = [tellUserTool, askUserTool];
 ```
 
 The bridge behind these (`main/voice-bridge.ts`) talks to the renderer's realtime data channel over IPC. This is small but load-bearing, so here it is in full:
 
 ```typescript
 // main/voice-bridge.ts
-let pendingAnswer: { finish: (answer: string) => void } | null = null;
+// FIFO, not a single slot: pi runs tools in parallel by default, so two
+// ask_user calls can be in flight at once. Answers resolve oldest-first.
+const pendingAnswers: Array<(answer: string) => void> = [];
 
 export function pushToVoice(text: string, opts?: { interrupt?: boolean }) {
   // Renderer queues it into the response outbox (section 10). With interrupt,
@@ -598,19 +633,20 @@ export function askViaVoice(question: string, signal?: AbortSignal): Promise<str
   return new Promise((resolve) => {
     const finish = (answer: string) => {
       clearTimeout(timer);
-      pendingAnswer = null;
+      const i = pendingAnswers.indexOf(finish);
+      if (i >= 0) pendingAnswers.splice(i, 1);
       resolve(answer);
     };
     // A walked-away user must not hang the run forever.
     const timer = setTimeout(() => finish("No answer after 2 minutes; use your best judgement."), 120_000);
     signal?.addEventListener("abort", () => finish("Run aborted before the user answered."));
-    pendingAnswer = { finish };
+    pendingAnswers.push(finish);
   });
 }
 
 // Called from the voice model's answer_agent tool (section 10)
 export function deliverAnswer(answer: string) {
-  pendingAnswer?.finish(answer);
+  pendingAnswers.shift()?.(answer); // oldest question first
 }
 ```
 
@@ -618,6 +654,7 @@ Notes on the two paths:
 
 - `pushToVoice` is fire-and-forget; gpt-realtime-2.1 tool calling is natively async, so the narration happens while the pi run is still going.
 - `askViaVoice` resolves when the voice model calls `answer_agent`. The voice model's instructions bind "answering an agent question" to `answer_agent`, never `send_task_to_agent`: a mis-routed `send_task_to_agent` would interrupt the run and cancel the pending question (its abort signal resolves the promise), which is self-limiting but still wrong. The timeout is the backstop for a user who walked away.
+- Any interrupt that aborts the run while a question is pending resolves that question with "Run aborted". That's intended: the `[INTERRUPTED]` discipline has the agent re-verify state when it resumes, and it re-asks if the question still matters.
 
 Pi's final assistant text also flows up on `agent_settled` (section 8), so the voice model narrates the outcome without pi having to call tell_user for it.
 
@@ -766,7 +803,8 @@ import {
   SessionManager, type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { guardExtension } from "./guard-extension";
-import { INTERRUPT_NOTE } from "./agent";
+import { tellUserTool } from "./voice-tools";
+import { INTERRUPT_NOTE, injectMain } from "./agent";
 
 interface Sub {
   session: AgentSession;
@@ -794,8 +832,10 @@ async function spawnSub(mainSession: AgentSession, task: string, fast: boolean):
   const { session } = await createAgentSession({
     cwd: PROJECT_DIR,
     model: getModel("anthropic", fast ? "claude-haiku-4-5" : "claude-opus-4-8")!,
-    tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "ask_user"], // no canvas tools
-    customTools: [makeSubagentAskUser(mainSession, id)],
+    tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "ask_user", "tell_user"], // no canvas tools
+    // tell_user gives subagents a live milestone channel straight into Wiley's
+    // speech; ask_user routes one level up to the coordinator instead.
+    customTools: [makeSubagentAskUser(mainSession, id), tellUserTool],
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(),
   });
@@ -807,26 +847,29 @@ async function spawnSub(mainSession: AgentSession, task: string, fast: boolean):
 }
 
 // Inject a message INTO the main agent, interrupting it if it's mid-turn.
-// Same interrupt-first rule as every other layer, pointing up instead of down.
-async function interruptMain(mainSession: AgentSession, text: string) {
-  if (mainSession.isStreaming) {
-    await mainSession.abort();
-    text = `${INTERRUPT_NOTE}\n[update from your own background work]\n${text}`;
-  }
-  void mainSession.prompt(text);
+// Same interrupt-first rule as every other layer, pointing up instead of
+// down, and serialized through the same delivery lock as user tasks, so
+// two subagents finishing together (or a finish landing as the user speaks)
+// can never interleave abort/prompt and drop a message.
+function interruptMain(mainSession: AgentSession, text: string): Promise<void> {
+  return injectMain(mainSession, "[update from your own background work]", text);
 }
 
 function startSubRun(id: string, sub: Sub, mainSession: AgentSession, message: string) {
   sub.session
     .prompt(message)
     .then(() => {
-      if (sub.interrupting) return; // aborted for a steer, not actually finished
+      // Aborted for a steer, not actually finished. The settle callback (not
+      // the steering code) consumes the flag: settle order between abort()
+      // resolving and this callback is not guaranteed, and resetting the flag
+      // anywhere else reopens a race that delivers a premature result.
+      if (sub.interrupting) { sub.interrupting = false; return; }
       sub.status = "done";
       sub.report = lastAssistantText(sub.session.messages);
       finishSub(id, sub, mainSession);
     })
     .catch((err) => {
-      if (sub.interrupting) return;
+      if (sub.interrupting) { sub.interrupting = false; return; }
       sub.status = "failed";
       sub.report = String(err); // rejection still produces a report; nothing leaks
       finishSub(id, sub, mainSession);
@@ -868,9 +911,9 @@ export const subagentTools = [
       if (!sub) throw new Error(`no such subagent: ${params.id}`);
       if (sub.status !== "running") throw new Error(`${params.id} already ${sub.status}; its report was delivered`);
       // Interrupt-first here too: abort its current step, deliver now.
+      // The flag is consumed by the aborted run's settle callback, never here.
       sub.interrupting = true;
       await sub.session.abort();
-      sub.interrupting = false;
       startSubRun(params.id, sub, mainSessionRef, `${INTERRUPT_NOTE}\n[message from coordinator]\n${params.message}`);
       return { content: [{ type: "text", text: "delivered; its current step was interrupted" }], details: {} };
     },
@@ -1105,7 +1148,7 @@ async function agentToolCall(name: string, args: any) {
       };
 
     case "look_at_board": {
-      const els = await canvasRequest("get-scene");
+      const els = await canvasRequest("get-scene-summary");
       return {
         elements: els.length,
         texts: els.filter((e: any) => e.type === "text").map((e: any) => e.text),
@@ -1165,7 +1208,7 @@ Main routes through this for all three upward message types, prefixed so the voi
 - `[agent question] ...` from pi's `ask_user` calls; the reply comes back via the `answer_agent` tool and resolves the pending promise in `voice-bridge.ts`
 - `[agent finished] ...` from the `agent_settled` event, summarizing the run's final assistant message
 
-`look_at_board` should stay cheap (element count plus text contents from `getSceneElements()`). The realtime model takes image input, but it doesn't need vision for "what's on the board": the pi agent handles anything visual.
+`look_at_board` should stay cheap (element count plus text contents from the `get-scene-summary` op). The realtime model takes image input, but it doesn't need vision for "what's on the board": the pi agent handles anything visual.
 
 **Mute button** (the one piece of custom UI): flip the mic track. Semantic VAD means the user just talks; muting stops frames without tearing down the connection.
 
