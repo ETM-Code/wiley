@@ -367,6 +367,8 @@ async function handleCanvasRequest(op: string, params: any) {
 
 `convertToExcalidrawElements` accepts the skeleton format (simplified elements, with `label` for contained text and arrow `start`/`end` bindings), which is far easier for an LLM to emit than full `ExcalidrawElement` objects. Point the system prompt at that format, and consider pasting the skeleton type definition into a project `AGENTS.md` so it is always in context.
 
+Worth adding early: a `mermaid` parameter on `draw_on_canvas`. For standard diagrams (flowcharts, sequence, class), LLMs emit far better Mermaid than raw coordinates, and `@excalidraw/mermaid-to-excalidraw` (the library behind Excalidraw's own text-to-diagram feature) converts it to elements. Reserve raw skeletons for spatial or free-form drawing where the agent is responding to the user's layout.
+
 The bridge itself is ordinary Electron IPC:
 
 ```typescript
@@ -446,10 +448,43 @@ export const voiceTools = [
 ];
 ```
 
-The bridge behind these (`main/voice-bridge.ts`) talks to the renderer's realtime data channel over IPC:
+The bridge behind these (`main/voice-bridge.ts`) talks to the renderer's realtime data channel over IPC. This is small but load-bearing, so here it is in full:
 
-- `pushToVoice(text)` queues a `conversation.item.create` message into the voice session followed by `response.create`, so the model speaks it as soon as it can (section 10). Because gpt-realtime-2.1 tool calling is natively async, this narration happens while the pi run is still going.
-- `askViaVoice(question, signal)` does the same injection with an instruction to ask the user, then returns a promise. The promise resolves when the voice model calls its `answer_agent` tool with the user's reply (declared in section 10). One subtlety: while `ask_user` is blocking, the whole turn is blocked, so a `send_task_to_agent` steer sent during that window queues behind it. The voice model's instructions must bind "answering an agent question" to `answer_agent`, never `send_task_to_agent`. Wire `signal` to reject the promise if the run is aborted, and add a timeout that resolves with "no answer, use your best judgement" so a walked-away user doesn't hang the run forever.
+```typescript
+// main/voice-bridge.ts
+let pendingAnswer: { finish: (answer: string) => void } | null = null;
+
+export function pushToVoice(text: string) {
+  // Renderer queues it into the response outbox (section 10) and the voice
+  // model narrates it as soon as no other response is active.
+  sendToRenderer("voice-inject", text);
+}
+
+export function askViaVoice(question: string, signal?: AbortSignal): Promise<string> {
+  pushToVoice(`[agent question] ${question}`);
+  return new Promise((resolve) => {
+    const finish = (answer: string) => {
+      clearTimeout(timer);
+      pendingAnswer = null;
+      resolve(answer);
+    };
+    // A walked-away user must not hang the run forever.
+    const timer = setTimeout(() => finish("No answer after 2 minutes; use your best judgement."), 120_000);
+    signal?.addEventListener("abort", () => finish("Run aborted before the user answered."));
+    pendingAnswer = { finish };
+  });
+}
+
+// Called from the voice model's answer_agent tool (section 10)
+export function deliverAnswer(answer: string) {
+  pendingAnswer?.finish(answer);
+}
+```
+
+Notes on the two paths:
+
+- `pushToVoice` is fire-and-forget; gpt-realtime-2.1 tool calling is natively async, so the narration happens while the pi run is still going.
+- `askViaVoice` resolves when the voice model calls `answer_agent`. One subtlety: while `ask_user` is blocking, the whole pi turn is blocked, so a `send_task_to_agent` steer sent during that window queues behind it. That is why the voice model's instructions bind "answering an agent question" to `answer_agent`, never `send_task_to_agent`; the timeout is the backstop if it misbehaves anyway.
 
 Pi's final assistant text also flows up on `agent_end` (section 8), so the voice model narrates the outcome without pi having to call tell_user for it.
 
@@ -771,7 +806,22 @@ dc.onmessage = async (e) => {
 
   // Only one response can be active at a time; track it for the outbox
   if (ev.type === "response.created") responseActive = true;
-  if (ev.type === "response.done") { responseActive = false; flushOutbox(); }
+  if (ev.type === "response.done") {
+    responseActive = false;
+    if (needsRetry) {
+      // Our injected item exists but was never voiced; request again without
+      // re-creating the item (that would duplicate it in the conversation).
+      needsRetry = false;
+      requestResponse();
+    } else {
+      flushOutbox();
+    }
+  }
+  if (ev.type === "error" && /active response/i.test(ev.error?.message ?? "")) {
+    // Our response.create lost a race with a VAD-triggered response.
+    responseActive = true;
+    needsRetry = true;
+  }
 
   // Transcript capture: mirror both sides to main for pi's context
   if (ev.type === "conversation.item.input_audio_transcription.completed") {
@@ -792,12 +842,40 @@ Main appends these to a transcript array; `getVoiceTranscript()` in section 4 re
 
 One race to know about: input transcription completes asynchronously, so when the model dispatches a task the instant the user stops talking, the triggering utterance may not be in the transcript array yet. That is why `send_task_to_agent` requires `user_words`: main composes the pi prompt as the task plus the verbatim words, so the ground truth always arrives even when the transcript lags a beat:
 
+The main-process dispatcher behind `window.api.agentToolCall`, covering the full voice tool surface:
+
 ```typescript
-// main: the send_task_to_agent handler
-case "send_task_to_agent": {
-  const { task, user_words, urgent } = args;
-  void runTask(session, `${task}\n\nUser's words, verbatim: "${user_words}"`, { urgent });
-  return { status: "started" };
+// main: the voice tool-call dispatcher
+async function agentToolCall(name: string, args: any) {
+  switch (name) {
+    case "send_task_to_agent":
+      void runTask(session, `${args.task}\n\nUser's words, verbatim: "${args.user_words}"`, {
+        urgent: args.urgent,
+      });
+      return { status: "started" };
+
+    case "answer_agent":
+      deliverAnswer(args.answer); // resolves the pending ask_user promise (section 6)
+      return { ok: true };
+
+    case "get_agent_status":
+      return {
+        agentRunning: session.isStreaming,
+        subagents: [...subagents.entries()].map(([id, s]) => ({ id, status: s.status })),
+      };
+
+    case "look_at_board": {
+      const els = await canvasRequest("get-scene");
+      return {
+        elements: els.length,
+        texts: els.filter((e: any) => e.type === "text").map((e: any) => e.text),
+      };
+    }
+
+    case "abort_agent":
+      await session.abort();
+      return { ok: true, note: "Agent run aborted." };
+  }
 }
 ```
 
@@ -808,6 +886,7 @@ One constraint shapes the upward channel's plumbing: the realtime session allows
 ```typescript
 // renderer side of the voice bridge: called from main over IPC
 let responseActive = false;
+let needsRetry = false;
 const outbox: string[] = [];
 
 export function pushToVoiceRaw(text: string) {
@@ -833,7 +912,7 @@ function requestResponse() {
 }
 ```
 
-The `response.created` / `response.done` handlers in the snippet above keep `responseActive` honest even for responses the model starts on its own (user speech via VAD), so queued narrations wait their turn instead of colliding.
+The `response.created` / `response.done` handlers in the snippet above keep `responseActive` honest even for responses the model starts on its own (user speech via VAD), and the error handler covers the remaining race: if a `response.create` loses to a VAD-triggered response, the injected item is re-requested (not re-created) once that response finishes, so no narration is stranded or duplicated.
 
 Main routes through this for all three upward message types, prefixed so the voice model knows what it is narrating:
 
@@ -867,7 +946,27 @@ micTrack.enabled = !micTrack.enabled;
 
 If Electron's bundled Node is below 22.19 or you want process isolation, spawn `pi --mode rpc --no-session` (with the system Node) and speak newline-delimited JSON over stdin/stdout: `{"type":"prompt","message":"..."}`, `{"type":"steer",...}`, `{"type":"abort"}`, with the same event stream coming back as JSON lines. Prompts accept base64 images. The catch, as noted in section 1: canvas tools must then be loaded into the subprocess as pi extensions (`--extension ./canvas-tools.ts`) and bridge back to Electron themselves (e.g. over a local HTTP port). Use the SDK unless you hit a hard blocker. Note pi's RPC framing is strict LF-delimited JSONL; don't use naive line splitting that breaks on Unicode separators inside JSON strings.
 
-## 13. Build order
+## 13. Reuse map: adapt, don't build
+
+Almost every hard problem here has a mature, battle-tested answer. The custom code in this guide is deliberately confined to thin glue at the seams.
+
+| Need | Reuse | Instead of |
+| --- | --- | --- |
+| Agent loop, tools, sessions, compaction, retries | pi SDK (`createAgentSession`) | any hand-rolled agent loop |
+| Multi-provider LLM calls (the guard's judge) | `@earendil-works/pi-ai` | per-provider SDKs |
+| Voice transport, audio, turn-taking, tool plumbing | `@openai/agents/realtime` (`RealtimeSession`) | hand-rolled `RTCPeerConnection` (keep raw events only for the injection outbox) |
+| LLM-generated diagrams | `@excalidraw/mermaid-to-excalidraw` + `convertToExcalidrawElements` | teaching the model raw element coordinates |
+| Board rendering, export | `@excalidraw/excalidraw` (`exportToBlob`, `getSceneElements`) | any custom canvas work |
+| Agent instructions ecosystem | pi skills + `AGENTS.md`; point pi's `skills` setting at `~/.claude/skills` to reuse existing Claude Code skills wholesale (pi implements the Agent Skills standard) | rewriting skills per harness |
+| Subagents with process isolation | pi's `examples/extensions/subagent/` | a new process manager |
+| Deterministic agent tests | pi-ai's faux provider (`fauxProvider`, `fauxToolCall`) | a hand-built LLM mock |
+| App scaffold | `electron-vite` | manual Electron config |
+
+What stays custom, because nothing mature exists for these exact seams: the canvas IPC bridge, the voice bridge and its response outbox, the guard extension, and the transcript plumbing. Each is under a hundred lines, and that's the point.
+
+## 14. Build order
+
+(Trivial helpers referenced but not defined in the snippets, e.g. `lastAssistantText`, `summarizeCall`, `recentTranscriptSummary`, `uint8ToBase64`, `sendToRenderer`, are a few lines each; write them as you go. Test each step against `agent-test-procedure.md`, which layers an automated agent-driven test rig over exactly these seams.)
 
 1. Electron + Excalidraw shell; verify `getSceneElements` / `updateScene` / `exportToBlob` from devtools.
 2. Pi session in main with only canvas tools + a debug text box instead of voice. Get "draw a flowchart of X" working end to end. This proves the harness, the IPC bridge, and the skeleton-element drawing.
