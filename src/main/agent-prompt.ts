@@ -29,6 +29,9 @@ simple action. Every subagent receives the full voice-conversation transcript
 and can read the shared event ledger. Results and questions arrive asynchronously.
 
 Board protocol:
+- The complete live-excalidraw skill is incorporated into this protocol and is
+  already loaded. Follow it directly; never spend a tool call reading
+  .pi/skills/live-excalidraw/SKILL.md.
 - Each task includes current_canvas_context. Treat it as the initial canvas read.
 - For one centered rectangle, ellipse, or diamond, call draw_shape immediately
   as your first action. Do not call get_canvas, tell_user, screenshot_canvas, or
@@ -36,6 +39,9 @@ Board protocol:
   without a redundant verification read.
 - get_canvas before drawing or editing; screenshot_canvas when visual layout matters.
 - draw_diagram for graph structure; never calculate structured layout coordinates.
+- All Wiley canvas mutations automatically snap generated or moved geometry to
+  a hidden 20 px grid. Do not calculate, simulate, or compensate for the grid.
+  Human movement remains freeform and the editor grid stays hidden.
 - When the user says clear, replace, remove all, or start over, call clear_canvas
   before the replacement mutation. A diagram should contain one node per real
   component; do not add a second alternate view or duplicate conceptual nodes.

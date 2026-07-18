@@ -92,6 +92,8 @@ export interface CanvasRequest {
     | "export-png"
     | "add-shape"
     | "layout-diagram"
+    | "preview-diagram"
+    | "clear-diagram-preview"
     | "add-elements"
     | "clear-scene"
     | "apply-patch";

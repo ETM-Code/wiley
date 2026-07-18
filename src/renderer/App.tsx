@@ -3,7 +3,11 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { bridge, type AgentStatus } from "./bridge";
-import { subscribeToCanvasRequests } from "./canvas-handlers";
+import {
+  isDiagramPreviewActive,
+  subscribeToCanvasRequests,
+  withoutDiagramPreviewElements,
+} from "./canvas-handlers";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
 
 function MicrophoneIcon({ muted }: { muted: boolean }) {
@@ -171,7 +175,7 @@ export default function App() {
     // The backend snapshot is only committed after a canvas tool completes.
     // Applying it while a diagram is streaming would replace the partial scene
     // with the previous revision between frames.
-    if (canvasMutationActiveRef.current) return true;
+    if (canvasMutationActiveRef.current || isDiagramPreviewActive()) return true;
     const api = apiRef.current;
     if (!api) return false;
     await bridge.activateCanvas();
@@ -252,7 +256,7 @@ export default function App() {
       // Progressive agent frames are transient. The canvas bridge persists the
       // final board snapshot atomically with the successful tool response.
       if (canvasMutationActiveRef.current) return;
-      const elementCopies = elements.map((element) => ({ ...element }));
+      const elementCopies = withoutDiagramPreviewElements(elements).map((element) => ({ ...element }));
       const elementsFingerprint = JSON.stringify(elementCopies);
       if (elementsFingerprint === lastSubmittedElementsRef.current) return;
       snapshotPendingRef.current = true;

@@ -9,6 +9,8 @@ interface PendingRequest {
 
 export class CanvasBridge {
   #sequence = 0;
+  #previewRequestSequence = 0;
+  #diagramPreviewVersion = 0;
   #pending = new Map<number, PendingRequest>();
   #snapshot: BoardSnapshot;
   #leases = new Map<string, { agentId: string; elementIds: Set<string>; expiresAt: number }>();
@@ -64,6 +66,22 @@ export class CanvasBridge {
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted) onAbort();
     });
+  }
+
+  previewDiagram(params: Record<string, unknown>): boolean {
+    return this.sendRequest({
+      id: -(++this.#previewRequestSequence),
+      op: "preview-diagram",
+      params: { ...params, __previewVersion: ++this.#diagramPreviewVersion },
+    }) !== false;
+  }
+
+  clearDiagramPreview(): boolean {
+    return this.sendRequest({
+      id: -(++this.#previewRequestSequence),
+      op: "clear-diagram-preview",
+      params: { __previewVersion: ++this.#diagramPreviewVersion },
+    }) !== false;
   }
 
   acceptResponse(response: CanvasResponse): void {
@@ -144,7 +162,10 @@ export class CanvasBridge {
     await this.ledger.appendBoardTransaction(transaction);
     this.sendTransaction(transaction);
 
-    const response = await this.request<Record<string, unknown>>(transaction.operation, transaction.params, signal);
+    const requestParams = transaction.operation === "layout-diagram"
+      ? { ...(transaction.params as Record<string, unknown>), __previewVersion: ++this.#diagramPreviewVersion }
+      : transaction.params;
+    const response = await this.request<Record<string, unknown>>(transaction.operation, requestParams, signal);
     const rendered = response.__boardSnapshot as Omit<BoardSnapshot, "revision"> | undefined;
     const result = { ...response };
     delete result.__boardSnapshot;

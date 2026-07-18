@@ -13,9 +13,30 @@ import { bridge, type CanvasRequest } from "./bridge";
 type JsonObject = Record<string, unknown>;
 type SceneElement = ReturnType<ExcalidrawImperativeAPI["getSceneElements"]>[number];
 
-type GraphNode = { id: string; label: string; kind?: "box" | "diamond" | "ellipse" };
+type GraphShape = "rectangle" | "diamond" | "ellipse";
+type GraphNode = {
+  id: string;
+  label: string;
+  shape?: GraphShape;
+  /** Compatibility for diagrams created before `shape` became canonical. */
+  kind?: "box" | "diamond" | "ellipse";
+  backgroundColor?: string;
+  strokeColor?: string;
+  rounded?: boolean;
+};
 type GraphEdge = { from: string; to: string; label?: string };
-type LayoutParams = { nodes: GraphNode[]; edges: GraphEdge[]; anchor?: string };
+type DiagramLayout = {
+  direction?: "RIGHT" | "DOWN";
+  nodeSpacing?: number;
+  layerSpacing?: number;
+};
+type LayoutParams = {
+  title?: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  anchor?: string;
+  layout?: DiagramLayout;
+};
 type AddParams = { elements: JsonObject[]; placeNear?: string; scrollTo?: boolean };
 type PatchParams = {
   updates?: Array<{ id: string; props: JsonObject }>;
@@ -31,8 +52,28 @@ type ShapeParams = {
 };
 
 const elk = new ELK();
+export const MODEL_GRID_SIZE = 20;
+const DIAGRAM_NODE_WIDTH = 200;
+const DIAGRAM_NODE_HEIGHT = 80;
+const diagramPreviewElementIds = new Set<string>();
+let latestDiagramPreviewVersion = 0;
+let lastDiagramPreviewNodeCount = 0;
+
+export function isDiagramPreviewActive(): boolean {
+  return diagramPreviewElementIds.size > 0;
+}
+
+export function withoutDiagramPreviewElements<T extends { id?: unknown }>(elements: readonly T[]): T[] {
+  return elements.filter((element) => typeof element.id !== "string" || !diagramPreviewElementIds.has(element.id));
+}
+
+function shouldStreamCanvas(): boolean {
+  if (typeof document === "undefined") return true;
+  return document.visibilityState === "visible" && document.hasFocus();
+}
 
 function pauseForStreaming(milliseconds: number): Promise<void> {
+  if (!shouldStreamCanvas()) return Promise.resolve();
   return new Promise((resolve) => globalThis.setTimeout(() => {
     if (typeof globalThis.requestAnimationFrame === "function") {
       globalThis.requestAnimationFrame(() => resolve());
@@ -55,12 +96,49 @@ function reportCanvasStreamProgress(visibleElements: number, totalElements: numb
   }));
 }
 
+function reportDiagramPreviewProgress(nodes: number, edges: number, version: number): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.wileyDiagramPreview = `${nodes}/${edges}`;
+  const entry = `${Math.round(performance.now())}:${nodes}/${edges}:${version}`;
+  const previous = (document.documentElement.dataset.wileyDiagramPreviewTrace ?? "").split("|").filter(Boolean);
+  document.documentElement.dataset.wileyDiagramPreviewTrace = [...previous, entry].slice(-128).join("|");
+  document.dispatchEvent(new CustomEvent("wiley:diagram-preview-progress", {
+    detail: { nodes, edges, version },
+  }));
+}
+
 function asRecord(value: unknown): JsonObject {
   return value && typeof value === "object" ? (value as JsonObject) : {};
 }
 
 function finite(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export function snapModelCoordinate(value: unknown, fallback = 0): number {
+  return Math.round(finite(value, fallback) / MODEL_GRID_SIZE) * MODEL_GRID_SIZE;
+}
+
+function snapModelSize(value: unknown, fallback: number): number {
+  return Math.max(MODEL_GRID_SIZE, snapModelCoordinate(value, fallback));
+}
+
+function snapModelGeometry(props: JsonObject): JsonObject {
+  const snapped = { ...props };
+  if ("x" in snapped) snapped.x = snapModelCoordinate(snapped.x);
+  if ("y" in snapped) snapped.y = snapModelCoordinate(snapped.y);
+  if ("width" in snapped) snapped.width = snapModelSize(snapped.width, MODEL_GRID_SIZE);
+  if ("height" in snapped) snapped.height = snapModelSize(snapped.height, MODEL_GRID_SIZE);
+  if (Array.isArray(snapped.points)) {
+    snapped.points = snapped.points.map((point) => Array.isArray(point)
+      ? [snapModelCoordinate(point[0]), snapModelCoordinate(point[1])]
+      : point);
+  }
+  return snapped;
+}
+
+function gridResult() {
+  return { gridSize: MODEL_GRID_SIZE, snapped: true };
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {
@@ -110,30 +188,40 @@ function sceneSummary(elements: readonly SceneElement[]) {
   });
 }
 
-function placementOrigin(api: ExcalidrawImperativeAPI, anchor?: string): { x: number; y: number } {
-  const elements = api.getSceneElements().filter(
+function placementOrigin(
+  api: ExcalidrawImperativeAPI,
+  anchor?: string,
+  sourceElements: readonly SceneElement[] = api.getSceneElements(),
+): { x: number; y: number } {
+  const elements = sourceElements.filter(
     (element) => Number.isFinite(element.x) && Number.isFinite(element.y)
       && Number.isFinite(element.width) && Number.isFinite(element.height),
   );
   const anchored = anchor ? elements.find((element) => element.id === anchor) : undefined;
-  if (anchored) return { x: anchored.x + anchored.width + 100, y: anchored.y };
+  if (anchored) {
+    return {
+      x: snapModelCoordinate(anchored.x + anchored.width + 100),
+      y: snapModelCoordinate(anchored.y),
+    };
+  }
 
   if (elements.length === 0) {
     const state = api.getAppState();
     return {
-      x: Math.max(80, -finite(state.scrollX) + 120),
-      y: Math.max(80, -finite(state.scrollY) + 120),
+      x: snapModelCoordinate(Math.max(80, -finite(state.scrollX) + 120)),
+      y: snapModelCoordinate(Math.max(80, -finite(state.scrollY) + 120)),
     };
   }
 
   const right = Math.max(...elements.map((element) => element.x + element.width));
   const top = Math.min(...elements.map((element) => element.y));
-  return { x: right + 120, y: top };
+  return { x: snapModelCoordinate(right + 120), y: snapModelCoordinate(top) };
 }
 
-function kindToType(kind?: GraphNode["kind"]): "rectangle" | "diamond" | "ellipse" {
-  if (kind === "diamond") return "diamond";
-  if (kind === "ellipse") return "ellipse";
+function nodeToType(node: GraphNode): GraphShape {
+  if (node.shape) return node.shape;
+  if (node.kind === "diamond") return "diamond";
+  if (node.kind === "ellipse") return "ellipse";
   return "rectangle";
 }
 
@@ -142,8 +230,8 @@ async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
   if (!["rectangle", "ellipse", "diamond"].includes(params?.shape)) {
     throw new Error("add-shape requires rectangle, ellipse, or diamond");
   }
-  const width = Math.min(800, Math.max(24, finite(params.width, 220)));
-  const height = Math.min(800, Math.max(24, finite(params.height, width)));
+  const width = Math.min(800, snapModelSize(params.width, 220));
+  const height = Math.min(800, snapModelSize(params.height, width));
   const state = api.getAppState();
   const center = viewportCoordsToSceneCoords(
     { clientX: state.width / 2, clientY: state.height / 2 },
@@ -152,8 +240,8 @@ async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
   const skeleton = {
     id: `agent-shape-${crypto.randomUUID()}`,
     type: params.shape,
-    x: center.x - width / 2,
-    y: center.y - height / 2,
+    x: snapModelCoordinate(center.x - width / 2),
+    y: snapModelCoordinate(center.y - height / 2),
     width,
     height,
     strokeColor: params.strokeColor ?? "#1e1e1e",
@@ -171,11 +259,23 @@ async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
     elements: [...api.getSceneElements(), ...created],
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
-  return { count: created.length, ids: created.map((element) => element.id), center };
+  return {
+    count: created.length,
+    ids: created.map((element) => element.id),
+    center: { x: skeleton.x + width / 2, y: skeleton.y + height / 2 },
+    grid: gridResult(),
+  };
 }
 
-async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
+async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, preview = false) {
   const params = value as LayoutParams;
+  const previewVersion = finite(asRecord(value).__previewVersion, 0);
+  if (preview) {
+    if (previewVersion <= latestDiagramPreviewVersion) return { stale: true };
+    latestDiagramPreviewVersion = previewVersion;
+  } else if (previewVersion > latestDiagramPreviewVersion) {
+    latestDiagramPreviewVersion = previewVersion;
+  }
   if (!Array.isArray(params?.nodes) || params.nodes.length === 0) {
     throw new Error("layout-diagram requires at least one node");
   }
@@ -185,6 +285,9 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     if (!node?.id || !node.label || nodeIds.has(node.id)) {
       throw new Error("Diagram nodes require unique ids and non-empty labels");
     }
+    if (node.shape && !["rectangle", "diamond", "ellipse"].includes(node.shape)) {
+      throw new Error(`Diagram node ${node.id} has an unsupported shape`);
+    }
     nodeIds.add(node.id);
   }
   for (const edge of params.edges ?? []) {
@@ -193,17 +296,24 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     }
   }
 
-  const layout = await elk.layout({
+  const direction = params.layout?.direction ?? "RIGHT";
+  const nodeSpacing = Math.min(240, Math.max(40, snapModelCoordinate(params.layout?.nodeSpacing, 80)));
+  const layerSpacing = Math.min(320, Math.max(60, snapModelCoordinate(params.layout?.layerSpacing, 120)));
+  const layoutResult = await elk.layout({
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": "RIGHT",
+      "elk.direction": direction,
       "elk.edgeRouting": "ORTHOGONAL",
-      "elk.spacing.nodeNode": "72",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "120",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
+      "elk.spacing.nodeNode": String(nodeSpacing),
+      "elk.layered.spacing.nodeNodeBetweenLayers": String(layerSpacing),
+      "elk.layered.spacing.edgeEdgeBetweenLayers": String(MODEL_GRID_SIZE),
     },
-    children: params.nodes.map((node) => ({ id: node.id, width: 180, height: 72 })),
+    children: params.nodes.map((node) => ({
+      id: node.id,
+      width: DIAGRAM_NODE_WIDTH,
+      height: DIAGRAM_NODE_HEIGHT,
+    })),
     edges: (params.edges ?? []).map((edge, index) => ({
       id: `edge-${index}`,
       sources: [edge.from],
@@ -211,56 +321,108 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     })),
   });
 
-  const origin = placementOrigin(api, params.anchor);
+  const existing = withoutDiagramPreviewElements([...api.getSceneElements()]);
+  const hadPreview = diagramPreviewElementIds.size > 0;
+  const origin = placementOrigin(api, params.anchor, existing);
   const positions = new Map(
-    (layout.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]),
+    (layoutResult.children ?? []).map((node) => [node.id, {
+      x: snapModelCoordinate(node.x),
+      y: snapModelCoordinate(node.y),
+    }]),
   );
   const edgeSections = new Map(
-    ((layout.edges ?? []) as ElkExtendedEdge[]).map((edge) => [edge.id, edge.sections?.[0]]),
+    ((layoutResult.edges ?? []) as ElkExtendedEdge[]).map((edge) => [edge.id, edge.sections?.[0]]),
   );
   const idPrefix = `agent-${Date.now().toString(36)}`;
   const elementIdByNode = new Map(
     params.nodes.map((node, index) => [node.id, `${idPrefix}-node-${index}`]),
   );
 
-  const skeletons: JsonObject[] = params.nodes.map((node) => {
+  const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
     const position = positions.get(node.id) ?? { x: 0, y: 0 };
+    const type = nodeToType(node);
     return {
       id: elementIdByNode.get(node.id),
-      type: kindToType(node.kind),
-      x: origin.x + position.x,
-      y: origin.y + position.y,
-      width: 180,
-      height: 72,
+      type,
+      x: snapModelCoordinate(origin.x + position.x),
+      y: snapModelCoordinate(origin.y + position.y),
+      width: DIAGRAM_NODE_WIDTH,
+      height: DIAGRAM_NODE_HEIGHT,
+      strokeColor: node.strokeColor ?? "#1e1e1e",
+      backgroundColor: node.backgroundColor ?? "transparent",
+      ...(node.backgroundColor && node.backgroundColor !== "transparent" ? { fillStyle: "solid" } : {}),
+      ...(type === "rectangle" && node.rounded ? { roundness: { type: 3 } } : {}),
       label: { text: node.label },
     };
   });
+  const title = params.title?.trim();
+  const graphWidth = snapModelSize(
+    Math.max(360, ...[...positions.values()].map((position) => position.x + DIAGRAM_NODE_WIDTH)),
+    360,
+  );
+  const skeletons: JsonObject[] = [
+    ...(title ? [{
+      id: `${idPrefix}-title`,
+      type: "text",
+      x: origin.x,
+      y: snapModelCoordinate(Math.max(MODEL_GRID_SIZE, origin.y - 60)),
+      width: graphWidth,
+      height: 40,
+      text: title,
+      fontSize: 24,
+      fontFamily: 5,
+      textAlign: "center",
+      verticalAlign: "middle",
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+    }] : []),
+    ...nodeSkeletons,
+  ];
   skeletons.push(
     ...(params.edges ?? []).map((edge, index) => {
       const from = positions.get(edge.from) ?? { x: 0, y: 0 };
       const to = positions.get(edge.to) ?? { x: 0, y: 0 };
-      const fromCenter = { x: origin.x + from.x + 90, y: origin.y + from.y + 36 };
-      const toCenter = { x: origin.x + to.x + 90, y: origin.y + to.y + 36 };
+      const fromCenter = {
+        x: origin.x + from.x + DIAGRAM_NODE_WIDTH / 2,
+        y: origin.y + from.y + DIAGRAM_NODE_HEIGHT / 2,
+      };
+      const toCenter = {
+        x: origin.x + to.x + DIAGRAM_NODE_WIDTH / 2,
+        y: origin.y + to.y + DIAGRAM_NODE_HEIGHT / 2,
+      };
       const dx = toCenter.x - fromCenter.x;
       const dy = toCenter.y - fromCenter.y;
       const horizontal = Math.abs(dx) > Math.abs(dy);
-      const startX = horizontal ? fromCenter.x + Math.sign(dx || 1) * 90 : fromCenter.x;
-      const startY = horizontal ? fromCenter.y : fromCenter.y + Math.sign(dy || 1) * 36;
-      const endX = horizontal ? toCenter.x - Math.sign(dx || 1) * 90 : toCenter.x;
-      const endY = horizontal ? toCenter.y : toCenter.y - Math.sign(dy || 1) * 36;
+      const startX = horizontal
+        ? fromCenter.x + Math.sign(dx || 1) * DIAGRAM_NODE_WIDTH / 2
+        : fromCenter.x;
+      const startY = horizontal
+        ? fromCenter.y
+        : fromCenter.y + Math.sign(dy || 1) * DIAGRAM_NODE_HEIGHT / 2;
+      const endX = horizontal
+        ? toCenter.x - Math.sign(dx || 1) * DIAGRAM_NODE_WIDTH / 2
+        : toCenter.x;
+      const endY = horizontal
+        ? toCenter.y
+        : toCenter.y - Math.sign(dy || 1) * DIAGRAM_NODE_HEIGHT / 2;
       const section = edgeSections.get(`edge-${index}`);
-      const routed = section?.startPoint && section.endPoint
-        ? [section.startPoint, ...(section.bendPoints ?? []), section.endPoint]
-        : undefined;
-      const routeOrigin = routed?.[0];
+      const absoluteRoute = [
+        { x: snapModelCoordinate(startX), y: snapModelCoordinate(startY) },
+        ...(section?.bendPoints ?? []).map((point) => ({
+          x: snapModelCoordinate(origin.x + point.x),
+          y: snapModelCoordinate(origin.y + point.y),
+        })),
+        { x: snapModelCoordinate(endX), y: snapModelCoordinate(endY) },
+      ].filter((point, pointIndex, points) => pointIndex === 0
+        || point.x !== points[pointIndex - 1].x
+        || point.y !== points[pointIndex - 1].y);
+      const routeOrigin = absoluteRoute[0];
       return {
         id: `${idPrefix}-edge-${index}`,
         type: "arrow",
-        x: routeOrigin ? origin.x + routeOrigin.x : startX,
-        y: routeOrigin ? origin.y + routeOrigin.y : startY,
-        points: routed && routeOrigin
-          ? routed.map((point) => [point.x - routeOrigin.x, point.y - routeOrigin.y])
-          : [[0, 0], [endX - startX, endY - startY]],
+        x: routeOrigin.x,
+        y: routeOrigin.y,
+        points: absoluteRoute.map((point) => [point.x - routeOrigin.x, point.y - routeOrigin.y]),
         start: { id: elementIdByNode.get(edge.from) },
         end: { id: elementIdByNode.get(edge.to) },
         endArrowhead: "arrow",
@@ -276,7 +438,6 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
     throw new Error("Diagram layout produced invalid element geometry");
   }
-  const existing = [...api.getSceneElements()];
   // Excalidraw intentionally regenerates skeleton ids. Group converted primary
   // elements with their bound labels using the converted container ids instead
   // of trying to match the original skeleton ids.
@@ -292,6 +453,29 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     .filter((element) => element.type !== "text" && element.type !== "arrow")
     .slice(0, params.nodes.length);
   const convertedEdges = created.filter((element) => element.type === "arrow");
+  if (convertedNodes.length !== params.nodes.length || convertedEdges.length !== (params.edges ?? []).length) {
+    throw new Error("Diagram validation failed: rendered element counts do not match the request");
+  }
+  for (const [index, node] of params.nodes.entries()) {
+    const rendered = convertedNodes[index] as SceneElement & {
+      backgroundColor?: string;
+      strokeColor?: string;
+      roundness?: unknown;
+    };
+    const expectedType = nodeToType(node);
+    if (rendered.type !== expectedType) {
+      throw new Error(`Diagram validation failed: ${node.id} rendered as ${rendered.type}, expected ${expectedType}`);
+    }
+    if (node.backgroundColor && rendered.backgroundColor !== node.backgroundColor) {
+      throw new Error(`Diagram validation failed: ${node.id} lost its background color`);
+    }
+    if (node.strokeColor && rendered.strokeColor !== node.strokeColor) {
+      throw new Error(`Diagram validation failed: ${node.id} lost its stroke color`);
+    }
+    if (node.rounded && expectedType === "rectangle" && !rendered.roundness) {
+      throw new Error(`Diagram validation failed: ${node.id} lost its rounded corners`);
+    }
+  }
   const nodeGroups = convertedNodes.map((element) => [
     element,
     ...(labelsByContainer.get(element.id) ?? []),
@@ -300,8 +484,67 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     element,
     ...(labelsByContainer.get(element.id) ?? []),
   ]);
-  const groupedIds = new Set([...nodeGroups, ...edgeGroups].flat().map((element) => element.id));
+  const standaloneTexts = created.filter((element) => {
+    const candidate = element as SceneElement & { containerId?: string | null };
+    return element.type === "text" && !candidate.containerId;
+  });
+  const groupedIds = new Set([...nodeGroups, ...edgeGroups, standaloneTexts].flat().map((element) => element.id));
   const leftovers = created.filter((element) => !groupedIds.has(element.id));
+  const result = {
+    count: created.length,
+    idMap: Object.fromEntries(params.nodes.map((node, index) => [
+      node.id,
+      convertedNodes[index]?.id ?? elementIdByNode.get(node.id),
+    ])),
+    validation: {
+      title: title ? standaloneTexts.some((element) => (element as SceneElement & { text?: string }).text === title) : true,
+      nodes: convertedNodes.length,
+      edges: convertedEdges.length,
+      shapes: Object.fromEntries(params.nodes.map((node, index) => [node.id, convertedNodes[index]?.type])),
+      grid: gridResult(),
+    },
+  };
+  if (preview) {
+    // ELK is asynchronous. A newer JSON delta may have completed while this
+    // layout was running, so only the latest requested version may paint.
+    if (previewVersion !== latestDiagramPreviewVersion) return { stale: true };
+    diagramPreviewElementIds.clear();
+    for (const element of created) diagramPreviewElementIds.add(element.id);
+    api.updateScene({
+      elements: [...existing, ...created],
+      captureUpdate: CaptureUpdateAction.EVENTUALLY,
+    });
+    reportDiagramPreviewProgress(params.nodes.length, (params.edges ?? []).length, previewVersion);
+    if (params.nodes.length !== lastDiagramPreviewNodeCount) {
+      lastDiagramPreviewNodeCount = params.nodes.length;
+      await api.scrollToContent(created, {
+        fitToViewport: true,
+        viewportZoomFactor: 0.9,
+        animate: false,
+      });
+    }
+    return { preview: true, nodes: params.nodes.length, edges: (params.edges ?? []).length };
+  }
+
+  diagramPreviewElementIds.clear();
+  lastDiagramPreviewNodeCount = 0;
+  reportDiagramPreviewProgress(0, 0, previewVersion);
+  const applyFinalScene = async () => {
+    api.updateScene({
+      elements: [...existing, ...created],
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    reportCanvasStreamProgress(created.length, created.length);
+    await api.scrollToContent(created, {
+      fitToViewport: true,
+      viewportZoomFactor: 0.9,
+      animate: false,
+    });
+    return result;
+  };
+
+  if (hadPreview || !shouldStreamCanvas()) return applyFinalScene();
+
   const streamed: SceneElement[] = [];
   reportCanvasStreamProgress(0, created.length);
   const updateProgress = () => {
@@ -314,8 +557,10 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
 
   // Keep each step above the normal human visual threshold while bounding the
   // total animation time for both small and large diagrams.
+  streamed.push(...standaloneTexts);
   const nodeDelay = Math.max(70, Math.min(160, Math.round(1_200 / Math.max(1, nodeGroups.length))));
   for (let index = 0; index < nodeGroups.length; index++) {
+    if (!shouldStreamCanvas()) return applyFinalScene();
     streamed.push(...nodeGroups[index]);
     updateProgress();
     if (index === 0) {
@@ -331,6 +576,7 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
   const edgeBatchSize = 2;
   const edgeDelay = Math.max(35, Math.round(500 / Math.max(1, Math.ceil(edgeGroups.length / edgeBatchSize))));
   for (let index = 0; index < edgeGroups.length; index += edgeBatchSize) {
+    if (!shouldStreamCanvas()) return applyFinalScene();
     streamed.push(...edgeGroups.slice(index, index + edgeBatchSize).flat());
     updateProgress();
     await pauseForStreaming(edgeDelay);
@@ -343,13 +589,22 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
   });
   reportCanvasStreamProgress(streamed.length, created.length);
 
-  return {
-    count: created.length,
-    idMap: Object.fromEntries(params.nodes.map((node, index) => [
-      node.id,
-      convertedNodes[index]?.id ?? elementIdByNode.get(node.id),
-    ])),
-  };
+  return result;
+}
+
+function clearDiagramPreview(api: ExcalidrawImperativeAPI, value: unknown) {
+  const version = finite(asRecord(value).__previewVersion, 0);
+  if (version < latestDiagramPreviewVersion) return { stale: true };
+  latestDiagramPreviewVersion = version;
+  const cleared = diagramPreviewElementIds.size;
+  const elements = withoutDiagramPreviewElements([...api.getSceneElements()]);
+  diagramPreviewElementIds.clear();
+  lastDiagramPreviewNodeCount = 0;
+  if (cleared > 0) {
+    api.updateScene({ elements, captureUpdate: CaptureUpdateAction.EVENTUALLY });
+  }
+  reportDiagramPreviewProgress(0, 0, version);
+  return { cleared };
 }
 
 function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown): AddParams {
@@ -371,10 +626,15 @@ function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown): AddPar
 
   const elements = params.elements.map((source, index) => {
     const item = { ...source };
-    item.x = finite(item.x, index * 24) + anchorX;
-    item.y = finite(item.y, index * 24) + anchorY;
-    item.width = Math.max(1, finite(item.width, 160));
-    item.height = Math.max(1, finite(item.height, 64));
+    item.x = snapModelCoordinate(finite(item.x, index * MODEL_GRID_SIZE) + anchorX);
+    item.y = snapModelCoordinate(finite(item.y, index * MODEL_GRID_SIZE) + anchorY);
+    item.width = snapModelSize(item.width, 160);
+    item.height = snapModelSize(item.height, 60);
+    if (Array.isArray(item.points)) {
+      item.points = item.points.map((point) => Array.isArray(point)
+        ? [snapModelCoordinate(point[0]), snapModelCoordinate(point[1])]
+        : point);
+    }
 
     if (item.type === "arrow") {
       for (const endpoint of ["start", "end"] as const) {
@@ -403,7 +663,7 @@ async function addElements(api: ExcalidrawImperativeAPI, value: unknown) {
   if (params.scrollTo !== false) {
     await api.scrollToContent(created, { fitToViewport: true, animate: true });
   }
-  return { count: created.length, ids: created.map((element) => element.id) };
+  return { count: created.length, ids: created.map((element) => element.id), grid: gridResult() };
 }
 
 function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
@@ -427,9 +687,9 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
     }
     const requested = updates.get(element.id);
     if (!requested) return [element];
-    const safeProps = Object.fromEntries(
+    const safeProps = snapModelGeometry(Object.fromEntries(
       Object.entries(asRecord(requested)).filter(([key]) => !protectedProps.has(key)),
-    );
+    ));
     updated += 1;
     return [
       {
@@ -443,7 +703,7 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
   });
 
   api.updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
-  return { updated, deleted, skipped };
+  return { updated, deleted, skipped, grid: gridResult() };
 }
 
 function mutationResult(api: ExcalidrawImperativeAPI, result: Record<string, unknown>) {
@@ -479,6 +739,10 @@ export async function handleCanvasRequest(
     }
     case "layout-diagram":
       return mutationResult(api, await layoutDiagram(api, request.params));
+    case "preview-diagram":
+      return layoutDiagram(api, request.params, true);
+    case "clear-diagram-preview":
+      return clearDiagramPreview(api, request.params);
     case "add-elements":
       return mutationResult(api, await addElements(api, request.params));
     case "clear-scene": {
@@ -502,6 +766,8 @@ export function subscribeToCanvasRequests(
   const mutationOperations = new Set<CanvasRequest["op"]>([
     "add-shape",
     "layout-diagram",
+    "preview-diagram",
+    "clear-diagram-preview",
     "add-elements",
     "clear-scene",
     "apply-patch",

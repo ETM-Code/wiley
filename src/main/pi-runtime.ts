@@ -17,6 +17,7 @@ import type { AgentEvent, JobSummary } from "./contracts";
 import type { RuntimeLedger } from "./ledger";
 import { TranscriptStore } from "./transcript";
 import { CanvasBridge } from "./canvas-bridge";
+import { stableDiagramPreview } from "./diagram-preview";
 import { CatastrophicCommandGuard, ReadBeforeEditGuard } from "./safety";
 import { VoiceBridge } from "./voice-bridge";
 
@@ -79,6 +80,9 @@ export class PiRuntime {
   #pendingSubQuestions = new Map<string, (answer: string) => void>();
   #currentJobId?: string;
   #eventListeners = new Set<(event: AgentEvent) => void>();
+  #diagramPreviewTimer?: NodeJS.Timeout;
+  #pendingDiagramPreview?: Record<string, unknown>;
+  #lastDiagramPreviewSignature = "";
 
   constructor(
     private readonly projectDir: string,
@@ -178,6 +182,7 @@ export class PiRuntime {
 
   async abort(reason = "User stopped the current work"): Promise<void> {
     this.#rootGeneration += 1;
+    this.#clearDiagramPreview();
     const main = this.#main;
     if (main?.isStreaming) await main.abort();
     await Promise.allSettled(
@@ -321,8 +326,33 @@ export class PiRuntime {
       defineTool({
         name: "draw_diagram",
         label: "Draw Diagram",
-        description: "Draw one structured graph with unique component nodes and one- or two-word edge labels. Supply nodes and edges, never coordinates. Layout, viewport fitting, and perimeter bindings are automatic: every connector stops at node edges and never targets node centers.",
-        parameters: Type.Object({ nodes: Type.Array(Type.Any()), edges: Type.Array(Type.Any()), anchor: Type.Optional(Type.String()) }),
+        description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Layout, hidden 20 px grid snapping, viewport fitting, and perimeter bindings are automatic. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection.",
+        parameters: Type.Object({
+          title: Type.Optional(Type.String()),
+          nodes: Type.Array(Type.Object({
+            id: Type.String(),
+            label: Type.String(),
+            shape: Type.Optional(Type.Union([
+              Type.Literal("rectangle"),
+              Type.Literal("diamond"),
+              Type.Literal("ellipse"),
+            ])),
+            backgroundColor: Type.Optional(Type.String()),
+            strokeColor: Type.Optional(Type.String()),
+            rounded: Type.Optional(Type.Boolean()),
+          }, { additionalProperties: false })),
+          edges: Type.Array(Type.Object({
+            from: Type.String(),
+            to: Type.String(),
+            label: Type.Optional(Type.String()),
+          }, { additionalProperties: false })),
+          anchor: Type.Optional(Type.String()),
+          layout: Type.Optional(Type.Object({
+            direction: Type.Optional(Type.Union([Type.Literal("RIGHT"), Type.Literal("DOWN")])),
+            nodeSpacing: Type.Optional(Type.Number()),
+            layerSpacing: Type.Optional(Type.Number()),
+          }, { additionalProperties: false })),
+        }, { additionalProperties: false }),
         execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "layout-diagram", params, signal)),
       }),
       defineTool({
@@ -619,9 +649,25 @@ export class PiRuntime {
   #subscribeSession(session: AgentSession, agentId: string, jobId: () => string, parentAgentId?: string): void {
     session.subscribe((event) => {
       const value = event as unknown as Record<string, unknown>;
-      if (value.type === "tool_execution_start") {
+      if (value.type === "message_update" && agentId === "root") {
+        const update = value.assistantMessageEvent as Record<string, unknown> | undefined;
+        if (update?.type === "toolcall_delta" || update?.type === "toolcall_end") {
+          const toolCall = update.type === "toolcall_end"
+            ? update.toolCall as Record<string, unknown> | undefined
+            : ((update.partial as { content?: unknown[] } | undefined)?.content?.[Number(update.contentIndex)] as Record<string, unknown> | undefined);
+          if (toolCall?.name === "draw_diagram") {
+            this.#queueDiagramPreview(toolCall.arguments, update.type === "toolcall_end");
+          }
+        } else if (update?.type === "error") {
+          this.#clearDiagramPreview();
+        }
+      } else if (value.type === "tool_execution_start") {
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_started", payload: this.#redact({ toolName: value.toolName, input: value.args ?? value.input }) });
       } else if (value.type === "tool_execution_end") {
+        if (agentId === "root" && value.toolName === "draw_diagram") {
+          if (value.isError) this.#clearDiagramPreview();
+          else this.#resetDiagramPreviewQueue();
+        }
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_completed", payload: this.#redact({ toolName: value.toolName, isError: value.isError, result: value.result }) });
       } else if (value.type === "tool_execution_update") {
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_progress", payload: this.#redact(value) });
@@ -629,6 +675,44 @@ export class PiRuntime {
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "assistant_message", payload: this.#redact(value.message) });
       }
     });
+  }
+
+  #queueDiagramPreview(value: unknown, immediate: boolean): void {
+    const preview = stableDiagramPreview(value);
+    if (!preview) return;
+    const signature = JSON.stringify(preview);
+    if (signature === this.#lastDiagramPreviewSignature) return;
+    this.#lastDiagramPreviewSignature = signature;
+    this.#pendingDiagramPreview = preview;
+    if (immediate) {
+      if (this.#diagramPreviewTimer) clearTimeout(this.#diagramPreviewTimer);
+      this.#diagramPreviewTimer = undefined;
+      this.#flushDiagramPreview();
+      return;
+    }
+    if (this.#diagramPreviewTimer) return;
+    this.#diagramPreviewTimer = setTimeout(() => {
+      this.#diagramPreviewTimer = undefined;
+      this.#flushDiagramPreview();
+    }, 90);
+  }
+
+  #flushDiagramPreview(): void {
+    const preview = this.#pendingDiagramPreview;
+    this.#pendingDiagramPreview = undefined;
+    if (preview) this.canvas.previewDiagram(preview);
+  }
+
+  #resetDiagramPreviewQueue(): void {
+    if (this.#diagramPreviewTimer) clearTimeout(this.#diagramPreviewTimer);
+    this.#diagramPreviewTimer = undefined;
+    this.#pendingDiagramPreview = undefined;
+    this.#lastDiagramPreviewSignature = "";
+  }
+
+  #clearDiagramPreview(): void {
+    this.#resetDiagramPreviewQueue();
+    this.canvas.clearDiagramPreview();
   }
 
   async #emit(event: Omit<AgentEvent, "id" | "sequence" | "at">): Promise<void> {
