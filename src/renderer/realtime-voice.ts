@@ -2,6 +2,7 @@ import { bridge, type VoiceInjection } from "./bridge";
 
 export type VoiceState = {
   microphoneEnabled: boolean;
+  microphoneStarting: boolean;
   userSpeechActive: boolean;
   assistantAudioActive: boolean;
   connected: boolean;
@@ -99,6 +100,7 @@ export class RealtimeVoiceController {
   private unsubscribeVoice: () => void;
   private state: VoiceState = {
     microphoneEnabled: false,
+    microphoneStarting: false,
     userSpeechActive: false,
     assistantAudioActive: false,
     connected: false,
@@ -126,17 +128,46 @@ export class RealtimeVoiceController {
   }
 
   async setMicrophoneEnabled(enabled: boolean): Promise<void> {
-    if (enabled && !this.channel) await this.connect();
-    const track = this.stream?.getAudioTracks()[0];
-    if (track) track.enabled = enabled;
-    await bridge.setMicrophoneEnabled(enabled);
+    if (!enabled) {
+      const track = this.stream?.getAudioTracks()[0];
+      if (track) track.enabled = false;
+      await bridge.setMicrophoneEnabled(false);
+      this.update({
+        microphoneEnabled: false,
+        microphoneStarting: false,
+        dictationStatus: this.state.dictationText ? "heard" : "idle",
+      });
+      return;
+    }
+
+    // Token minting and WebRTC setup can take several seconds. Reflect the
+    // user's click immediately instead of leaving the control looking inert.
     this.update({
-      microphoneEnabled: enabled,
-      dictationStatus: enabled ? "listening" : this.state.dictationText ? "heard" : "idle",
+      microphoneEnabled: true,
+      microphoneStarting: true,
+      dictationStatus: "processing",
     });
+    try {
+      if (!this.channel) await this.connect();
+      const track = this.stream?.getAudioTracks()[0];
+      if (track) track.enabled = true;
+      await bridge.setMicrophoneEnabled(true);
+      this.update({ microphoneStarting: false, dictationStatus: "listening" });
+    } catch (error) {
+      const track = this.stream?.getAudioTracks()[0];
+      if (track) track.enabled = false;
+      void bridge.setMicrophoneEnabled(false).catch(() => undefined);
+      this.update({
+        microphoneEnabled: false,
+        microphoneStarting: false,
+        dictationStatus: this.state.dictationText ? "heard" : "idle",
+      });
+      throw error;
+    }
   }
 
   async toggleMicrophone(): Promise<void> {
+    if (this.state.microphoneStarting) return;
     return this.setMicrophoneEnabled(!this.state.microphoneEnabled);
   }
 

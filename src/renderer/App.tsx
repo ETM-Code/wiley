@@ -94,6 +94,9 @@ export default function App() {
   const snapshotTimerRef = useRef<number | null>(null);
   const boardRevisionRef = useRef(0);
   const boardReadyRef = useRef(false);
+  const lastSubmittedElementsRef = useRef("");
+  const snapshotPendingRef = useRef(false);
+  const canvasMutationActiveRef = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [status, setStatus] = useState<AgentStatus>({ agentRunning: false, subagents: [] });
   const [toast, setToast] = useState<string | null>(null);
@@ -119,10 +122,6 @@ export default function App() {
       try {
         const next = await bridge.getAgentStatus();
         if (active) {
-          if (typeof next.boardRevision === "number") {
-            boardRevisionRef.current = Math.max(boardRevisionRef.current, next.boardRevision);
-          }
-          boardReadyRef.current = true;
           setStatus(next);
         }
       } catch {
@@ -138,7 +137,21 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => subscribeToCanvasRequests(() => apiRef.current, setToast), []);
+  useEffect(
+    () => subscribeToCanvasRequests(
+      () => apiRef.current,
+      setToast,
+      (active) => {
+        canvasMutationActiveRef.current = active;
+        if (active && snapshotTimerRef.current !== null) {
+          window.clearTimeout(snapshotTimerRef.current);
+          snapshotTimerRef.current = null;
+          snapshotPendingRef.current = false;
+        }
+      },
+    ),
+    [],
+  );
 
   useEffect(
     () => () => {
@@ -153,10 +166,77 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
+  const syncVisibleCanvas = useCallback(async () => {
+    if (document.visibilityState !== "visible") return false;
+    // The backend snapshot is only committed after a canvas tool completes.
+    // Applying it while a diagram is streaming would replace the partial scene
+    // with the previous revision between frames.
+    if (canvasMutationActiveRef.current) return true;
+    const api = apiRef.current;
+    if (!api) return false;
+    await bridge.activateCanvas();
+    const snapshot = await bridge.getBoardSnapshot();
+    if (!snapshot) return false;
+    const validElements = snapshot.elements.every((element) =>
+      [element.x, element.y, element.width, element.height].every(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      ),
+    );
+    if (!validElements) return true;
+    const current = api.getSceneElements();
+    const currentFingerprint = JSON.stringify(current);
+    const canonicalFingerprint = JSON.stringify(snapshot.elements);
+    let applied = false;
+    if (!snapshotPendingRef.current
+      && snapshot.revision >= boardRevisionRef.current
+      && currentFingerprint !== canonicalFingerprint) {
+      lastSubmittedElementsRef.current = canonicalFingerprint;
+      api.updateScene({
+        elements: snapshot.elements as unknown as Parameters<ExcalidrawImperativeAPI["updateScene"]>[0]["elements"],
+      });
+      boardRevisionRef.current = snapshot.revision;
+      applied = true;
+    } else {
+      boardRevisionRef.current = Math.max(boardRevisionRef.current, snapshot.revision);
+    }
+    boardReadyRef.current = true;
+    if (applied && snapshot.elements.length > 0) {
+      await api.scrollToContent(api.getSceneElements(), {
+        fitToViewport: true,
+        viewportZoomFactor: 0.9,
+        animate: false,
+      });
+    }
+    return true;
+  }, []);
+
   const captureApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
     (window as unknown as { excalidrawAPI?: ExcalidrawImperativeAPI }).excalidrawAPI = api;
-  }, []);
+    void syncVisibleCanvas().catch(() => undefined);
+  }, [syncVisibleCanvas]);
+
+  useEffect(() => {
+    let retry: number | undefined;
+    const activate = () => {
+      window.clearTimeout(retry);
+      void syncVisibleCanvas().then((ready) => {
+        if (!ready) retry = window.setTimeout(activate, 1_000);
+      }).catch(() => {
+        retry = window.setTimeout(activate, 1_000);
+      });
+    };
+    window.addEventListener("focus", activate);
+    document.addEventListener("visibilitychange", activate);
+    const syncTimer = window.setInterval(activate, 2_000);
+    activate();
+    return () => {
+      window.removeEventListener("focus", activate);
+      document.removeEventListener("visibilitychange", activate);
+      window.clearInterval(syncTimer);
+      window.clearTimeout(retry);
+    };
+  }, [syncVisibleCanvas]);
 
   const toggleMicrophone = useCallback(async () => {
     try {
@@ -169,21 +249,45 @@ export default function App() {
   const submitCanvasSnapshot = useCallback(
     (elements: readonly Record<string, unknown>[], appState: Record<string, unknown>, files: Record<string, unknown>) => {
       if (!boardReadyRef.current) return;
+      // Progressive agent frames are transient. The canvas bridge persists the
+      // final board snapshot atomically with the successful tool response.
+      if (canvasMutationActiveRef.current) return;
+      const elementCopies = elements.map((element) => ({ ...element }));
+      const elementsFingerprint = JSON.stringify(elementCopies);
+      if (elementsFingerprint === lastSubmittedElementsRef.current) return;
+      snapshotPendingRef.current = true;
       if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
-      snapshotTimerRef.current = window.setTimeout(() => {
-        boardRevisionRef.current += 1;
-        bridge.submitBoardSnapshot({
-          revision: boardRevisionRef.current,
-          elements: elements.map((element) => ({ ...element })),
-          appState: {
-            viewBackgroundColor: appState.viewBackgroundColor,
-            scrollX: appState.scrollX,
-            scrollY: appState.scrollY,
-            zoom: appState.zoom,
-          },
-          files,
-        });
-      }, 120);
+      const submit = async () => {
+        if (canvasMutationActiveRef.current) {
+          snapshotPendingRef.current = false;
+          snapshotTimerRef.current = null;
+          return;
+        }
+        const proposedRevision = boardRevisionRef.current + 1;
+        try {
+          const accepted = await bridge.submitBoardSnapshot({
+            revision: proposedRevision,
+            elements: elementCopies,
+            appState: {
+              viewBackgroundColor: appState.viewBackgroundColor,
+              scrollX: typeof appState.scrollX === "number" && Number.isFinite(appState.scrollX) ? appState.scrollX : 0,
+              scrollY: typeof appState.scrollY === "number" && Number.isFinite(appState.scrollY) ? appState.scrollY : 0,
+              zoom: appState.zoom && typeof appState.zoom === "object"
+                ? { ...appState.zoom, value: Number.isFinite((appState.zoom as { value?: number }).value)
+                  ? (appState.zoom as { value: number }).value
+                  : 1 }
+                : { value: 1 },
+            },
+            files,
+          });
+          boardRevisionRef.current = Math.max(proposedRevision, accepted?.revision ?? 0);
+          lastSubmittedElementsRef.current = elementsFingerprint;
+          snapshotPendingRef.current = false;
+        } catch {
+          snapshotTimerRef.current = window.setTimeout(() => void submit(), 750);
+        }
+      };
+      snapshotTimerRef.current = window.setTimeout(() => void submit(), 120);
     },
     [],
   );
@@ -230,7 +334,9 @@ export default function App() {
             aria-atomic="true"
           >
             <span className="dictation-pill__state">
-              {voiceState.dictationStatus === "processing"
+              {voiceState.microphoneStarting
+                ? "Starting"
+                : voiceState.dictationStatus === "processing"
                 ? "Understanding"
                 : voiceState.dictationStatus === "heard"
                   ? "Heard"
@@ -239,18 +345,25 @@ export default function App() {
                     : "Ready"}
             </span>
             <span className={`dictation-pill__text${voiceState.dictationText ? "" : " dictation-pill__text--empty"}`}>
-              {voiceState.dictationText || (voiceState.userSpeechActive ? "Speak naturally…" : "Say something…")}
+              {voiceState.dictationText
+                || (voiceState.microphoneStarting
+                  ? "Connecting microphone…"
+                  : voiceState.userSpeechActive
+                    ? "Speak naturally…"
+                    : "Say something…")}
             </span>
           </div>
         ) : null}
 
         <button
           type="button"
-          className={`microphone-button${microphoneEnabled ? " microphone-button--active" : ""}`}
+          className={`microphone-button${microphoneEnabled ? " microphone-button--active" : ""}${voiceState.microphoneStarting ? " microphone-button--starting" : ""}`}
           onClick={() => void toggleMicrophone()}
-          aria-label={microphoneEnabled ? "Mute microphone" : "Unmute microphone"}
+          aria-label={voiceState.microphoneStarting ? "Starting microphone" : microphoneEnabled ? "Mute microphone" : "Unmute microphone"}
           aria-pressed={microphoneEnabled}
-          title={microphoneEnabled ? "Mute microphone" : "Unmute microphone"}
+          aria-busy={voiceState.microphoneStarting}
+          disabled={voiceState.microphoneStarting}
+          title={voiceState.microphoneStarting ? "Starting microphone" : microphoneEnabled ? "Mute microphone" : "Unmute microphone"}
         >
           <MicrophoneIcon muted={!microphoneEnabled} />
         </button>

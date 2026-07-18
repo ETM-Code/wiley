@@ -312,16 +312,23 @@ export class PiRuntime {
         },
       }),
       defineTool({
+        name: "clear_canvas",
+        label: "Clear Canvas",
+        description: "Immediately remove every element from the canvas. Use this before drawing when the user asks to clear, replace, remove all, or start over.",
+        parameters: Type.Object({}),
+        execute: async (_id, _params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "clear-scene", {}, signal)),
+      }),
+      defineTool({
         name: "draw_diagram",
         label: "Draw Diagram",
-        description: "Draw a structured graph. Supply nodes and edges, never coordinates; layout is automatic.",
+        description: "Draw one structured graph with unique component nodes and one- or two-word edge labels. Supply nodes and edges, never coordinates. Layout, viewport fitting, and perimeter bindings are automatic: every connector stops at node edges and never targets node centers.",
         parameters: Type.Object({ nodes: Type.Array(Type.Any()), edges: Type.Array(Type.Any()), anchor: Type.Optional(Type.String()) }),
         execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "layout-diagram", params, signal)),
       }),
       defineTool({
         name: "draw_on_canvas",
         label: "Draw On Canvas",
-        description: "Add sanitized Excalidraw skeleton elements, optionally placed near an existing id.",
+        description: "Add sanitized Excalidraw skeleton elements, optionally placed near an existing id. Any arrow connecting nodes must use start and end element bindings so it terminates at their visible edges; never aim arrow coordinates at box centers.",
         parameters: Type.Object({ elements: Type.Array(Type.Any()), placeNear: Type.Optional(Type.String()), scrollTo: Type.Optional(Type.Boolean()) }),
         execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "add-elements", params, signal)),
       }),
@@ -635,7 +642,7 @@ export class PiRuntime {
 
   async #mutateCanvas(
     agentId: string,
-    operation: "add-shape" | "layout-diagram" | "add-elements" | "apply-patch",
+    operation: "add-shape" | "layout-diagram" | "add-elements" | "clear-scene" | "apply-patch",
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<unknown> {

@@ -131,11 +131,13 @@ let activeCanvasClientId: string | undefined;
 const canvas = new CanvasBridge(
   ledger,
   (request) => {
-    const clientId = hub.hasRecentClient(activeCanvasClientId) ? activeCanvasClientId : hub.latestClientId;
-    if (!hub.hasRecentClient(clientId)) return false;
-    return hub.publish(IPC.canvasRequest, request, clientId);
+    // Keep every open renderer mirror in sync. The first response resolves the
+    // request; later identical responses are ignored by CanvasBridge. Human
+    // snapshots remain restricted to the explicitly active tab below.
+    if (!hub.latestClientId) return false;
+    return hub.publish(IPC.canvasRequest, request);
   },
-  (transaction) => hub.publish(IPC.boardTransactions, transaction, activeCanvasClientId),
+  (transaction) => hub.publish(IPC.boardTransactions, transaction),
 );
 const voice = new VoiceBridge((message) => hub.publish(IPC.voiceInject, message));
 const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice);
@@ -184,6 +186,9 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/status") {
       return sendJson(response, 200, runtime.getState());
     }
+    if (request.method === "GET" && url.pathname === "/api/board-state") {
+      return sendJson(response, 200, canvas.getSnapshot());
+    }
     if (request.method === "POST" && url.pathname === "/api/voice-token") {
       return sendJson(response, 200, await mintRealtimeToken());
     }
@@ -192,6 +197,12 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/microphone") {
       if (typeof body.enabled !== "boolean") throw new Error("enabled must be boolean");
       return sendJson(response, 200, runtime.setMicrophoneEnabled(body.enabled));
+    }
+    if (request.method === "POST" && url.pathname === "/api/client-active") {
+      const clientId = String(request.headers["x-wiley-client-id"] ?? "").trim();
+      if (!clientId) throw new Error("Missing browser client id");
+      activeCanvasClientId = clientId;
+      return sendJson(response, 200, { ok: true });
     }
     if (request.method === "POST" && url.pathname === "/api/transcript") {
       const role = body.role as TranscriptRole | undefined;
@@ -209,8 +220,14 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/board-snapshot") {
       const clientId = String(request.headers["x-wiley-client-id"] ?? "").trim();
-      if (clientId) activeCanvasClientId = clientId;
-      return sendJson(response, 200, canvas.submitHumanSnapshot(body as unknown as BoardSnapshot));
+      // Only the tab that explicitly announced itself as visible/focused may
+      // author the canonical board. Background tabs still receive events, but
+      // their passive Excalidraw onChange callbacks must never steal ownership
+      // or overwrite the active scene.
+      if (clientId && activeCanvasClientId && clientId !== activeCanvasClientId) {
+        return sendJson(response, 200, canvas.getSnapshot());
+      }
+      return sendJson(response, 200, await canvas.submitHumanSnapshot(body as unknown as BoardSnapshot));
     }
     if (request.method === "POST" && url.pathname === "/api/canvas-response") {
       canvas.acceptResponse(body as unknown as CanvasResponse);

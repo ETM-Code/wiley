@@ -10,7 +10,7 @@ interface PendingRequest {
 export class CanvasBridge {
   #sequence = 0;
   #pending = new Map<number, PendingRequest>();
-  #snapshot: BoardSnapshot = { revision: 0, elements: [], appState: {} };
+  #snapshot: BoardSnapshot;
   #leases = new Map<string, { agentId: string; elementIds: Set<string>; expiresAt: number }>();
 
   constructor(
@@ -18,7 +18,19 @@ export class CanvasBridge {
     private readonly sendRequest: (request: CanvasRequest) => boolean | void,
     private readonly sendTransaction: (transaction: BoardTransaction) => void,
     private readonly timeoutMs = 15_000,
-  ) {}
+  ) {
+    this.#snapshot = { revision: 0, elements: [], appState: {} };
+    const persisted = ledger.getBoardSnapshot();
+    if (persisted) {
+      try {
+        this.#validateSnapshot(persisted);
+        this.#snapshot = structuredClone(persisted);
+      } catch {
+        // Never poison a new runtime with a scene that an older build allowed
+        // to persist. The invalid row remains available for forensic recovery.
+      }
+    }
+  }
 
   request<T = unknown>(op: CanvasRequest["op"], params?: unknown, signal?: AbortSignal): Promise<T> {
     const id = ++this.#sequence;
@@ -63,16 +75,25 @@ export class CanvasBridge {
     else pending.resolve(response.result);
   }
 
-  submitHumanSnapshot(snapshot: BoardSnapshot): BoardSnapshot {
-    if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < this.#snapshot.revision) {
-      throw new Error(`Stale board snapshot ${snapshot.revision}; current revision is ${this.#snapshot.revision}`);
+  async submitHumanSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot> {
+    if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) {
+      throw new Error(`Invalid board snapshot revision ${snapshot.revision}`);
     }
+    this.#validateSnapshot(snapshot);
     const previous = new Map(this.#snapshot.elements.map((element) => [String(element.id ?? ""), JSON.stringify(element)]));
     const next = new Map(snapshot.elements.map((element) => [String(element.id ?? ""), JSON.stringify(element)]));
     const changedIds = new Set<string>();
     for (const [id, value] of next) if (previous.get(id) !== value) changedIds.add(id);
     for (const id of previous.keys()) if (!next.has(id)) changedIds.add(id);
-    this.#snapshot = structuredClone(snapshot);
+    // The renderer may not yet know that an agent transaction advanced the
+    // gateway revision. It is the authoritative source for the resulting
+    // scene, so normalize its snapshot to the next canonical revision instead
+    // of discarding correct content as stale.
+    this.#snapshot = structuredClone({
+      ...snapshot,
+      revision: Math.max(snapshot.revision, this.#snapshot.revision + 1),
+    });
+    await this.ledger.putBoardSnapshot(this.#snapshot);
     for (const [id, lease] of this.#leases) {
       if ([...lease.elementIds].some((elementId) => changedIds.has(elementId))) this.#leases.delete(id);
     }
@@ -123,8 +144,23 @@ export class CanvasBridge {
     await this.ledger.appendBoardTransaction(transaction);
     this.sendTransaction(transaction);
 
-    const result = await this.request(transaction.operation, transaction.params, signal);
-    this.#snapshot.revision += 1;
+    const response = await this.request<Record<string, unknown>>(transaction.operation, transaction.params, signal);
+    const rendered = response.__boardSnapshot as Omit<BoardSnapshot, "revision"> | undefined;
+    const result = { ...response };
+    delete result.__boardSnapshot;
+    if (rendered && Array.isArray(rendered.elements)) {
+      const nextSnapshot = structuredClone({
+        revision: this.#snapshot.revision + 1,
+        elements: rendered.elements,
+        appState: rendered.appState ?? {},
+        files: rendered.files,
+      });
+      this.#validateSnapshot(nextSnapshot);
+      this.#snapshot = nextSnapshot;
+      await this.ledger.putBoardSnapshot(this.#snapshot);
+    } else {
+      this.#snapshot.revision += 1;
+    }
     return { revision: this.#snapshot.revision, result };
   }
 
@@ -156,6 +192,17 @@ export class CanvasBridge {
     if (serialized.length > 2_000_000) throw new Error("Canvas transaction exceeds 2 MB");
     if (/\b(?:NaN|Infinity|-Infinity)\b/.test(serialized)) {
       throw new Error("Canvas transaction contains non-finite geometry");
+    }
+  }
+
+  #validateSnapshot(snapshot: BoardSnapshot): void {
+    for (const element of snapshot.elements) {
+      if (element.isDeleted === true) continue;
+      for (const key of ["x", "y", "width", "height"] as const) {
+        if (typeof element[key] !== "number" || !Number.isFinite(element[key])) {
+          throw new Error(`Canvas element ${String(element.id ?? "unknown")} has invalid ${key}`);
+        }
+      }
     }
   }
 

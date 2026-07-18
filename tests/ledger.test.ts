@@ -72,6 +72,11 @@ describe("durable ledgers", () => {
       operation: "add-elements",
       params: { elements: [] },
     });
+    await ledger.putBoardSnapshot({
+      revision: 7,
+      elements: [{ id: "shape-1", type: "rectangle", x: 10, y: 20, width: 100, height: 80 }],
+      appState: { viewBackgroundColor: "#ffffff" },
+    });
     ledger.close();
 
     const reopened = new SqliteRuntimeLedger(file);
@@ -80,6 +85,11 @@ describe("durable ledgers", () => {
     expect(reopened.getAgentEvents()).toHaveLength(1);
     expect(reopened.getJob("job-1")?.status).toBe("running");
     expect(reopened.hasBoardTransaction("same-change-once")).toBe(true);
+    expect(reopened.getBoardSnapshot()).toEqual({
+      revision: 7,
+      elements: [{ id: "shape-1", type: "rectangle", x: 10, y: 20, width: 100, height: 80 }],
+      appState: { viewBackgroundColor: "#ffffff" },
+    });
     reopened.close();
   });
 });

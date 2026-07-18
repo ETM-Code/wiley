@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   AgentEvent,
   BoardTransaction,
+  BoardSnapshot,
   JobSummary,
   JsonlRecord,
   TranscriptEntry,
@@ -20,6 +21,8 @@ export interface RuntimeLedger {
   listJobs(): JobSummary[];
   appendBoardTransaction(transaction: BoardTransaction): Promise<void>;
   hasBoardTransaction(idempotencyKey: string): boolean;
+  putBoardSnapshot(snapshot: BoardSnapshot): Promise<void>;
+  getBoardSnapshot(): BoardSnapshot | undefined;
 }
 
 /**
@@ -36,6 +39,7 @@ export class JsonlRuntimeLedger implements RuntimeLedger {
   #events: AgentEvent[] = [];
   #jobs = new Map<string, JobSummary>();
   #transactionKeys = new Set<string>();
+  #boardSnapshot?: BoardSnapshot;
 
   constructor(file: string) {
     this.#file = file;
@@ -137,6 +141,15 @@ export class JsonlRuntimeLedger implements RuntimeLedger {
     return this.#transactionKeys.has(idempotencyKey);
   }
 
+  async putBoardSnapshot(snapshot: BoardSnapshot): Promise<void> {
+    await this.#append({ kind: "board_snapshot", at: new Date().toISOString(), data: snapshot });
+    this.#boardSnapshot = structuredClone(snapshot);
+  }
+
+  getBoardSnapshot(): BoardSnapshot | undefined {
+    return this.#boardSnapshot ? structuredClone(this.#boardSnapshot) : undefined;
+  }
+
   async #append(record: JsonlRecord): Promise<void> {
     const run = this.#writeTail.then(async () => {
       const handle = await open(this.#file, "a", 0o600);
@@ -166,6 +179,9 @@ export class JsonlRuntimeLedger implements RuntimeLedger {
       }
       case "board_transaction":
         this.#transactionKeys.add((record.data as BoardTransaction).idempotencyKey);
+        break;
+      case "board_snapshot":
+        this.#boardSnapshot = structuredClone(record.data as BoardSnapshot);
         break;
     }
   }
@@ -208,6 +224,11 @@ export class SqliteRuntimeLedger implements RuntimeLedger {
       CREATE TABLE IF NOT EXISTS board_transactions (
         idempotency_key TEXT PRIMARY KEY,
         at TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS board_snapshot (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        revision INTEGER NOT NULL,
         data TEXT NOT NULL
       );
     `);
@@ -306,6 +327,18 @@ export class SqliteRuntimeLedger implements RuntimeLedger {
         .prepare("SELECT 1 AS found FROM board_transactions WHERE idempotency_key = ?")
         .get(idempotencyKey),
     );
+  }
+
+  async putBoardSnapshot(snapshot: BoardSnapshot): Promise<void> {
+    this.#requireDb().prepare(`
+      INSERT INTO board_snapshot (singleton, revision, data) VALUES (1, ?, ?)
+      ON CONFLICT(singleton) DO UPDATE SET revision = excluded.revision, data = excluded.data
+    `).run(snapshot.revision, JSON.stringify(snapshot));
+  }
+
+  getBoardSnapshot(): BoardSnapshot | undefined {
+    const row = this.#requireDb().prepare("SELECT data FROM board_snapshot WHERE singleton = 1").get();
+    return row ? JSON.parse(String(row.data)) as BoardSnapshot : undefined;
   }
 
   close(): void {

@@ -12,6 +12,7 @@ export type CanvasRequest = {
     | "add-shape"
     | "layout-diagram"
     | "add-elements"
+    | "clear-scene"
     | "apply-patch";
   params?: unknown;
 };
@@ -73,6 +74,8 @@ type PreloadApi = {
   onCanvasRequest?: (listener: (request: CanvasRequest) => void) => Unsubscribe | void;
   respondCanvasRequest?: (response: CanvasResponse) => Promise<void> | void;
   getAgentStatus?: () => Promise<AgentStatus>;
+  getBoardSnapshot?: () => Promise<BoardSnapshot | undefined>;
+  activateCanvas?: () => Promise<unknown>;
   setMicrophoneEnabled?: (enabled: boolean) => Promise<unknown>;
   onAgentStatus?: (listener: (status: AgentStatus) => void) => Unsubscribe | void;
   onRuntimeState?: (listener: (status: RuntimeStateLike) => void) => Unsubscribe | void;
@@ -135,6 +138,8 @@ function createBrowserApi(): PreloadApi {
     onCanvasRequest: (listener) => subscribe("canvas:request", listener),
     respondCanvasRequest: (response) => fetchJson("/api/canvas-response", { method: "POST", body: JSON.stringify(response) }),
     getAgentStatus: () => fetchJson<AgentStatus>("/api/status"),
+    getBoardSnapshot: () => fetchJson<BoardSnapshot>("/api/board-state"),
+    activateCanvas: () => fetchJson("/api/client-active", { method: "POST", body: "{}" }),
     setMicrophoneEnabled: (enabled) => fetchJson("/api/microphone", { method: "POST", body: JSON.stringify({ enabled }) }),
     onRuntimeState: (listener) => subscribe("runtime:state", listener),
     submitBoardSnapshot: (snapshot) => fetchJson("/api/board-snapshot", { method: "POST", body: JSON.stringify(snapshot) }),
@@ -213,6 +218,14 @@ export const bridge = {
     return normalizeStatus(await preload()?.getAgentStatus?.());
   },
 
+  async getBoardSnapshot(): Promise<BoardSnapshot | undefined> {
+    return preload()?.getBoardSnapshot?.();
+  },
+
+  async activateCanvas(): Promise<void> {
+    await preload()?.activateCanvas?.();
+  },
+
   async setMicrophoneEnabled(enabled: boolean): Promise<void> {
     await preload()?.setMicrophoneEnabled?.(enabled);
   },
@@ -223,8 +236,8 @@ export const bridge = {
     return optionalSubscription(api?.onRuntimeState?.((status) => listener(normalizeStatus(status))));
   },
 
-  submitBoardSnapshot(snapshot: BoardSnapshot): void {
-    ignoreRejected(preload()?.submitBoardSnapshot?.(snapshot));
+  async submitBoardSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot | undefined> {
+    return await preload()?.submitBoardSnapshot?.(snapshot) as BoardSnapshot | undefined;
   },
 
   async isVoiceDisabled(): Promise<boolean> {

@@ -93,6 +93,7 @@ export interface CanvasRequest {
     | "add-shape"
     | "layout-diagram"
     | "add-elements"
+    | "clear-scene"
     | "apply-patch";
   params?: unknown;
 }
@@ -111,7 +112,7 @@ export interface BoardTransaction {
   baseRevision: number;
   leaseIds?: string[];
   summary: string;
-  operation: "add-shape" | "layout-diagram" | "add-elements" | "apply-patch";
+  operation: "add-shape" | "layout-diagram" | "add-elements" | "clear-scene" | "apply-patch";
   params: unknown;
 }
 
@@ -136,7 +137,7 @@ export interface VoiceInjection {
 }
 
 export interface JsonlRecord {
-  kind: "transcript" | "agent_event" | "job" | "board_transaction";
+  kind: "transcript" | "agent_event" | "job" | "board_transaction" | "board_snapshot";
   at: string;
   data: unknown;
 }

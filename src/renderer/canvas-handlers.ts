@@ -6,6 +6,7 @@ import {
 } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import ELK from "elkjs/lib/elk.bundled";
+import type { ElkExtendedEdge } from "elkjs/lib/elk-api";
 
 import { bridge, type CanvasRequest } from "./bridge";
 
@@ -30,6 +31,29 @@ type ShapeParams = {
 };
 
 const elk = new ELK();
+
+function pauseForStreaming(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(() => {
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => resolve());
+      return;
+    }
+    resolve();
+  }, milliseconds));
+}
+
+function reportCanvasStreamProgress(visibleElements: number, totalElements: number): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.wileyCanvasStream = `${visibleElements}/${totalElements}`;
+  const entry = `${Math.round(performance.now())}:${visibleElements}/${totalElements}`;
+  const previous = visibleElements === 0
+    ? []
+    : (document.documentElement.dataset.wileyCanvasStreamTrace ?? "").split("|").filter(Boolean);
+  document.documentElement.dataset.wileyCanvasStreamTrace = [...previous, entry].slice(-128).join("|");
+  document.dispatchEvent(new CustomEvent("wiley:canvas-stream-progress", {
+    detail: { visibleElements, totalElements },
+  }));
+}
 
 function asRecord(value: unknown): JsonObject {
   return value && typeof value === "object" ? (value as JsonObject) : {};
@@ -87,13 +111,19 @@ function sceneSummary(elements: readonly SceneElement[]) {
 }
 
 function placementOrigin(api: ExcalidrawImperativeAPI, anchor?: string): { x: number; y: number } {
-  const elements = api.getSceneElements();
+  const elements = api.getSceneElements().filter(
+    (element) => Number.isFinite(element.x) && Number.isFinite(element.y)
+      && Number.isFinite(element.width) && Number.isFinite(element.height),
+  );
   const anchored = anchor ? elements.find((element) => element.id === anchor) : undefined;
   if (anchored) return { x: anchored.x + anchored.width + 100, y: anchored.y };
 
   if (elements.length === 0) {
     const state = api.getAppState();
-    return { x: Math.max(80, -state.scrollX + 120), y: Math.max(80, -state.scrollY + 120) };
+    return {
+      x: Math.max(80, -finite(state.scrollX) + 120),
+      y: Math.max(80, -finite(state.scrollY) + 120),
+    };
   }
 
   const right = Math.max(...elements.map((element) => element.x + element.width));
@@ -133,6 +163,10 @@ async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
   const created = convertToExcalidrawElements(
     [skeleton] as Parameters<typeof convertToExcalidrawElements>[0],
   );
+  if (created.some((element) => !Number.isFinite(element.x) || !Number.isFinite(element.y)
+    || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
+    throw new Error("Diagram layout produced invalid element geometry");
+  }
   api.updateScene({
     elements: [...api.getSceneElements(), ...created],
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
@@ -163,9 +197,11 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": "DOWN",
-      "elk.spacing.nodeNode": "64",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "96",
+      "elk.direction": "RIGHT",
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.spacing.nodeNode": "72",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
     },
     children: params.nodes.map((node) => ({ id: node.id, width: 180, height: 72 })),
     edges: (params.edges ?? []).map((edge, index) => ({
@@ -178,6 +214,9 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
   const origin = placementOrigin(api, params.anchor);
   const positions = new Map(
     (layout.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]),
+  );
+  const edgeSections = new Map(
+    ((layout.edges ?? []) as ElkExtendedEdge[]).map((edge) => [edge.id, edge.sections?.[0]]),
   );
   const idPrefix = `agent-${Date.now().toString(36)}`;
   const elementIdByNode = new Map(
@@ -197,27 +236,119 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown) {
     };
   });
   skeletons.push(
-    ...(params.edges ?? []).map((edge, index) => ({
-      id: `${idPrefix}-edge-${index}`,
-      type: "arrow",
-      start: { id: elementIdByNode.get(edge.from) },
-      end: { id: elementIdByNode.get(edge.to) },
-      ...(edge.label ? { label: { text: edge.label } } : {}),
-    })),
+    ...(params.edges ?? []).map((edge, index) => {
+      const from = positions.get(edge.from) ?? { x: 0, y: 0 };
+      const to = positions.get(edge.to) ?? { x: 0, y: 0 };
+      const fromCenter = { x: origin.x + from.x + 90, y: origin.y + from.y + 36 };
+      const toCenter = { x: origin.x + to.x + 90, y: origin.y + to.y + 36 };
+      const dx = toCenter.x - fromCenter.x;
+      const dy = toCenter.y - fromCenter.y;
+      const horizontal = Math.abs(dx) > Math.abs(dy);
+      const startX = horizontal ? fromCenter.x + Math.sign(dx || 1) * 90 : fromCenter.x;
+      const startY = horizontal ? fromCenter.y : fromCenter.y + Math.sign(dy || 1) * 36;
+      const endX = horizontal ? toCenter.x - Math.sign(dx || 1) * 90 : toCenter.x;
+      const endY = horizontal ? toCenter.y : toCenter.y - Math.sign(dy || 1) * 36;
+      const section = edgeSections.get(`edge-${index}`);
+      const routed = section?.startPoint && section.endPoint
+        ? [section.startPoint, ...(section.bendPoints ?? []), section.endPoint]
+        : undefined;
+      const routeOrigin = routed?.[0];
+      return {
+        id: `${idPrefix}-edge-${index}`,
+        type: "arrow",
+        x: routeOrigin ? origin.x + routeOrigin.x : startX,
+        y: routeOrigin ? origin.y + routeOrigin.y : startY,
+        points: routed && routeOrigin
+          ? routed.map((point) => [point.x - routeOrigin.x, point.y - routeOrigin.y])
+          : [[0, 0], [endX - startX, endY - startY]],
+        start: { id: elementIdByNode.get(edge.from) },
+        end: { id: elementIdByNode.get(edge.to) },
+        endArrowhead: "arrow",
+        ...(edge.label ? { label: { text: edge.label } } : {}),
+      };
+    }),
   );
 
   const created = convertToExcalidrawElements(
     skeletons as Parameters<typeof convertToExcalidrawElements>[0],
   );
+  if (created.some((element) => !Number.isFinite(element.x) || !Number.isFinite(element.y)
+    || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
+    throw new Error("Diagram layout produced invalid element geometry");
+  }
+  const existing = [...api.getSceneElements()];
+  // Excalidraw intentionally regenerates skeleton ids. Group converted primary
+  // elements with their bound labels using the converted container ids instead
+  // of trying to match the original skeleton ids.
+  const labelsByContainer = new Map<string, SceneElement[]>();
+  for (const element of created) {
+    const candidate = element as SceneElement & { containerId?: string | null };
+    if (element.type !== "text" || !candidate.containerId) continue;
+    const labels = labelsByContainer.get(candidate.containerId) ?? [];
+    labels.push(element);
+    labelsByContainer.set(candidate.containerId, labels);
+  }
+  const convertedNodes = created
+    .filter((element) => element.type !== "text" && element.type !== "arrow")
+    .slice(0, params.nodes.length);
+  const convertedEdges = created.filter((element) => element.type === "arrow");
+  const nodeGroups = convertedNodes.map((element) => [
+    element,
+    ...(labelsByContainer.get(element.id) ?? []),
+  ]);
+  const edgeGroups = convertedEdges.map((element) => [
+    element,
+    ...(labelsByContainer.get(element.id) ?? []),
+  ]);
+  const groupedIds = new Set([...nodeGroups, ...edgeGroups].flat().map((element) => element.id));
+  const leftovers = created.filter((element) => !groupedIds.has(element.id));
+  const streamed: SceneElement[] = [];
+  reportCanvasStreamProgress(0, created.length);
+  const updateProgress = () => {
+    api.updateScene({
+      elements: [...existing, ...streamed],
+      captureUpdate: CaptureUpdateAction.EVENTUALLY,
+    });
+    reportCanvasStreamProgress(streamed.length, created.length);
+  };
+
+  // Keep each step above the normal human visual threshold while bounding the
+  // total animation time for both small and large diagrams.
+  const nodeDelay = Math.max(70, Math.min(160, Math.round(1_200 / Math.max(1, nodeGroups.length))));
+  for (let index = 0; index < nodeGroups.length; index++) {
+    streamed.push(...nodeGroups[index]);
+    updateProgress();
+    if (index === 0) {
+      await api.scrollToContent(created, {
+        fitToViewport: true,
+        viewportZoomFactor: 0.9,
+        animate: false,
+      });
+    }
+    await pauseForStreaming(nodeDelay);
+  }
+
+  const edgeBatchSize = 2;
+  const edgeDelay = Math.max(35, Math.round(500 / Math.max(1, Math.ceil(edgeGroups.length / edgeBatchSize))));
+  for (let index = 0; index < edgeGroups.length; index += edgeBatchSize) {
+    streamed.push(...edgeGroups.slice(index, index + edgeBatchSize).flat());
+    updateProgress();
+    await pauseForStreaming(edgeDelay);
+  }
+
+  streamed.push(...leftovers);
   api.updateScene({
-    elements: [...api.getSceneElements(), ...created],
+    elements: [...existing, ...streamed],
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
-  await api.scrollToContent(created, { fitToViewport: true, animate: true });
+  reportCanvasStreamProgress(streamed.length, created.length);
 
   return {
     count: created.length,
-    idMap: Object.fromEntries(elementIdByNode),
+    idMap: Object.fromEntries(params.nodes.map((node, index) => [
+      node.id,
+      convertedNodes[index]?.id ?? elementIdByNode.get(node.id),
+    ])),
   };
 }
 
@@ -315,13 +446,24 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
   return { updated, deleted, skipped };
 }
 
+function mutationResult(api: ExcalidrawImperativeAPI, result: Record<string, unknown>) {
+  return {
+    ...result,
+    __boardSnapshot: {
+      elements: api.getSceneElements(),
+      appState: { viewBackgroundColor: api.getAppState().viewBackgroundColor },
+      files: api.getFiles(),
+    },
+  };
+}
+
 export async function handleCanvasRequest(
   api: ExcalidrawImperativeAPI,
   request: CanvasRequest,
 ): Promise<unknown> {
   switch (request.op) {
     case "add-shape":
-      return addShape(api, request.params);
+      return mutationResult(api, await addShape(api, request.params));
     case "get-scene-summary":
       return sceneSummary(api.getSceneElements());
     case "get-scene-full":
@@ -336,11 +478,16 @@ export async function handleCanvasRequest(
       return uint8ToBase64(new Uint8Array(await blob.arrayBuffer()));
     }
     case "layout-diagram":
-      return layoutDiagram(api, request.params);
+      return mutationResult(api, await layoutDiagram(api, request.params));
     case "add-elements":
-      return addElements(api, request.params);
+      return mutationResult(api, await addElements(api, request.params));
+    case "clear-scene": {
+      const cleared = api.getSceneElements().length;
+      api.updateScene({ elements: [], captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+      return mutationResult(api, { cleared });
+    }
     case "apply-patch":
-      return applyPatch(api, request.params);
+      return mutationResult(api, applyPatch(api, request.params));
     default:
       throw new Error(`Unknown canvas operation: ${String(request.op)}`);
   }
@@ -349,12 +496,27 @@ export async function handleCanvasRequest(
 export function subscribeToCanvasRequests(
   getApi: () => ExcalidrawImperativeAPI | null,
   onError: (message: string) => void,
+  onMutationState?: (active: boolean) => void,
 ): () => void {
+  let activeMutations = 0;
+  const mutationOperations = new Set<CanvasRequest["op"]>([
+    "add-shape",
+    "layout-diagram",
+    "add-elements",
+    "clear-scene",
+    "apply-patch",
+  ]);
   return bridge.onCanvasRequest((request) => {
     const api = getApi();
     if (!api) {
       bridge.respondCanvasRequest({ id: request.id, error: "Canvas is not ready" });
       return;
+    }
+
+    const isMutation = mutationOperations.has(request.op);
+    if (isMutation) {
+      activeMutations += 1;
+      onMutationState?.(true);
     }
 
     void handleCanvasRequest(api, request)
@@ -363,6 +525,11 @@ export function subscribeToCanvasRequests(
         const message = error instanceof Error ? error.message : String(error);
         onError(message);
         bridge.respondCanvasRequest({ id: request.id, error: message });
+      })
+      .finally(() => {
+        if (!isMutation) return;
+        activeMutations = Math.max(0, activeMutations - 1);
+        onMutationState?.(activeMutations > 0);
       });
   });
 }

@@ -16,6 +16,8 @@ function ledgerStub(): RuntimeLedger {
     listJobs: vi.fn(() => []),
     appendBoardTransaction: vi.fn(),
     hasBoardTransaction: vi.fn(() => false),
+    putBoardSnapshot: vi.fn(),
+    getBoardSnapshot: vi.fn(),
   } as unknown as RuntimeLedger;
 }
 
@@ -43,5 +45,85 @@ describe("canvas browser transport", () => {
 
     await expect(bridge.request("get-scene-summary")).resolves.toEqual([{ type: "rectangle" }]);
     expect(request?.op).toBe("get-scene-summary");
+  });
+
+  it("accepts a renderer scene produced after the gateway revision advanced", async () => {
+    const ledger = ledgerStub();
+    const bridge = new CanvasBridge(ledger, () => true, () => undefined, 1_000);
+
+    const snapshot = await bridge.submitHumanSnapshot({
+      revision: 0,
+      elements: [{ id: "shape-1", type: "rectangle", x: 0, y: 0, width: 100, height: 100 }],
+      appState: {},
+    });
+
+    expect(snapshot.revision).toBe(1);
+    expect(snapshot.elements).toHaveLength(1);
+    expect(ledger.putBoardSnapshot).toHaveBeenCalledOnce();
+  });
+
+  it("rejects non-finite scene geometry without replacing the canonical snapshot", async () => {
+    const ledger = ledgerStub();
+    const bridge = new CanvasBridge(ledger, () => true, () => undefined, 1_000);
+
+    await expect(bridge.submitHumanSnapshot({
+      revision: 1,
+      elements: [{ id: "bad-arrow", type: "arrow", x: Number.NaN, y: 0, width: 10, height: 10 }],
+      appState: {},
+    })).rejects.toThrow(/invalid x/i);
+
+    expect(bridge.getSnapshot().elements).toEqual([]);
+    expect(ledger.putBoardSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("ignores an invalid persisted scene during startup", () => {
+    const ledger = ledgerStub();
+    vi.mocked(ledger.getBoardSnapshot).mockReturnValue({
+      revision: 42,
+      elements: [{ id: "bad", type: "rectangle", x: null, y: 0, width: 10, height: 10 }],
+      appState: {},
+    });
+
+    const bridge = new CanvasBridge(ledger, () => true, () => undefined, 1_000);
+
+    expect(bridge.getSnapshot()).toEqual({ revision: 0, elements: [], appState: {} });
+  });
+
+  it("persists the renderer result of an agent transaction and hides the transport snapshot", async () => {
+    const ledger = ledgerStub();
+    let bridge: CanvasBridge;
+    bridge = new CanvasBridge(
+      ledger,
+      (request) => {
+        queueMicrotask(() => bridge.acceptResponse({
+          id: request.id,
+          result: {
+            count: 1,
+            __boardSnapshot: {
+              elements: [{ id: "node-1", type: "rectangle", x: 20, y: 30, width: 180, height: 72 }],
+              appState: { viewBackgroundColor: "#ffffff" },
+            },
+          },
+        }));
+        return true;
+      },
+      () => undefined,
+      1_000,
+    );
+
+    const result = await bridge.applyTransaction({
+      id: "tx-1",
+      idempotencyKey: "tx-1-once",
+      agentId: "root",
+      jobId: "job-1",
+      baseRevision: 0,
+      summary: "draw",
+      operation: "layout-diagram",
+      params: { nodes: [], edges: [] },
+    });
+
+    expect(result).toEqual({ revision: 1, result: { count: 1 } });
+    expect(bridge.getSnapshot().elements).toHaveLength(1);
+    expect(ledger.putBoardSnapshot).toHaveBeenCalledOnce();
   });
 });

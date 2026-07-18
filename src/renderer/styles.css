@@ -153,6 +153,20 @@ button {
   background: #5b57c9;
 }
 
+.microphone-button--starting,
+.microphone-button--starting:hover {
+  background: #6965db;
+  cursor: wait;
+  opacity: 0.82;
+  animation: microphone-starting 1.2s ease-in-out infinite;
+}
+
+@keyframes microphone-starting {
+  50% {
+    box-shadow: 0 0 0 5px rgb(105 101 219 / 18%);
+  }
+}
+
 .microphone-button svg {
   width: 23px;
   height: 23px;
