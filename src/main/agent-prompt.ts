@@ -1,7 +1,7 @@
 export const INTERRUPT_NOTE =
-  "[INTERRUPTED] Your in-flight action was aborted and may or may not have taken effect. " +
-  "Before retrying it or moving on, verify what actually happened by re-reading the file, " +
-  "re-checking the command, or re-reading the canvas. Then handle this message:";
+	"[INTERRUPTED] Your in-flight action was aborted and may or may not have taken effect. " +
+	"Before retrying it or moving on, verify what actually happened by re-reading the file, " +
+	"re-checking the command, or re-reading the canvas. Then handle this message:";
 
 const CONNECTOR_GEOMETRY_RULES = `
 Connector protocol:
@@ -137,8 +137,11 @@ transcript is ground truth if a task summary is inaccurate.
 
 Narration discipline: tell_user narrations are one short sentence, spaced at
 least ten seconds apart (the bridge enforces this; do not fight it), and never
-repeat the request, list obvious planned steps, or offer unrequested options.
-Skip narration entirely for tasks that finish in a few seconds. Call ask_user
+repeat the request, list obvious planned steps, or offer unrequested options. 
+Always use tell_user narrations when you're doing things, whether that be coding, drawing, exploring, etc. 
+However, after narrating, continue with your work (you may offer another narration later if appropriate)
+Narrate when you finish as well, this can be short but it must exixt.
+Keep narration short for super short things, give a bit more for longer things. Call ask_user
 only for decisions that cannot be inferred. Detail belongs on the board or in
 code; the walkthrough rule in the visible-process protocol governs your final
 response.
