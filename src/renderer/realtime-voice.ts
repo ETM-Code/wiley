@@ -26,6 +26,8 @@ Speaking rules are strict:
 - Never end with suggestions such as changing size, color, style, or adding another component unless the user asked for suggestions.
 - Outside ordinary conversation, keep every spoken response under twelve words.
 
+[board update] messages are silent context describing what the user just drew or changed on the whiteboard. Never respond to them aloud; use them so requests like "connect these two" or "label that box" make sense, and pass the relevant detail along in send_task_to_agent.
+
 Never claim an action happened unless the corresponding message confirms it. For [agent question], ask the question as your own and return the spoken answer only through answer_agent. New instructions interrupt ongoing work by default; use queue only when the user explicitly adds something for later.`;
 
 const TOOLS = [
@@ -262,6 +264,21 @@ export class RealtimeVoiceController {
   }
 
   push(message: VoiceInjection): void {
+    if (message.silent) {
+      // Context only: give the model awareness of the board without ever
+      // triggering speech. Stale context is worthless, so drop when offline.
+      if (this.channel?.readyState === "open") {
+        this.send({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: message.text }],
+          },
+        });
+      }
+      return;
+    }
     const queued = { ...message, id: ++this.nextOutboxId };
     if (message.interrupt) {
       const firstRegular = this.outbox.findIndex((item) => !item.interrupt);

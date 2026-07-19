@@ -137,6 +137,8 @@ export interface VoiceInjection {
   id: string;
   text: string;
   interrupt: boolean;
+  /** Context-only: added to the conversation without triggering speech. */
+  silent?: boolean;
 }
 
 export interface JsonlRecord {

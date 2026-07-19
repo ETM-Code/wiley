@@ -126,4 +126,40 @@ describe("canvas browser transport", () => {
     expect(bridge.getSnapshot().elements).toHaveLength(1);
     expect(ledger.putBoardSnapshot).toHaveBeenCalledOnce();
   });
+
+  it("reports a human change summary with types, texts, and removals", async () => {
+    const bridge = new CanvasBridge(ledgerStub(), () => true, () => undefined, 1_000);
+    const summaries: string[] = [];
+    bridge.onHumanChange = (summary) => summaries.push(summary);
+
+    await bridge.submitHumanSnapshot({
+      revision: 1,
+      elements: [
+        { id: "a", type: "rectangle", x: 0, y: 0, width: 100, height: 60 },
+        { id: "b", type: "text", x: 10, y: 10, width: 80, height: 20, text: "magic" },
+      ],
+      appState: {},
+    });
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toContain("1 rectangle");
+    expect(summaries[0]).toContain("1 text");
+    expect(summaries[0]).toContain("magic");
+    expect(summaries[0]).toContain("board now has 2 elements");
+
+    await bridge.submitHumanSnapshot({
+      revision: 2,
+      elements: [{ id: "a", type: "rectangle", x: 0, y: 0, width: 100, height: 60 }],
+      appState: {},
+    });
+    expect(summaries).toHaveLength(2);
+    expect(summaries[1]).toContain("1 removed");
+
+    // Identical resubmission is not a human change.
+    await bridge.submitHumanSnapshot({
+      revision: 3,
+      elements: [{ id: "a", type: "rectangle", x: 0, y: 0, width: 100, height: 60 }],
+      appState: {},
+    });
+    expect(summaries).toHaveLength(2);
+  });
 });

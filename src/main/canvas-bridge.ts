@@ -8,6 +8,8 @@ interface PendingRequest {
 }
 
 export class CanvasBridge {
+  /** Called with a short human-readable summary when the human edits the board. */
+  onHumanChange?: (summary: string) => void;
   #sequence = 0;
   #previewRequestSequence = 0;
   #diagramPreviewVersion = 0;
@@ -115,7 +117,34 @@ export class CanvasBridge {
     for (const [id, lease] of this.#leases) {
       if ([...lease.elementIds].some((elementId) => changedIds.has(elementId))) this.#leases.delete(id);
     }
+    if (changedIds.size > 0 && this.onHumanChange) {
+      this.onHumanChange(this.#describeHumanChange(changedIds, next));
+    }
     return this.getSnapshot();
+  }
+
+  #describeHumanChange(changedIds: Set<string>, next: Map<string, string>): string {
+    const typeCounts = new Map<string, number>();
+    const texts: string[] = [];
+    let removed = 0;
+    for (const id of changedIds) {
+      const serialized = next.get(id);
+      if (!serialized) {
+        removed += 1;
+        continue;
+      }
+      const element = JSON.parse(serialized) as { type?: string; text?: string };
+      const type = element.type ?? "element";
+      typeCounts.set(type, (typeCounts.get(type) ?? 0) + 1);
+      if (typeof element.text === "string" && element.text.trim() && texts.length < 5) {
+        texts.push(element.text.trim().slice(0, 40));
+      }
+    }
+    const parts = [...typeCounts.entries()].map(([type, count]) => `${count} ${type}`);
+    if (removed > 0) parts.push(`${removed} removed`);
+    const summary = `User changed ${parts.join(", ") || "elements"};`
+      + ` board now has ${this.#snapshot.elements.length} elements`;
+    return texts.length > 0 ? `${summary}. Text: ${texts.join(" | ")}` : summary;
   }
 
   getSnapshot(): BoardSnapshot {

@@ -29,6 +29,7 @@ export type CanvasResponse = {
 export type VoiceInjection = {
   text: string;
   interrupt?: boolean;
+  silent?: boolean;
 };
 
 export type AgentStatus = {

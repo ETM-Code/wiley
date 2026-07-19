@@ -11,8 +11,27 @@ export class VoiceBridge {
   #pendingAnswers: PendingAnswer[] = [];
   #workStartedAt = 0;
   #lastProgressAt = 0;
+  #boardUpdateTimer?: NodeJS.Timeout;
+  #pendingBoardUpdate?: string;
 
   constructor(private readonly send: (message: VoiceInjection) => void) {}
+
+  /**
+   * Keeps the realtime model passively aware of what the user draws.
+   * Debounced and silent: the summary lands as conversation context without
+   * triggering speech, so the model knows what "these two boxes" means.
+   */
+  pushBoardUpdate(summary: string, debounceMs = 4_000): void {
+    this.#pendingBoardUpdate = summary;
+    if (this.#boardUpdateTimer) return;
+    this.#boardUpdateTimer = setTimeout(() => {
+      this.#boardUpdateTimer = undefined;
+      const text = this.#pendingBoardUpdate;
+      this.#pendingBoardUpdate = undefined;
+      if (!text) return;
+      this.send({ id: crypto.randomUUID(), text: `[board update] ${text}`, interrupt: false, silent: true });
+    }, debounceMs);
+  }
 
   beginWork(): void {
     if (this.#workStartedAt === 0) this.#workStartedAt = Date.now();
@@ -74,6 +93,8 @@ export class VoiceBridge {
   }
 
   close(): void {
+    if (this.#boardUpdateTimer) clearTimeout(this.#boardUpdateTimer);
+    this.#boardUpdateTimer = undefined;
     while (this.#pendingAnswers.length) {
       this.#pendingAnswers[0]?.resolve("Application is closing.");
     }

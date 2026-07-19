@@ -134,6 +134,7 @@ async function bootstrap(): Promise<void> {
     (transaction) => sendToRenderer("board:transaction", transaction),
   );
   const voice = new VoiceBridge((message) => sendToRenderer("voice:inject", message));
+  canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
   pi = new PiRuntime(process.env.BOARD_AI_PROJECT_DIR ?? process.cwd(), ledger, transcript, canvas, voice);
   await pi.initialize();
   const runtime = new RuntimeController(ledger, transcript, pi, canvas, sendToRenderer);

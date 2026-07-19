@@ -46,4 +46,20 @@ describe("voice question bridge", () => {
     bridge.push("[agent progress] next useful milestone");
     expect(sent).toHaveLength(2);
   });
+
+  it("debounces board updates into one silent context injection", () => {
+    vi.useFakeTimers();
+    const sent: Array<{ text: string; silent?: boolean; interrupt: boolean }> = [];
+    const bridge = new VoiceBridge((payload) => sent.push(payload));
+
+    bridge.pushBoardUpdate("User changed 1 rectangle; board now has 3 elements");
+    bridge.pushBoardUpdate("User changed 2 rectangle; board now has 5 elements");
+    expect(sent).toHaveLength(0);
+    vi.advanceTimersByTime(4_000);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].silent).toBe(true);
+    expect(sent[0].interrupt).toBe(false);
+    // Only the latest summary survives the debounce window.
+    expect(sent[0].text).toBe("[board update] User changed 2 rectangle; board now has 5 elements");
+  });
 });

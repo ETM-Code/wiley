@@ -142,6 +142,7 @@ const canvas = new CanvasBridge(
   (transaction) => hub.publish(IPC.boardTransactions, transaction),
 );
 const voice = new VoiceBridge((message) => hub.publish(IPC.voiceInject, message));
+canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
 const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice);
 await pi.initialize();
 const runtime = new RuntimeController(ledger, transcript, pi, canvas, (channel, payload) => hub.publish(channel, payload));
