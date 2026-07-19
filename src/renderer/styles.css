@@ -178,6 +178,23 @@ button {
   stroke-linejoin: round;
 }
 
+.music-button--playing {
+  color: #fff;
+  background: #6965db;
+  animation: music-playing 1.94s ease-in-out infinite;
+}
+
+.music-button--playing:hover {
+  background: #5b57c9;
+}
+
+@keyframes music-playing {
+  25%,
+  75% {
+    box-shadow: 0 0 0 5px rgb(105 101 219 / 18%);
+  }
+}
+
 .status-button {
   display: inline-flex;
   gap: 8px;
