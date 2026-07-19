@@ -34,7 +34,9 @@ describe("voice question bridge", () => {
     bridge.push("[agent progress] starting");
     expect(sent).toHaveLength(0);
 
-    vi.advanceTimersByTime(8_000);
+    // Narration starts after the instant-task window (3s), then repeats no
+    // more often than every 10s.
+    vi.advanceTimersByTime(3_000);
     bridge.push("[agent progress] useful milestone");
     expect(sent).toHaveLength(1);
 
@@ -42,7 +44,7 @@ describe("voice question bridge", () => {
     bridge.push("[agent progress] too soon");
     expect(sent).toHaveLength(1);
 
-    vi.advanceTimersByTime(10_000);
+    vi.advanceTimersByTime(5_000);
     bridge.push("[agent progress] next useful milestone");
     expect(sent).toHaveLength(2);
   });

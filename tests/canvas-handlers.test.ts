@@ -248,6 +248,35 @@ describe("diagram renderer", () => {
     for (const key of ["x", "y", "width", "height"] as const) expectOnModelGrid(modelMovedHumanShape[key]);
   });
 
+  it("nudges hand-placed standalone text clear of existing elements", async () => {
+    let elements: Array<Record<string, any>> = [
+      { id: "box", type: "rectangle", x: 100, y: 200, width: 300, height: 100, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    // Heading aimed straight at the existing box, like the misplaced
+    // "Task and Verification Loop" title.
+    await handleCanvasRequest(api, {
+      id: 36,
+      op: "add-elements",
+      params: {
+        scrollTo: false,
+        elements: [{ type: "text", text: "Section heading", x: 120, y: 220, width: 260, height: 40 }],
+      },
+    });
+    const heading = elements.find((element) => element.type === "text")!;
+    // Pushed above the box instead of rendering on top of it.
+    expect((heading.y as number) + (heading.height as number)).toBeLessThanOrEqual(200);
+  });
+
   it("connects existing human-drawn elements with bound arrows", async () => {
     let elements: Array<Record<string, any>> = [
       { id: "magic", type: "rectangle", x: 0, y: 400, width: 300, height: 90, version: 1 },

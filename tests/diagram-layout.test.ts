@@ -143,6 +143,30 @@ const stressGraphs: Array<{ name: string; params: LayoutParams }> = [
     },
   },
   {
+    name: "top-to-bottom fan-in (ports spread across node width)",
+    params: {
+      title: "Task and Verification Loop",
+      layout: { direction: "DOWN" },
+      nodes: [
+        ...Array.from({ length: 6 }, (_, index) => ({
+          id: `source-${index}`,
+          label: `Stage ${index + 1}`,
+        })),
+        { id: "ledger", label: "SQLite Runtime Ledger jobs, events, board" },
+        { id: "verify", label: "Verify local tests", shape: "diamond" },
+      ],
+      edges: [
+        ...Array.from({ length: 6 }, (_, index) => ({
+          from: `source-${index}`,
+          to: "ledger",
+          label: index % 2 === 0 ? "events" : undefined,
+        })),
+        { from: "ledger", to: "verify", label: "edit + test" },
+        { from: "verify", to: "ledger", label: "pass" },
+      ],
+    },
+  },
+  {
     name: "cycle with parallel edges",
     params: {
       nodes: [
@@ -208,11 +232,27 @@ describe("diagram layout quality", () => {
     }
   });
 
-  it("grows a node's connector side with its edge degree", () => {
-    const quiet = nodeDimensions({ id: "a", label: "Hub" }, 1);
-    const busy = nodeDimensions({ id: "a", label: "Hub" }, 8);
+  it("grows a node's connector side with its edge degree on the axis edges attach to", () => {
+    const quiet = nodeDimensions({ id: "a", label: "Hub" }, 1, "RIGHT");
+    const busy = nodeDimensions({ id: "a", label: "Hub" }, 8, "RIGHT");
     expect(busy.height).toBeGreaterThan(quiet.height);
     expect(busy.height).toBeGreaterThanOrEqual(9 * 28);
+    // DOWN layouts attach edges along the top and bottom, so width grows.
+    const busyDown = nodeDimensions({ id: "a", label: "Hub" }, 8, "DOWN");
+    expect(busyDown.width).toBeGreaterThanOrEqual(9 * 28);
+    expect(busyDown.height).toBeLessThan(busy.height);
+  });
+
+  it("keeps the title clear of nodes, labels, and its own headroom band", async () => {
+    const plan = await planDiagramLayout(planningDiagram, ORIGIN, "agent-test");
+    const title = plan.skeletons.find((skeleton) => String(skeleton.id).endsWith("-title"))!;
+    expect(title).toBeTruthy();
+    expect(title.textAlign).toBe("left");
+    const nodeTops = plan.skeletons
+      .filter((skeleton) => String(skeleton.id).includes("-node-"))
+      .map((skeleton) => skeleton.y as number);
+    // Full headroom band between the title and the top row of nodes.
+    expect((title.y as number) + (title.height as number)).toBeLessThanOrEqual(Math.min(...nodeTops) - 40);
   });
 
   it("measures with the real Excalifont, not the fallback estimate", () => {

@@ -29,7 +29,9 @@ export function agentStatusReport(deps: Pick<VoiceToolDeps, "runtime" | "ledger"
     const text = report?.report ?? report?.error;
     if (text) reportsByJob.set(event.jobId, text);
   }
+  const sessionStartedAt = deps.runtime.sessionStartedAt;
   const jobs = deps.ledger.listJobs()
+    .filter((job) => job.updatedAt >= sessionStartedAt)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const currentWork = state.activeJobs.map((job) => ({
     task: job.task,
@@ -79,6 +81,9 @@ export async function callVoiceTool(
     case "abort_agent":
       await deps.runtime.abortCurrent();
       return { ok: true, note: "Current work aborted." };
+    case "new_session":
+      await deps.runtime.newSession();
+      return { ok: true, note: "Fresh session: board cleared, history archived, memory reset." };
     default:
       throw new Error(`Unknown voice tool: ${String(name)}`);
   }

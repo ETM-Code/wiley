@@ -161,15 +161,28 @@ function shapeFactor(shape: GraphShape): number {
   return 1;
 }
 
-export function nodeDimensions(node: GraphNode, portDemand = 0): { width: number; height: number } {
+export function nodeDimensions(
+  node: GraphNode,
+  portDemand = 0,
+  direction: "RIGHT" | "DOWN" = "RIGHT",
+): { width: number; height: number } {
   const factor = shapeFactor(nodeToType(node));
   const lines = wrapLabel(node.label, NODE_FONT_SIZE, NODE_TEXT_WRAP_WIDTH / factor);
   const textWidth = lines.reduce((max, line) => Math.max(max, measureText(line, NODE_FONT_SIZE).width), 1);
   const textHeight = lines.length * NODE_FONT_SIZE * LINE_HEIGHT_RATIO;
-  const width = Math.min(NODE_MAX_WIDTH, Math.max(NODE_MIN_WIDTH, textWidth * factor + NODE_PADDING_X));
-  // Sides also need room for every connector port to stay one grid cell apart.
+  // Ports land on the side facing the previous layer: vertical sides in a
+  // RIGHT layout, horizontal sides in a DOWN layout. That side needs room
+  // for every connector to stay more than one grid cell apart.
   const portSide = (portDemand + 1) * PORT_SPACING;
-  const height = Math.max(NODE_MIN_HEIGHT, textHeight * factor + NODE_PADDING_Y, portSide);
+  const width = Math.max(
+    Math.min(NODE_MAX_WIDTH, Math.max(NODE_MIN_WIDTH, textWidth * factor + NODE_PADDING_X)),
+    direction === "DOWN" ? portSide : 0,
+  );
+  const height = Math.max(
+    NODE_MIN_HEIGHT,
+    textHeight * factor + NODE_PADDING_Y,
+    direction === "RIGHT" ? portSide : 0,
+  );
   return { width: snapUpSize(width), height: snapUpSize(height) };
 }
 
@@ -219,7 +232,7 @@ export async function planDiagramLayout(
   }
   const sizes = new Map(params.nodes.map((node) => [
     node.id,
-    nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0)),
+    nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0), direction),
   ]));
 
   const layoutResult = await elk.layout({
@@ -351,18 +364,22 @@ export async function planDiagramLayout(
     ...[...positions.entries()].map(([id, position]) => position.x + (sizes.get(id)?.width ?? 0)),
   ));
   const title = params.title?.trim();
+  // Top-left, its own measured width, and a full band of headroom: a title
+  // centered across the graph sits exactly where inbound arrows and
+  // neighboring clusters land.
+  const titleSize = title ? measureText(title, 24) : { width: 0, height: 0 };
   const skeletons: JsonObject[] = [
     ...(title ? [{
       id: `${idPrefix}-title`,
       type: "text",
       x: origin.x,
-      y: snapModelCoordinate(origin.y - 80),
-      width: graphWidth,
+      y: snapModelCoordinate(origin.y - 100),
+      width: titleSize.width,
       height: 40,
       text: title,
       fontSize: 24,
       fontFamily: 5,
-      textAlign: "center",
+      textAlign: "left",
       verticalAlign: "middle",
       strokeColor: "#1e1e1e",
       backgroundColor: "transparent",
@@ -500,7 +517,9 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     };
     if (skeleton.type === "arrow") arrows.push(skeleton);
     else if (id.includes("-node-")) nodes.push(box);
-    else if (id.includes("-edgelabel-")) labels.push(box);
+    // The title competes for the same space as edge labels; hold it to the
+    // same collision standard.
+    else if (id.includes("-edgelabel-") || id.endsWith("-title")) labels.push(box);
   }
 
   for (let a = 0; a < nodes.length; a++) {

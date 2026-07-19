@@ -563,6 +563,35 @@ function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown): AddPar
     return item;
   });
 
+  // Models place standalone headings by eye and land them on top of nodes.
+  // Nudge any free text clear of existing elements instead of rendering the
+  // collision.
+  const obstacles = finiteGeometry(existing).map((element) => ({
+    id: element.id,
+    x: element.x,
+    y: element.y,
+    width: element.width,
+    height: element.height,
+  }));
+  for (const item of elements) {
+    if (item.type !== "text" || typeof item.containerId === "string") continue;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const box = {
+        x: finite(item.x),
+        y: finite(item.y),
+        width: finite(item.width, 160),
+        height: finite(item.height, 40),
+      };
+      const hit = obstacles.find((obstacle) =>
+        box.x < obstacle.x + obstacle.width
+        && obstacle.x < box.x + box.width
+        && box.y < obstacle.y + obstacle.height
+        && obstacle.y < box.y + box.height);
+      if (!hit) break;
+      item.y = snapModelCoordinate(hit.y - box.height - 20);
+    }
+  }
+
   return { ...params, elements };
 }
 

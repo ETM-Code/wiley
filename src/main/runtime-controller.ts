@@ -6,6 +6,7 @@ import { CanvasBridge } from "./canvas-bridge";
 
 export class RuntimeController {
   #microphoneEnabled = false;
+  #sessionStartedAt = new Date().toISOString();
 
   constructor(
     private readonly ledger: RuntimeLedger,
@@ -15,6 +16,43 @@ export class RuntimeController {
     private readonly send: (channel: string, payload: unknown) => void,
   ) {
     this.pi.onEvent((event) => void this.#onAgentEvent(event));
+  }
+
+  get sessionStartedAt(): string {
+    return this.#sessionStartedAt;
+  }
+
+  /**
+   * Fresh start on demand: cancel work, rebuild the root Pi session with
+   * empty context, baseline the transcript, and wipe the board. The durable
+   * ledger keeps the history; agents and status simply stop seeing it.
+   */
+  async newSession(): Promise<{ ok: true }> {
+    await this.abortCurrent();
+    await this.pi.startNewSession();
+    this.transcript.beginSession();
+    const snapshot = this.canvas.getSnapshot();
+    if (snapshot.elements.length > 0) {
+      try {
+        await this.canvas.applyTransaction({
+          id: crypto.randomUUID(),
+          idempotencyKey: crypto.randomUUID(),
+          agentId: "root",
+          jobId: "system",
+          baseRevision: snapshot.revision,
+          leaseIds: [],
+          summary: "new session: clear board",
+          operation: "clear-scene",
+          params: {},
+        });
+      } catch {
+        // No live canvas client; the next connected renderer syncs whatever
+        // canonical state exists, and the reset still applies to context.
+      }
+    }
+    this.#sessionStartedAt = new Date().toISOString();
+    this.#broadcastState();
+    return { ok: true };
   }
 
   getState(): RuntimeState {

@@ -131,7 +131,8 @@ export type VoiceToolName =
   | "answer_agent"
   | "get_agent_status"
   | "look_at_board"
-  | "abort_agent";
+  | "abort_agent"
+  | "new_session";
 
 export interface VoiceInjection {
   id: string;

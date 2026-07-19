@@ -122,6 +122,7 @@ export class PiRuntime {
   #pendingDiagramPreview?: Record<string, unknown>;
   #lastDiagramPreviewSignature = "";
   #approvalJudge?: ApprovalJudge;
+  #eventBaseline = 0;
 
   constructor(
     private readonly projectDir: string,
@@ -136,6 +137,13 @@ export class PiRuntime {
     const model = getModel(PI_PROVIDER, PI_MODEL);
     if (!model) throw new Error(`Pi model not found: ${PI_PROVIDER}/${PI_MODEL}`);
     this.#approvalJudge = this.#createApprovalJudge();
+    await this.#createRootSession();
+    await this.#ensureWarmSubagent();
+  }
+
+  async #createRootSession(): Promise<void> {
+    const model = getModel(PI_PROVIDER, PI_MODEL);
+    if (!model || !this.#modelRuntime) throw new Error(`Pi model unavailable: ${PI_PROVIDER}/${PI_MODEL}`);
     const agentDir = path.join(os.homedir(), ".pi", "agent");
     const settingsManager = SettingsManager.create(this.projectDir, agentDir);
     const loader = new DefaultResourceLoader({
@@ -160,6 +168,27 @@ export class PiRuntime {
     });
     this.#main = session;
     this.#subscribeSession(session, "root", () => this.#currentJobId ?? "system");
+  }
+
+  /**
+   * Fresh start: a brand-new root session with empty context, all workers
+   * gone, and the shared event feed baselined so new agents never see the
+   * previous session's noise. The durable ledger keeps everything.
+   */
+  async startNewSession(): Promise<void> {
+    await this.abort("Starting a fresh session");
+    for (const sub of this.#subagents.values()) sub.session?.dispose();
+    this.#subagents.clear();
+    this.#spawnQueue.length = 0;
+    this.#subDeliveryTails.clear();
+    this.#pendingSubQuestions.clear();
+    this.#warmSubagent?.session.dispose();
+    this.#warmSubagent = undefined;
+    this.#main?.dispose();
+    this.#main = undefined;
+    this.#currentJobId = undefined;
+    this.#eventBaseline = this.ledger.getAgentEvents().at(-1)?.sequence ?? 0;
+    await this.#createRootSession();
     await this.#ensureWarmSubagent();
   }
 
@@ -490,7 +519,7 @@ export class PiRuntime {
         label: "Read Conversation",
         description: "Read the lossless voice conversation after a sequence cursor.",
         parameters: Type.Object({ afterSequence: Type.Optional(Type.Number()) }),
-        execute: async (_id, params) => this.#toolText(this.ledger.getTranscript(params.afterSequence ?? 0)),
+        execute: async (_id, params) => this.#toolText(this.transcript.after(params.afterSequence ?? 0)),
       }),
       defineTool({
         name: "tell_user",
@@ -515,7 +544,9 @@ export class PiRuntime {
         label: "Read Agent Events",
         description: "Read observable messages, tools, changes, milestones, and results from all agents.",
         parameters: Type.Object({ afterSequence: Type.Optional(Type.Number()) }),
-        execute: async (_id, params) => this.#toolText(this.ledger.getAgentEvents(params.afterSequence ?? 0)),
+        execute: async (_id, params) => this.#toolText(
+          this.ledger.getAgentEvents(Math.max(params.afterSequence ?? 0, this.#eventBaseline)),
+        ),
       }),
       defineTool({
         name: "send_agent_message",
@@ -668,7 +699,7 @@ export class PiRuntime {
       "</voice_conversation_context>",
       "",
       "<peer_agent_events>",
-      JSON.stringify(this.ledger.getAgentEvents()),
+      JSON.stringify(this.ledger.getAgentEvents(this.#eventBaseline)),
       "</peer_agent_events>",
     ].join("\n");
     this.#startSubRun(sub, message);

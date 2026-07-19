@@ -33,8 +33,12 @@ One voice, one board, real hands.
 - "Build it." Wiley writes the site, screenshots it headlessly, and places the screenshot on the board next to your wireframe.
 - "Open it." It runs `open site/index.html`. Your browser appears with the real page.
 - "What have you done so far?" It actually knows: current work, queued work, and the final report of every recent task.
+- When the diagram is done, Wiley talks you through it, pointing at the board: what flows where and why.
+- Done with a topic? Say "fresh board" (or hit the New session button) and you get a clean board and a clean working memory in one step. The old session stays archived in the ledger.
 
-The whole time, you can interrupt mid-sentence. Interruption is the default at every layer: your voice interrupts the orchestrator, the orchestrator interrupts its workers, and everyone verifies what their half-finished action actually did before continuing.
+Wiley works out loud. It narrates what it is reading, what it just learned, and what it is about to draw, so the quiet stretches never feel dead. It draws the way a person does: a rough version early, refined as understanding builds, and anything proven wrong gets erased or corrected on the spot. You watch the picture converge instead of waiting for a reveal.
+
+The whole time, you can interrupt mid-sentence. Interruption is the default at every layer: your voice interrupts the orchestrator, the orchestrator interrupts its workers, and everyone verifies what their half-finished action actually did before continuing. Pile on corrections as fast as you can speak them; the delivery lock guarantees none get dropped.
 
 <p align="center">
   <img src="assets/site.png" alt="The landing page Wiley designed and built from a hand-drawn wireframe" width="880" />
@@ -92,13 +96,14 @@ npm run build
 npm run package:mac    # unsigned arm64 DMG in release/
 ```
 
-### The scenario that has to work
+### The scenarios that have to work
 
 ```bash
-npm run test:e2e:landing   # real model, real browser, costs tokens
+npm run test:e2e:landing      # full build loop: sketch to shipped site
+npm run test:e2e:interactive  # co-presence: narration, live drawing, corrections, resets
 ```
 
-This drives the full session end to end: chat context, architecture diagram, a hand-drawn wireframe injected through the app's own pipeline, label fill-in on the human's boxes with nothing cleared, website generation, screenshot placed on the board, and a real `open` of the built page. Ten assertions; artifacts (logs, board JSON, screenshots) land in `.e2e/run-*/`. Render any run's persisted board with `node scripts/board-shot.mjs <run>/data out.png`. Both screenshots above came straight out of this scenario.
+Both run against the real model and a real browser canvas and cost tokens. The landing scenario drives sketch-to-shipped end to end: chat context, architecture diagram, a hand-drawn wireframe injected through the app's own pipeline, label fill-in on the human's boxes with nothing cleared, website generation, screenshot placed on the board, and a real `open` of the built page. The interactive scenario verifies the coworker feel: narration while hands are busy, the board growing in visible steps, in-place correction of a wrong diagram without clearing, session-scoped status, and a full new-session reset. Artifacts (logs, board JSON, voice feed, screenshots) land in `.e2e/`. Render any run's persisted board with `node scripts/board-shot.mjs <run>/data out.png`. Both screenshots above came straight out of the landing scenario.
 
 ## Runtime boundaries
 

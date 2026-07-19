@@ -44,9 +44,11 @@ export class VoiceBridge {
 
   push(text: string, options: { interrupt?: boolean } = {}): void {
     if (text.startsWith("[agent progress]")) {
+      // A coworker at a whiteboard narrates while working. Suppress only
+      // instant tasks (under three seconds) and rapid-fire repetition.
       const now = Date.now();
-      if (this.#workStartedAt === 0 || now - this.#workStartedAt < 8_000) return;
-      if (this.#lastProgressAt > 0 && now - this.#lastProgressAt < 15_000) return;
+      if (this.#workStartedAt === 0 || now - this.#workStartedAt < 3_000) return;
+      if (this.#lastProgressAt > 0 && now - this.#lastProgressAt < 10_000) return;
       this.#lastProgressAt = now;
     }
     const message: VoiceInjection = {

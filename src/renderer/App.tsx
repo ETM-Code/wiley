@@ -318,16 +318,32 @@ export default function App() {
           )
         }
         renderTopRightUI={() => (
-          <button
-            type="button"
-            className="status-button"
-            onClick={() => setSidebarOpen((open) => !open)}
-            aria-expanded={sidebarOpen}
-            aria-controls="agent-status-sidebar"
-          >
-            <span className={`agent-dot${status.agentRunning ? " agent-dot--active" : ""}`} />
-            Status
-          </button>
+          <>
+            <button
+              type="button"
+              className="status-button"
+              onClick={() => {
+                if (!window.confirm("Start a fresh session? This clears the board and Wiley's working memory.")) return;
+                void bridge.agentToolCall("new_session", {})
+                  .then(() => setToast("Fresh session started"))
+                  .catch((error: unknown) =>
+                    setToast(error instanceof Error ? error.message : "Could not start a new session"));
+              }}
+              title="Clear the board and start a fresh session"
+            >
+              New session
+            </button>
+            <button
+              type="button"
+              className="status-button"
+              onClick={() => setSidebarOpen((open) => !open)}
+              aria-expanded={sidebarOpen}
+              aria-controls="agent-status-sidebar"
+            >
+              <span className={`agent-dot${status.agentRunning ? " agent-dot--active" : ""}`} />
+              Status
+            </button>
+          </>
         )}
       />
 

@@ -5,6 +5,7 @@ export const MAX_TRANSCRIPT_CHARS = 750_000;
 
 export class TranscriptStore {
   #deliveryCursor = 0;
+  #sessionBaseline = 0;
 
   constructor(private readonly ledger: RuntimeLedger) {}
 
@@ -14,8 +15,23 @@ export class TranscriptStore {
     return this.ledger.appendTranscript({ role, text: normalized });
   }
 
+  /**
+   * Starts a fresh session: everything before the baseline stays in the
+   * durable ledger but is never delivered to agents again.
+   */
+  beginSession(): void {
+    const last = this.ledger.getTranscript().at(-1)?.sequence ?? 0;
+    this.#sessionBaseline = last;
+    this.#deliveryCursor = Math.max(this.#deliveryCursor, last);
+  }
+
   all(): TranscriptEntry[] {
-    return this.ledger.getTranscript();
+    return this.ledger.getTranscript(this.#sessionBaseline);
+  }
+
+  /** Cursor read that can never reach back past the session baseline. */
+  after(sequence: number): TranscriptEntry[] {
+    return this.ledger.getTranscript(Math.max(sequence, this.#sessionBaseline));
   }
 
   /** Returns each entry at most once to the persistent main Pi session. */

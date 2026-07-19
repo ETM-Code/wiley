@@ -38,6 +38,17 @@ describe("shared canvas instructions", () => {
     expect(prompt).toContain("placeDirection");
   });
 
+  it.each([
+    ["root", BOARD_AGENT_SYSTEM_PROMPT],
+    ["subagent", SUBAGENT_SYSTEM_PROMPT],
+  ])("mandates visible process for the %s agent: narration, look-draw-look, erasing, walkthrough", (_name, prompt) => {
+    expect(prompt).toContain("coworker at the whiteboard");
+    expect(prompt).toContain("Narrate as you go");
+    expect(prompt).toContain("alternate looking and drawing");
+    expect(prompt).toContain("erase or correct it on the board");
+    expect(prompt).toContain("spoken\n  walkthrough");
+  });
+
   it("gives the root agent the coding protocol with the safety escalation path", () => {
     expect(BOARD_AGENT_SYSTEM_PROMPT).toContain("Coding protocol");
     expect(BOARD_AGENT_SYSTEM_PROMPT).toContain("never retry it or work around the block");
