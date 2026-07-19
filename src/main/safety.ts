@@ -108,6 +108,75 @@ export class CatastrophicCommandGuard {
   }
 }
 
+export const APPROVAL_PROMPT = `
+You are a fast safety reviewer for a coding agent's tool calls. You see one
+tool call plus the user's recent spoken requests. Approve almost everything:
+normal edits, builds, tests, installs, and git commits are all fine. If the
+user recently asked for exactly this action, approve it.
+
+BLOCK only if the call could destroy data or systems (recursive deletes,
+overwriting unrelated files, force pushes, touching paths outside the
+project), leaks secrets or credentials, or clearly contradicts what the user
+asked for.
+
+Reply with exactly APPROVE, or BLOCK followed by one short sentence saying
+what is wrong.
+`.trim();
+
+export interface ApprovalCall {
+  tool: string;
+  input: unknown;
+  cwd: string;
+  recentUserRequests: string[];
+}
+
+export type ApprovalCompletion = (request: {
+  systemPrompt: string;
+  userMessage: string;
+  signal?: AbortSignal;
+}) => Promise<string>;
+
+/**
+ * Claude Code-style permission prompt whose approver is a light critique
+ * model instead of the user. It is a tripwire, not a gatekeeper: any judge
+ * failure, timeout, or malformed verdict fails open so a broken judge can
+ * never halt the agent.
+ */
+export class ApprovalJudge {
+  constructor(private readonly complete: ApprovalCompletion) {}
+
+  async review(call: ApprovalCall, signal?: AbortSignal): Promise<GuardDecision> {
+    let verdict: string;
+    try {
+      verdict = (await this.complete({
+        systemPrompt: APPROVAL_PROMPT,
+        userMessage: JSON.stringify(call),
+        signal,
+      })).trim();
+    } catch {
+      return { allow: true };
+    }
+    if (!verdict.toUpperCase().startsWith("BLOCK")) return { allow: true };
+    const reason = verdict.slice("BLOCK".length).replace(/^[\s:.-]+/, "").trim();
+    return {
+      allow: false,
+      reason: reason || "The safety reviewer blocked this action.",
+    };
+  }
+}
+
+const READ_ONLY_COMMAND = /^(?:ls|pwd|cat|head|tail|wc|which|whoami|date|file|stat|du|df|grep|rg|find|fd|tree|env|printenv|echo|git\s+(?:status|log|diff|show|branch|remote|stash\s+list)|npm\s+(?:ls|view|outdated)|node\s+-[ve])(?:\s|$)/;
+
+/** Cheap read-only commands never need a judge round-trip. */
+export function isReadOnlyCommand(command: string): boolean {
+  const normalized = command.replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+  // Redirection, substitution, and chaining can all write; only plain
+  // pipelines of known read-only commands skip review.
+  if (/[;&><`]|\$\(/.test(normalized)) return false;
+  return normalized.split("|").every((segment) => READ_ONLY_COMMAND.test(segment.trim()));
+}
+
 /** Tracks successful reads so existing files cannot be overwritten blindly. */
 export class ReadBeforeEditGuard {
   #read = new Set<string>();

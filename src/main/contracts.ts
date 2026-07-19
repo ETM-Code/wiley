@@ -95,6 +95,7 @@ export interface CanvasRequest {
     | "preview-diagram"
     | "clear-diagram-preview"
     | "add-elements"
+    | "connect-elements"
     | "clear-scene"
     | "apply-patch";
   params?: unknown;
@@ -114,7 +115,7 @@ export interface BoardTransaction {
   baseRevision: number;
   leaseIds?: string[];
   summary: string;
-  operation: "add-shape" | "layout-diagram" | "add-elements" | "clear-scene" | "apply-patch";
+  operation: "add-shape" | "layout-diagram" | "add-elements" | "connect-elements" | "clear-scene" | "apply-patch";
   params: unknown;
 }
 

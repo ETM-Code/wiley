@@ -138,7 +138,7 @@ async function bootstrap(): Promise<void> {
   await pi.initialize();
   const runtime = new RuntimeController(ledger, transcript, pi, canvas, sendToRenderer);
   await runtime.recoverInterruptedJobs();
-  disposeIpc = registerIpc({ runtime, transcript, canvas, voice });
+  disposeIpc = registerIpc({ runtime, transcript, canvas, voice, ledger, pi });
   mainWindow = await createWindow();
   mainWindow.on("closed", () => {
     canvas.failPending();

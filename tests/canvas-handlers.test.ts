@@ -119,18 +119,16 @@ describe("diagram renderer", () => {
     const arrows = result.__boardSnapshot.elements.filter((element) => element.type === "arrow");
     expect(arrows).toHaveLength(2);
     expect(arrows.every((arrow) => arrow.startBinding && arrow.endBinding)).toBe(true);
-    const primaryGeometry = result.__boardSnapshot.elements.filter((element) => element.type !== "text");
+    // Shapes live on the hidden grid; connector routes keep ELK's exact
+    // channel geometry so parallel runs can never snap onto each other.
+    const primaryGeometry = result.__boardSnapshot.elements.filter(
+      (element) => element.type !== "text" && element.type !== "arrow",
+    );
     for (const element of primaryGeometry) {
       expectOnModelGrid(element.x);
       expectOnModelGrid(element.y);
-      if (element.type !== "arrow") {
-        expectOnModelGrid(element.width);
-        expectOnModelGrid(element.height);
-      }
-      for (const point of (element.points as Array<[number, number]> | undefined) ?? []) {
-        expectOnModelGrid(point[0]);
-        expectOnModelGrid(point[1]);
-      }
+      expectOnModelGrid(element.width);
+      expectOnModelGrid(element.height);
     }
   });
 
@@ -188,6 +186,7 @@ describe("diagram renderer", () => {
       title: true,
       nodes: 3,
       edges: 2,
+      edgeLabels: 1,
       shapes: { start: "rectangle", decision: "diamond", finish: "ellipse" },
       grid: { gridSize: 20, snapped: true },
     });
@@ -247,6 +246,160 @@ describe("diagram renderer", () => {
     });
     const modelMovedHumanShape = elements.find((element) => element.id === "human-freeform")!;
     for (const key of ["x", "y", "width", "height"] as const) expectOnModelGrid(modelMovedHumanShape[key]);
+  });
+
+  it("connects existing human-drawn elements with bound arrows", async () => {
+    let elements: Array<Record<string, any>> = [
+      { id: "magic", type: "rectangle", x: 0, y: 400, width: 300, height: 90, version: 1 },
+      { id: "voice", type: "ellipse", x: 700, y: 0, width: 240, height: 120, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const result = await handleCanvasRequest(api, {
+      id: 30,
+      op: "connect-elements",
+      params: {
+        connections: [{ from: "magic", to: "voice", label: "delegates", bidirectional: true }],
+      },
+    }) as { count: number; ids: string[] };
+
+    expect(result.count).toBe(1);
+    const arrow = elements.find((element) => element.type === "arrow")!;
+    expect(arrow.startBinding).toMatchObject({ elementId: "magic" });
+    expect(arrow.endBinding).toMatchObject({ elementId: "voice" });
+    expect(arrow.startArrowhead).toBe("arrow");
+    expect(arrow.endArrowhead).toBe("arrow");
+    const magic = elements.find((element) => element.id === "magic")!;
+    const voiceShape = elements.find((element) => element.id === "voice")!;
+    expect(magic.boundElements).toContainEqual({ id: arrow.id, type: "arrow" });
+    expect(voiceShape.boundElements).toContainEqual({ id: arrow.id, type: "arrow" });
+    // The route starts on magic's perimeter, aimed at voice, not at a corner
+    // of the bounding box or a random column below.
+    expect(arrow.x).toBeGreaterThanOrEqual(magic.x);
+    expect(arrow.x).toBeLessThanOrEqual(magic.x + magic.width);
+    expect(arrow.y).toBeGreaterThanOrEqual(voiceShape.y + voiceShape.height - 1);
+    expect(elements.some((element) => element.type === "text" && element.text === "delegates")).toBe(true);
+    await expect(handleCanvasRequest(api, {
+      id: 31,
+      op: "connect-elements",
+      params: { connections: [{ from: "magic", to: "ghost" }] },
+    })).rejects.toThrow(/unknown element id ghost/);
+  });
+
+  it("carries bound labels and arrow endpoints when a shape moves", async () => {
+    let elements: Array<Record<string, any>> = [
+      {
+        id: "c1", type: "rectangle", x: 0, y: 0, width: 100, height: 60, version: 1,
+        boundElements: [{ id: "t1", type: "text" }],
+      },
+      { id: "t1", type: "text", x: 25, y: 20, width: 50, height: 20, version: 1, containerId: "c1", text: "Box" },
+      { id: "c2", type: "rectangle", x: 300, y: 0, width: 100, height: 60, version: 1 },
+      {
+        id: "a1", type: "arrow", x: 100, y: 30, width: 200, height: 0, version: 1,
+        points: [[0, 0], [200, 0]],
+        startBinding: { elementId: "c1" }, endBinding: { elementId: "c2" },
+      },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const result = await handleCanvasRequest(api, {
+      id: 32,
+      op: "apply-patch",
+      params: { updates: [{ id: "c1", props: { x: 40, y: 20 } }] },
+    }) as { updated: number; adjusted: number };
+
+    expect(result.updated).toBe(1);
+    expect(result.adjusted).toBe(2);
+    expect(elements.find((element) => element.id === "c1")).toMatchObject({ x: 40, y: 20 });
+    // Label re-centered in the moved container.
+    expect(elements.find((element) => element.id === "t1")).toMatchObject({ x: 65, y: 40 });
+    // The bound start endpoint followed the shape; the far end stayed put.
+    const arrow = elements.find((element) => element.id === "a1")!;
+    expect(arrow.x).toBe(140);
+    expect(arrow.y).toBe(50);
+    expect(arrow.points).toEqual([[0, 0], [160, -20]]);
+  });
+
+  it("routes text edits on a labelled shape to its bound label and re-measures", async () => {
+    let elements: Array<Record<string, any>> = [
+      {
+        id: "c1", type: "rectangle", x: 0, y: 0, width: 200, height: 80, version: 1,
+        boundElements: [{ id: "t1", type: "text" }],
+      },
+      { id: "t1", type: "text", x: 60, y: 30, width: 80, height: 20, version: 1, containerId: "c1", text: "Old", fontSize: 20 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+    } as unknown as ExcalidrawImperativeAPI;
+
+    await handleCanvasRequest(api, {
+      id: 33,
+      op: "apply-patch",
+      params: { updates: [{ id: "c1", props: { text: "Renamed component" } }] },
+    });
+
+    const label = elements.find((element) => element.id === "t1")!;
+    expect(label.text).toBe("Renamed component");
+    expect(label.originalText).toBe("Renamed component");
+    expect(label.width).toBeGreaterThan(80);
+    const container = elements.find((element) => element.id === "c1")!;
+    expect(container.text).toBeUndefined();
+  });
+
+  it("deleting a labelled shape removes its label and strips dangling bindings", async () => {
+    let elements: Array<Record<string, any>> = [
+      {
+        id: "c1", type: "rectangle", x: 0, y: 0, width: 100, height: 60, version: 1,
+        boundElements: [{ id: "t1", type: "text" }],
+      },
+      { id: "t1", type: "text", x: 25, y: 20, width: 50, height: 20, version: 1, containerId: "c1", text: "Box" },
+      { id: "c2", type: "rectangle", x: 300, y: 0, width: 100, height: 60, version: 1 },
+      {
+        id: "a1", type: "arrow", x: 100, y: 30, width: 200, height: 0, version: 1,
+        points: [[0, 0], [200, 0]],
+        startBinding: { elementId: "c1" }, endBinding: { elementId: "c2" },
+      },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const result = await handleCanvasRequest(api, {
+      id: 34,
+      op: "apply-patch",
+      params: { deletes: ["c1"] },
+    }) as { deleted: number };
+
+    expect(result.deleted).toBe(2);
+    expect(elements.some((element) => element.id === "t1")).toBe(false);
+    const arrow = elements.find((element) => element.id === "a1")!;
+    expect(arrow.startBinding).toBeNull();
+    expect(arrow.endBinding).toEqual({ elementId: "c2" });
   });
 
   it("skips step animation in a hidden canvas mirror", async () => {

@@ -14,6 +14,7 @@ export type CanvasRequest = {
     | "preview-diagram"
     | "clear-diagram-preview"
     | "add-elements"
+    | "connect-elements"
     | "clear-scene"
     | "apply-patch";
   params?: unknown;

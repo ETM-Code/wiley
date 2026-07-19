@@ -14,9 +14,21 @@ Use this skill whenever a task involves the whiteboard. The canvas is shared wit
 3. Call `get_canvas` when the attached context is insufficient, or before edits that depend on exact existing element state.
 4. Call `screenshot_canvas` only when visual or spatial interpretation matters, such as rough sketches, freedraw, handwriting, or ambiguous proximity.
 5. Use `draw_diagram` for structured graphs. Supply nodes and edges, never coordinates. ELK computes layout.
-6. Use `draw_on_canvas` for annotations, callouts, or elements placed near an existing element.
-7. Use `edit_canvas` for minimal updates or deletion. Do not redraw an existing scene to change one property.
-8. Re-read affected elements after a conflict or interruption. An aborted operation may already have landed.
+6. Use `connect_shapes` to link elements that already exist, including the user's drawings. Give ids, an optional label, and `bidirectional` when the relationship runs both ways; attachment and routing are automatic.
+7. Use `draw_on_canvas` for annotations, callouts, or elements placed near an existing element. Both it and `draw_diagram` take a direction (`placeDirection` / `anchorDirection`) to grow the board right, left, above, or below existing content.
+7b. Use `place_image` to drop a rendered screenshot or other image file onto the board next to related content.
+8. Use `edit_canvas` for minimal updates or deletion, including on the user's own elements: move, resize, recolor, or relabel them by id. Setting `text` on a labelled shape edits its bound label. Do not redraw an existing scene to change one property.
+9. Call `clear_canvas` only when the user's verbatim words ask to wipe the whole board. Fill-in, connect, extend, and tidy requests build on the existing elements.
+10. Re-read affected elements after a conflict or interruption. An aborted operation may already have landed.
+
+## Hand-drawn wireframes
+
+When the user sketches a layout (boxes for sections of a page or app):
+
+1. `screenshot_canvas` to see the sketch spatially, plus `get_canvas` for the exact ids and bounding boxes.
+2. Infer each box's role from its position and size (top strip = header or hero, wide middle = content, small repeated boxes = cards, bottom strip = footer).
+3. Fill in labels on THEIR elements with `edit_canvas` (patch `text` on each shape id); do not redraw their boxes.
+4. If they then want the thing built, treat their sketch as the specification and keep the board sketch intact as the reference.
 
 ## Concurrent editing
 

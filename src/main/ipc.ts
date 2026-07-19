@@ -5,6 +5,9 @@ import { RuntimeController } from "./runtime-controller";
 import { TranscriptStore } from "./transcript";
 import { CanvasBridge } from "./canvas-bridge";
 import { VoiceBridge } from "./voice-bridge";
+import { callVoiceTool } from "./voice-tools";
+import type { RuntimeLedger } from "./ledger";
+import type { PiRuntime } from "./pi-runtime";
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
   const url = event.senderFrame?.url ?? "";
@@ -17,8 +20,10 @@ export function registerIpc(options: {
   transcript: TranscriptStore;
   canvas: CanvasBridge;
   voice: VoiceBridge;
+  ledger: RuntimeLedger;
+  pi: PiRuntime;
 }): () => void {
-  const { runtime, transcript, canvas, voice } = options;
+  const { runtime, transcript, canvas, voice, ledger, pi } = options;
   const handled: string[] = [];
   const handle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => {
     ipcMain.handle(channel, async (event, ...args) => {
@@ -43,28 +48,8 @@ export function registerIpc(options: {
   });
   handle(IPC.getTranscript, () => transcript.all());
   handle(IPC.submitBoardSnapshot, (_event, snapshot: BoardSnapshot) => canvas.submitHumanSnapshot(snapshot));
-  handle(IPC.agentToolCall, async (_event, name: VoiceToolName, args: Record<string, unknown> = {}) => {
-    switch (name) {
-      case "send_task_to_agent":
-        return runtime.submitJob(String(args.task ?? ""), String(args.user_words ?? ""), args.queue === true);
-      case "answer_agent":
-        return { ok: voice.deliverAnswer(String(args.answer ?? "")) };
-      case "get_agent_status":
-        return runtime.getState();
-      case "look_at_board": {
-        const elements = await canvas.request<Array<{ type?: string; text?: string }>>("get-scene-summary");
-        return {
-          elements: elements.length,
-          texts: elements.filter((element) => element.text).map((element) => element.text),
-        };
-      }
-      case "abort_agent":
-        await runtime.abortCurrent();
-        return { ok: true, note: "Current work aborted." };
-      default:
-        throw new Error(`Unknown voice tool: ${String(name)}`);
-    }
-  });
+  handle(IPC.agentToolCall, (_event, name: VoiceToolName, args: Record<string, unknown> = {}) =>
+    callVoiceTool({ runtime, canvas, voice, ledger, pi }, name, args));
 
   const canvasListener = (_event: Electron.IpcMainEvent, response: import("./contracts").CanvasResponse) => {
     canvas.acceptResponse(response);

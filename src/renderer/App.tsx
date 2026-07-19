@@ -195,6 +195,9 @@ export default function App() {
       && snapshot.revision >= boardRevisionRef.current
       && currentFingerprint !== canonicalFingerprint) {
       lastSubmittedElementsRef.current = canonicalFingerprint;
+      if (snapshot.files && Object.keys(snapshot.files).length > 0) {
+        api.addFiles(Object.values(snapshot.files) as Parameters<ExcalidrawImperativeAPI["addFiles"]>[0]);
+      }
       api.updateScene({
         elements: snapshot.elements as unknown as Parameters<ExcalidrawImperativeAPI["updateScene"]>[0]["elements"],
       });

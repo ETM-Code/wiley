@@ -1,7 +1,8 @@
 import path from "node:path";
 import os from "node:os";
+import { readFile } from "node:fs/promises";
 import { Type } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { complete, getModel } from "@earendil-works/pi-ai/compat";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -18,13 +19,15 @@ import type { RuntimeLedger } from "./ledger";
 import { TranscriptStore } from "./transcript";
 import { CanvasBridge } from "./canvas-bridge";
 import { stableDiagramPreview } from "./diagram-preview";
-import { CatastrophicCommandGuard, ReadBeforeEditGuard } from "./safety";
+import { ApprovalJudge, CatastrophicCommandGuard, ReadBeforeEditGuard, isReadOnlyCommand } from "./safety";
 import { VoiceBridge } from "./voice-bridge";
 
 export const PI_PROVIDER = "openai" as const;
 export const PI_MODEL = "gpt-5.6-luna" as const;
 export const PI_THINKING_LEVEL = "medium" as const;
+export const DEFAULT_APPROVAL_MODEL = "gpt-5.4-mini" as const;
 const MAX_ACTIVE_SUBAGENTS = 4;
+const JUDGED_TOOLS = new Set(["bash", "edit", "write"]);
 
 type SubStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -41,6 +44,41 @@ interface Subagent {
 interface WarmSubagent {
   id: string;
   session: AgentSession;
+}
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+
+function sniffImageSize(data: Buffer, mime: string): { width: number; height: number } | undefined {
+  try {
+    if (mime === "image/png" && data.length >= 24) {
+      return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
+    }
+    if (mime === "image/gif" && data.length >= 10) {
+      return { width: data.readUInt16LE(6), height: data.readUInt16LE(8) };
+    }
+    if (mime === "image/jpeg") {
+      let offset = 2;
+      while (offset + 9 < data.length) {
+        if (data[offset] !== 0xff) break;
+        const marker = data[offset + 1];
+        const size = data.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { width: data.readUInt16BE(offset + 7), height: data.readUInt16BE(offset + 5) };
+        }
+        offset += 2 + size;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function lastAssistantText(messages: readonly unknown[]): string {
@@ -83,6 +121,7 @@ export class PiRuntime {
   #diagramPreviewTimer?: NodeJS.Timeout;
   #pendingDiagramPreview?: Record<string, unknown>;
   #lastDiagramPreviewSignature = "";
+  #approvalJudge?: ApprovalJudge;
 
   constructor(
     private readonly projectDir: string,
@@ -96,6 +135,7 @@ export class PiRuntime {
     this.#modelRuntime = await ModelRuntime.create();
     const model = getModel(PI_PROVIDER, PI_MODEL);
     if (!model) throw new Error(`Pi model not found: ${PI_PROVIDER}/${PI_MODEL}`);
+    this.#approvalJudge = this.#createApprovalJudge();
     const agentDir = path.join(os.homedir(), ".pi", "agent");
     const settingsManager = SettingsManager.create(this.projectDir, agentDir);
     const loader = new DefaultResourceLoader({
@@ -319,14 +359,28 @@ export class PiRuntime {
       defineTool({
         name: "clear_canvas",
         label: "Clear Canvas",
-        description: "Immediately remove every element from the canvas. Use this before drawing when the user asks to clear, replace, remove all, or start over.",
+        description: "Remove every element from the canvas, destroying the user's own drawings. Call it only when the user's verbatim words explicitly ask to wipe the board (clear, erase everything, start over, replace it all). Requests to fill in, connect, finish, extend, or tidy existing content must never clear; work with the elements already on the board instead.",
         parameters: Type.Object({}),
         execute: async (_id, _params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "clear-scene", {}, signal)),
       }),
       defineTool({
+        name: "connect_shapes",
+        label: "Connect Shapes",
+        description: "Connect existing elements, including the user's hand-drawn ones, with properly bound arrows. Give element ids from the canvas context plus an optional short label; perimeter attachment points and routing are computed automatically and the arrows stay attached when shapes move. Set bidirectional true for a two-headed arrow. Always use this to link existing elements; never draw connector coordinates yourself.",
+        parameters: Type.Object({
+          connections: Type.Array(Type.Object({
+            from: Type.String(),
+            to: Type.String(),
+            label: Type.Optional(Type.String()),
+            bidirectional: Type.Optional(Type.Boolean()),
+          }, { additionalProperties: false })),
+        }, { additionalProperties: false }),
+        execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "connect-elements", params, signal)),
+      }),
+      defineTool({
         name: "draw_diagram",
         label: "Draw Diagram",
-        description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Layout, hidden 20 px grid snapping, viewport fitting, and perimeter bindings are automatic. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection.",
+        description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Layout, grid snapping, viewport fitting, and perimeter bindings are automatic. To add the diagram beside existing content, pass anchor (an existing element id, or omit to use the whole scene) with anchorDirection right, left, above, or below. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection.",
         parameters: Type.Object({
           title: Type.Optional(Type.String()),
           nodes: Type.Array(Type.Object({
@@ -347,6 +401,12 @@ export class PiRuntime {
             label: Type.Optional(Type.String()),
           }, { additionalProperties: false })),
           anchor: Type.Optional(Type.String()),
+          anchorDirection: Type.Optional(Type.Union([
+            Type.Literal("right"),
+            Type.Literal("left"),
+            Type.Literal("above"),
+            Type.Literal("below"),
+          ])),
           layout: Type.Optional(Type.Object({
             direction: Type.Optional(Type.Union([Type.Literal("RIGHT"), Type.Literal("DOWN")])),
             nodeSpacing: Type.Optional(Type.Number()),
@@ -358,14 +418,66 @@ export class PiRuntime {
       defineTool({
         name: "draw_on_canvas",
         label: "Draw On Canvas",
-        description: "Add sanitized Excalidraw skeleton elements, optionally placed near an existing id. Any arrow connecting nodes must use start and end element bindings so it terminates at their visible edges; never aim arrow coordinates at box centers.",
-        parameters: Type.Object({ elements: Type.Array(Type.Any()), placeNear: Type.Optional(Type.String()), scrollTo: Type.Optional(Type.Boolean()) }),
+        description: "Add sanitized Excalidraw skeleton elements, optionally placed near an existing id. For annotations and callouts only; to link existing elements use connect_shapes, which computes routing and bindings. Any arrow drawn here must still use start and end element bindings; never aim arrow coordinates at box centers.",
+        parameters: Type.Object({
+          elements: Type.Array(Type.Any()),
+          placeNear: Type.Optional(Type.String()),
+          placeDirection: Type.Optional(Type.Union([
+            Type.Literal("right"),
+            Type.Literal("left"),
+            Type.Literal("above"),
+            Type.Literal("below"),
+          ])),
+          scrollTo: Type.Optional(Type.Boolean()),
+        }),
         execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "add-elements", params, signal)),
+      }),
+      defineTool({
+        name: "place_image",
+        label: "Place Image",
+        description: "Put an image file from the workspace onto the canvas, such as a screenshot you rendered. Give the file path (relative to the project or absolute); size is read from the file. Use placeNear and placeDirection to position it beside existing content.",
+        parameters: Type.Object({
+          path: Type.String(),
+          width: Type.Optional(Type.Number()),
+          placeNear: Type.Optional(Type.String()),
+          placeDirection: Type.Optional(Type.Union([
+            Type.Literal("right"),
+            Type.Literal("left"),
+            Type.Literal("above"),
+            Type.Literal("below"),
+          ])),
+        }, { additionalProperties: false }),
+        execute: async (_id, params, signal) => {
+          const filePath = path.resolve(this.projectDir, params.path);
+          const mime = IMAGE_MIME_BY_EXT[path.extname(filePath).toLowerCase()];
+          if (!mime) throw new Error(`Unsupported image type: ${path.extname(filePath) || "(none)"}`);
+          const data = await readFile(filePath);
+          if (data.byteLength > 4_000_000) {
+            throw new Error("Image exceeds 4 MB; render a smaller screenshot instead");
+          }
+          const natural = sniffImageSize(data, mime) ?? { width: 800, height: 600 };
+          const width = Math.min(960, Math.max(120, params.width ?? Math.min(640, natural.width)));
+          const height = Math.max(80, Math.round(width * (natural.height / Math.max(1, natural.width))));
+          const fileId = crypto.randomUUID().replaceAll("-", "");
+          return this.#toolText(await this.#mutateCanvas(agentId, "add-elements", {
+            elements: [{ type: "image", fileId, width, height }],
+            files: {
+              [fileId]: {
+                id: fileId,
+                mimeType: mime,
+                dataURL: `data:${mime};base64,${data.toString("base64")}`,
+                created: Date.now(),
+              },
+            },
+            placeNear: params.placeNear,
+            placeDirection: params.placeDirection,
+          }, signal));
+        },
       }),
       defineTool({
         name: "edit_canvas",
         label: "Edit Canvas",
-        description: "Patch or delete existing elements by id. Read the canvas first and change only necessary properties.",
+        description: "Patch or delete existing elements by id, including the user's hand-drawn ones: move, resize, recolor, restyle, or change text. Setting text or fontSize on a labelled shape automatically edits its attached label, moving a shape carries its label and bound arrows along, and deleting a shape removes its label. Read the canvas first and change only necessary properties.",
         parameters: Type.Object({ updates: Type.Optional(Type.Array(Type.Any())), deletes: Type.Optional(Type.Array(Type.String())) }),
         execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "apply-patch", params, signal)),
       }),
@@ -726,7 +838,7 @@ export class PiRuntime {
 
   async #mutateCanvas(
     agentId: string,
-    operation: "add-shape" | "layout-diagram" | "add-elements" | "clear-scene" | "apply-patch",
+    operation: "add-shape" | "layout-diagram" | "add-elements" | "connect-elements" | "clear-scene" | "apply-patch",
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<unknown> {
@@ -782,6 +894,23 @@ export class PiRuntime {
     return this.#main;
   }
 
+  #createApprovalJudge(): ApprovalJudge | undefined {
+    if (process.env.WILEY_APPROVAL_DISABLED === "1") return undefined;
+    const modelId = process.env.WILEY_APPROVAL_MODEL?.trim() || DEFAULT_APPROVAL_MODEL;
+    const judgeModel = getModel(PI_PROVIDER, modelId as typeof DEFAULT_APPROVAL_MODEL);
+    if (!judgeModel) return undefined;
+    return new ApprovalJudge(async ({ systemPrompt, userMessage, signal }) => {
+      const message = await complete(judgeModel, {
+        systemPrompt,
+        messages: [{ role: "user", content: userMessage, timestamp: Date.now() }],
+      }, { signal });
+      return message.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+    });
+  }
+
   #guardExtension(): InlineExtension {
     const commandGuard = new CatastrophicCommandGuard(this.projectDir);
     const editGuard = new ReadBeforeEditGuard();
@@ -794,7 +923,7 @@ export class PiRuntime {
             if (input.path) editGuard.markRead(path.resolve(this.projectDir, input.path));
           }
         });
-        pi.on("tool_call", (event, context) => {
+        pi.on("tool_call", async (event, context) => {
           if (event.toolName === "edit" || event.toolName === "write") {
             const input = event.input as { path?: string };
             if (input.path) {
@@ -810,7 +939,31 @@ export class PiRuntime {
               return { block: true, reason: `${decision.reason} Do not retry or work around this block.` };
             }
           }
-          return undefined;
+          // Everything above is the hard floor. The approval judge is the
+          // soft layer: a cheap model approves routine work and blocks only
+          // destruction, secret leaks, or contradicting the user.
+          if (!this.#approvalJudge || !JUDGED_TOOLS.has(event.toolName)) return undefined;
+          if (event.toolName === "bash") {
+            const input = event.input as { command?: string };
+            if (isReadOnlyCommand(input.command ?? "")) return undefined;
+          }
+          const recentUserRequests = this.ledger.getTranscript()
+            .filter((entry) => entry.role === "user")
+            .slice(-6)
+            .map((entry) => entry.text);
+          const verdict = await this.#approvalJudge.review({
+            tool: event.toolName,
+            input: this.#redact(event.input),
+            cwd: context.cwd,
+            recentUserRequests,
+          }, context.signal);
+          if (verdict.allow) return undefined;
+          this.voice.push(`[safety] I stopped myself before a risky ${event.toolName} action. ${verdict.reason}`, { interrupt: true });
+          return {
+            block: true,
+            reason: `Blocked by the safety reviewer: ${verdict.reason} Do not retry this action or work `
+              + "around the block. If it is genuinely necessary, explain and get explicit permission via ask_user first.",
+          };
         });
       },
     };

@@ -11,6 +11,7 @@ import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";
 import { TranscriptStore } from "../main/transcript";
 import { VoiceBridge } from "../main/voice-bridge";
+import { callVoiceTool } from "../main/voice-tools";
 import { mintRealtimeToken } from "../main/voice-token";
 
 const host = process.env.BOARD_AI_HOST?.trim() || "127.0.0.1";
@@ -113,7 +114,8 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.length;
-    if (size > 2_000_000) throw new Error("Request body exceeds 2 MB");
+    // Board snapshots and canvas responses may carry base64 image files.
+    if (size > 24_000_000) throw new Error("Request body exceeds 24 MB");
     chunks.push(bytes);
   }
   if (chunks.length === 0) return {};
@@ -145,28 +147,7 @@ await pi.initialize();
 const runtime = new RuntimeController(ledger, transcript, pi, canvas, (channel, payload) => hub.publish(channel, payload));
 await runtime.recoverInterruptedJobs();
 
-async function callVoiceTool(name: VoiceToolName, args: Record<string, unknown>): Promise<unknown> {
-  switch (name) {
-    case "send_task_to_agent":
-      return runtime.submitJob(String(args.task ?? ""), String(args.user_words ?? ""), args.queue === true);
-    case "answer_agent":
-      return { ok: voice.deliverAnswer(String(args.answer ?? "")) };
-    case "get_agent_status":
-      return runtime.getState();
-    case "look_at_board": {
-      const elements = await canvas.request<Array<{ type?: string; text?: string }>>("get-scene-summary");
-      return {
-        elements: elements.length,
-        texts: elements.filter((element) => element.text).map((element) => element.text),
-      };
-    }
-    case "abort_agent":
-      await runtime.abortCurrent();
-      return { ok: true, note: "Current work aborted." };
-    default:
-      throw new Error(`Unknown voice tool: ${String(name)}`);
-  }
-}
+const voiceToolDeps = { runtime, canvas, voice, ledger, pi };
 
 const server = createServer(async (request, response) => {
   try {
@@ -216,7 +197,7 @@ const server = createServer(async (request, response) => {
       const args = body.args && typeof body.args === "object" && !Array.isArray(body.args)
         ? body.args as Record<string, unknown>
         : {};
-      return sendJson(response, 200, await callVoiceTool(body.name as VoiceToolName, args));
+      return sendJson(response, 200, await callVoiceTool(voiceToolDeps, body.name as VoiceToolName, args));
     }
     if (request.method === "POST" && url.pathname === "/api/board-snapshot") {
       const clientId = String(request.headers["x-wiley-client-id"] ?? "").trim();

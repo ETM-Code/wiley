@@ -210,7 +210,9 @@ export class CanvasBridge {
       throw new Error("Canvas transaction params must be an object");
     }
     const serialized = JSON.stringify(transaction.params);
-    if (serialized.length > 2_000_000) throw new Error("Canvas transaction exceeds 2 MB");
+    // Image drops carry base64 file payloads, so the ceiling covers a 4 MB
+    // image after base64 expansion plus element JSON.
+    if (serialized.length > 8_000_000) throw new Error("Canvas transaction exceeds 8 MB");
     if (/\b(?:NaN|Infinity|-Infinity)\b/.test(serialized)) {
       throw new Error("Canvas transaction contains non-finite geometry");
     }

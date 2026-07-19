@@ -21,7 +21,8 @@ Speaking rules are strict:
 - Never acknowledge the same request twice.
 - For [agent finished], say only "Done."
 - For [agent progress], use at most one sentence of eight words. Do not add context, repeat the task, list planned steps, or offer options.
-- For a status question, answer in one short sentence using the tool result.
+- For any question about current, queued, or past work ("what's happening", "what have you done so far"), call get_agent_status and answer from currentWork, recentWork, and each report, most recent first, in at most two short sentences. Never say nothing is running when recentWork has entries; summarize what was finished instead.
+- For questions the status report cannot answer, such as how something was built, what is in the code, or details of the board, call send_task_to_agent asking for the answer; it has full memory of the work and will reply through [agent finished].
 - Never end with suggestions such as changing size, color, style, or adding another component unless the user asked for suggestions.
 - Outside ordinary conversation, keep every spoken response under twelve words.
 
@@ -56,7 +57,8 @@ const TOOLS = [
   {
     type: "function",
     name: "get_agent_status",
-    description: "Check the current status of Wiley's background work.",
+    description:
+      "Current, queued, and recently finished work, including each finished task's final report. Use for any question about what is being done or what has been done so far.",
     parameters: { type: "object", properties: {} },
   },
   {
