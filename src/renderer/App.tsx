@@ -8,7 +8,38 @@ import {
   subscribeToCanvasRequests,
   withoutDiagramPreviewElements,
 } from "./canvas-handlers";
+import { HouseMusicPlayer } from "./house-music";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
+
+const MUSIC_PREFERENCE_KEY = "wiley:house-music";
+
+function readMusicPreference(): boolean {
+  try {
+    return window.localStorage.getItem(MUSIC_PREFERENCE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function writeMusicPreference(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(MUSIC_PREFERENCE_KEY, enabled ? "on" : "off");
+  } catch {
+    // Preference just resets next launch if storage is unavailable.
+  }
+}
+
+function MusicNoteIcon({ muted }: { muted: boolean }) {
+  return muted ? (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="m3 3 18 18M9 13.55V9.99M9 6v-.74l12-2.4v10.29M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12-1a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
+  ) : (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M9 18V5.26l12-2.4V17M9 8.66l12-2.4M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12-1a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
+  );
+}
 
 function MicrophoneIcon({ muted }: { muted: boolean }) {
   return muted ? (
@@ -114,9 +145,33 @@ export default function App() {
   );
   const [voiceState, setVoiceState] = useState<VoiceState>(() => voice.getState());
   const microphoneEnabled = voiceState.microphoneEnabled;
+  const music = useMemo(() => new HouseMusicPlayer(), []);
+  const [musicEnabled, setMusicEnabled] = useState(readMusicPreference);
 
   useEffect(() => voice.subscribe(setVoiceState), [voice]);
   useEffect(() => () => voice.destroy(), [voice]);
+  useEffect(() => () => music.dispose(), [music]);
+
+  useEffect(() => {
+    if (!musicEnabled || !status.agentRunning) {
+      music.stop();
+      return;
+    }
+    // A short delay keeps trivial tasks from producing a one-beat blip.
+    const timer = window.setTimeout(() => music.start(), 600);
+    return () => window.clearTimeout(timer);
+  }, [music, musicEnabled, status.agentRunning]);
+
+  useEffect(() => {
+    music.setSpeechActive(voiceState.assistantAudioActive || voiceState.userSpeechActive);
+  }, [music, voiceState.assistantAudioActive, voiceState.userSpeechActive]);
+
+  const toggleMusic = useCallback(() => {
+    setMusicEnabled((enabled) => {
+      writeMusicPreference(!enabled);
+      return !enabled;
+    });
+  }, []);
 
   useEffect(() => {
     void bridge.isVoiceDisabled().then(setVoiceDisabled);
@@ -384,6 +439,17 @@ export default function App() {
             </span>
           </div>
         ) : null}
+
+        <button
+          type="button"
+          className={`microphone-button music-button${musicEnabled && status.agentRunning ? " music-button--playing" : ""}`}
+          onClick={toggleMusic}
+          aria-label={musicEnabled ? "Turn off house music while Wiley works" : "Turn on house music while Wiley works"}
+          aria-pressed={musicEnabled}
+          title={musicEnabled ? "House music plays while Wiley works. Click to turn off." : "House music is off. Click to play it while Wiley works."}
+        >
+          <MusicNoteIcon muted={!musicEnabled} />
+        </button>
 
         <button
           type="button"
