@@ -22,10 +22,12 @@ const WEB_PORT = 5715;
 
 const children = [];
 function spawnStep(command, args, env) {
+  // Own process group so teardown can kill the npx wrapper's children too.
   const child = spawn(command, args, {
     cwd: root,
     env: { ...process.env, ...env },
     stdio: "ignore",
+    detached: true,
   });
   children.push(child);
   return child;
@@ -75,6 +77,12 @@ try {
   await browser.close();
   console.log(`wrote ${outPng}`);
 } finally {
-  for (const child of children) child.kill("SIGTERM");
+  for (const child of children) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      child.kill("SIGTERM");
+    }
+  }
 }
 process.exit(0);

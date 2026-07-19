@@ -60,10 +60,13 @@ if (!apiKey) {
 
 const children = [];
 function spawnStep(name, command, args, env) {
+  // Own process group: killing -pid takes the npx wrapper's children down
+  // too, so no orphaned vite/tsx server can outlive the run.
   const child = spawn(command, args, {
     cwd: root,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
   const log = path.join(runDir, `${name}.log`);
   const chunks = [];
@@ -277,7 +280,13 @@ try {
   failed = true;
 } finally {
   observerRunning = false;
-  for (const child of children) child.kill("SIGTERM");
+  for (const child of children) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      child.kill("SIGTERM");
+    }
+  }
 }
 
 console.log("\n=== scenario results ===");
