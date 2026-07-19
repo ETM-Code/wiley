@@ -195,14 +195,33 @@ describe("HouseMusicPlayer synth fallback", () => {
 });
 
 describe("HouseMusicPlayer speech fades", () => {
-  it("fades to silence while someone speaks and back afterwards", () => {
+  it("fades to silence while someone speaks and back only after a silence hold-off", () => {
     const { ctx, player } = makePlayer();
     player.start();
     const speech = ctx.gains[0];
     player.setSpeechActive(true);
-    expect(speech.gain.ramps.at(-1)?.target).toBe(0);
+    const duck = speech.gain.ramps.at(-1);
+    expect(duck?.target).toBe(0);
     player.setSpeechActive(false);
-    expect(speech.gain.ramps.at(-1)?.target).toBe(1);
+    // No fade-in yet: silence must hold for a while first.
+    expect(speech.gain.ramps.at(-1)?.target).toBe(0);
+    vi.advanceTimersByTime(2600);
+    const rise = speech.gain.ramps.at(-1);
+    expect(rise?.target).toBe(1);
+    // Ramp up is much slower than the duck down.
+    expect(rise!.time - ctx.currentTime).toBeGreaterThan((duck!.time - ctx.currentTime) * 2);
+  });
+
+  it("cancels the pending fade-in when speech resumes during the hold-off", () => {
+    const { ctx, player } = makePlayer();
+    player.start();
+    const speech = ctx.gains[0];
+    player.setSpeechActive(true);
+    player.setSpeechActive(false);
+    vi.advanceTimersByTime(1000);
+    player.setSpeechActive(true);
+    vi.advanceTimersByTime(10_000);
+    expect(speech.gain.ramps.at(-1)?.target).toBe(0);
   });
 
   it("applies speech state set before the audio graph exists", () => {
@@ -211,6 +230,17 @@ describe("HouseMusicPlayer speech fades", () => {
     player.start();
     const speech = ctx.gains[0];
     expect(speech.gain.value).toBe(0);
+  });
+
+  it("starts silent when created during the hold-off and fades in when it elapses", () => {
+    const { ctx, player } = makePlayer();
+    player.setSpeechActive(true);
+    player.setSpeechActive(false);
+    player.start();
+    const speech = ctx.gains[0];
+    expect(speech.gain.value).toBe(0);
+    vi.advanceTimersByTime(2600);
+    expect(speech.gain.ramps.at(-1)?.target).toBe(1);
   });
 });
 
