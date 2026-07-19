@@ -22,8 +22,9 @@ const SYNTH_LEVEL = 0.16;
 const TRACK_LEVEL = 0.3;
 const FADE_IN_SECONDS = 0.8;
 const FADE_OUT_SECONDS = 0.6;
-const SPEECH_FADE_OUT_SECONDS = 0.5;
-const SPEECH_FADE_IN_SECONDS = 0.9;
+const SPEECH_FADE_OUT_SECONDS = 0.6;
+const SPEECH_FADE_IN_SECONDS = 3;
+const SILENCE_HOLD_SECONDS = 2.5;
 
 // A minor. Bass sits on the off-eighths so the kick keeps the floor to itself.
 const A1 = 55;
@@ -54,6 +55,7 @@ export class HouseMusicPlayer {
   #audio: HTMLAudioElement | null = null;
   #timer: number | null = null;
   #pauseTimer: number | null = null;
+  #silenceTimer: number | null = null;
   #step = 0;
   #nextNoteTime = 0;
   #shouldPlay = false;
@@ -108,26 +110,44 @@ export class HouseMusicPlayer {
     }
   }
 
-  // Fades the music out entirely while anyone — user or Wiley — is speaking,
-  // and back in once the conversation pauses. The track keeps rolling
-  // underneath at zero gain, so it resumes mid-song instead of restarting.
+  // Fades the music out entirely while anyone — user or Wiley — is speaking.
+  // Once the conversation goes quiet it holds off for a stretch of silence,
+  // then eases back in slowly; if speech resumes during the hold-off or the
+  // ramp, it ducks straight back out. The track keeps rolling underneath at
+  // zero gain, so it resumes mid-song instead of restarting.
   setSpeechActive(active: boolean): void {
     if (this.#speechActive === active) return;
     this.#speechActive = active;
+    this.#clearSilenceTimer();
+    if (active) {
+      this.#rampSpeech(0, SPEECH_FADE_OUT_SECONDS);
+      return;
+    }
+    this.#silenceTimer = window.setTimeout(() => {
+      this.#silenceTimer = null;
+      this.#rampSpeech(1, SPEECH_FADE_IN_SECONDS);
+    }, SILENCE_HOLD_SECONDS * 1000);
+  }
+
+  #rampSpeech(target: number, seconds: number): void {
     const ctx = this.#ctx;
     const speech = this.#speech;
     if (!ctx || !speech) return;
     speech.gain.cancelScheduledValues(ctx.currentTime);
     speech.gain.setValueAtTime(speech.gain.value, ctx.currentTime);
-    speech.gain.linearRampToValueAtTime(
-      active ? 0 : 1,
-      ctx.currentTime + (active ? SPEECH_FADE_OUT_SECONDS : SPEECH_FADE_IN_SECONDS),
-    );
+    speech.gain.linearRampToValueAtTime(target, ctx.currentTime + seconds);
+  }
+
+  #clearSilenceTimer(): void {
+    if (this.#silenceTimer === null) return;
+    window.clearTimeout(this.#silenceTimer);
+    this.#silenceTimer = null;
   }
 
   dispose(): void {
     this.stop();
     this.#disarmGestureResume();
+    this.#clearSilenceTimer();
     if (this.#pauseTimer !== null) {
       window.clearTimeout(this.#pauseTimer);
       this.#pauseTimer = null;
@@ -163,7 +183,7 @@ export class HouseMusicPlayer {
     if (this.#ctx) return this.#ctx;
     const ctx = this.#createContext();
     const speech = ctx.createGain();
-    speech.gain.value = this.#speechActive ? 0 : 1;
+    speech.gain.value = this.#speechActive || this.#silenceTimer !== null ? 0 : 1;
     speech.connect(ctx.destination);
     const master = ctx.createGain();
     master.gain.value = 0;
