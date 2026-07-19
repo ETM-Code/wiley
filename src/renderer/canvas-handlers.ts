@@ -17,6 +17,7 @@ import {
   snapModelCoordinate,
   snapModelSize,
   translatePlan,
+  wrapLabel,
   type LayoutParams,
   type PlanBounds,
 } from "./diagram-layout";
@@ -33,7 +34,7 @@ type AddParams = {
   scrollTo?: boolean;
 };
 type PatchParams = {
-  updates?: Array<{ id: string; props: JsonObject }>;
+  updates?: Array<{ id: string; props?: JsonObject } & JsonObject>;
   deletes?: string[];
 };
 type ShapeParams = {
@@ -729,8 +730,13 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
       if (bound?.type === "text") deletes.add(bound.id);
     }
   }
+  // Models frequently send {id, text} instead of {id, props:{text}}; both
+  // must work, silently counting the flat shape as a no-op would lie.
   const updates = new Map(
-    (Array.isArray(params?.updates) ? params.updates : []).map((patch) => [patch.id, patch.props]),
+    (Array.isArray(params?.updates) ? params.updates : []).map((patch) => {
+      const { id, props, ...rest } = patch;
+      return [String(id), (props && typeof props === "object" ? props : rest) as JsonObject];
+    }),
   );
   const requestedIds = [...updates.keys(), ...deletes];
   const skipped = [...new Set(requestedIds.filter((id) => !byId.has(id)))];
@@ -745,6 +751,7 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
     secondary.set(id, { ...(secondary.get(id) ?? {}), ...props });
   };
   const arrowShifts = new Map<string, { sdx: number; sdy: number; edx: number; edy: number }>();
+  const createdLabels: SceneElement[] = [];
 
   for (const [id, requested] of updates) {
     const element = byId.get(id);
@@ -753,18 +760,57 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
       Object.entries(asRecord(requested)).filter(([key]) => !protectedProps.has(key)),
     ));
 
-    // A text edit aimed at a labelled shape belongs on its bound label.
+    // A text edit aimed at a shape belongs on its bound label; shapes with
+    // no label yet get a real bound label created for them.
     const boundTextId = (element.boundElements ?? []).find((bound) => bound?.type === "text")?.id;
-    if (boundTextId && element.type !== "text" && ("text" in safeProps || "fontSize" in safeProps)) {
-      const label = byId.get(boundTextId);
-      if (label) {
-        const text = typeof safeProps.text === "string" ? safeProps.text : label.text ?? "";
-        const fontSize = finite(safeProps.fontSize, label.fontSize ?? 20);
-        mergeSecondary(boundTextId, {
-          ...(typeof safeProps.text === "string" ? { text, originalText: text } : {}),
-          ...("fontSize" in safeProps ? { fontSize } : {}),
-          ...remeasuredTextBox(label, text, fontSize),
-        });
+    if (element.type !== "text" && element.type !== "arrow"
+      && ("text" in safeProps || "fontSize" in safeProps)) {
+      const targetX = "x" in safeProps ? finite(safeProps.x, element.x) : element.x;
+      const targetY = "y" in safeProps ? finite(safeProps.y, element.y) : element.y;
+      const targetWidth = "width" in safeProps ? finite(safeProps.width, element.width) : element.width;
+      const targetHeight = "height" in safeProps ? finite(safeProps.height, element.height) : element.height;
+      if (boundTextId) {
+        const label = byId.get(boundTextId);
+        if (label) {
+          const text = typeof safeProps.text === "string" ? safeProps.text : label.text ?? "";
+          const fontSize = finite(safeProps.fontSize, label.fontSize ?? 20);
+          mergeSecondary(boundTextId, {
+            ...(typeof safeProps.text === "string" ? { text, originalText: text } : {}),
+            ...("fontSize" in safeProps ? { fontSize } : {}),
+            ...remeasuredTextBox(label, text, fontSize),
+          });
+        }
+      } else if (typeof safeProps.text === "string" && safeProps.text.trim()) {
+        const fontSize = finite(safeProps.fontSize, 20);
+        // Wrap to the container's usable width up front: the label is
+        // created after conversion, so Excalidraw will not re-wrap it.
+        const inscribed = element.type === "diamond" ? 2 : element.type === "ellipse" ? Math.SQRT2 : 1;
+        const usableWidth = Math.max(60, targetWidth / inscribed - 24);
+        const wrapped = wrapLabel(safeProps.text, fontSize, usableWidth).join("\n");
+        const [label] = convertToExcalidrawElements([{
+          type: "text",
+          text: wrapped,
+          fontSize,
+          fontFamily: 5,
+          x: targetX,
+          y: targetY,
+        }] as Parameters<typeof convertToExcalidrawElements>[0]) as unknown as PatchableElement[];
+        if (label) {
+          const labelWidth = finite(label.width, 100);
+          const labelHeight = finite(label.height, fontSize * 1.25);
+          Object.assign(label, {
+            containerId: element.id,
+            textAlign: "center",
+            verticalAlign: "middle",
+            originalText: safeProps.text,
+            x: targetX + (targetWidth - labelWidth) / 2,
+            y: targetY + (targetHeight - labelHeight) / 2,
+          });
+          createdLabels.push(label as SceneElement);
+          mergeSecondary(element.id, {
+            boundElements: [...(element.boundElements ?? []), { id: label.id, type: "text" }],
+          });
+        }
       }
       delete safeProps.text;
       delete safeProps.fontSize;
@@ -871,8 +917,18 @@ function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
     ];
   });
 
-  api.updateScene({ elements: next, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
-  return { updated, deleted, adjusted, skipped, grid: gridResult() };
+  api.updateScene({
+    elements: [...next, ...createdLabels],
+    captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+  });
+  return {
+    updated,
+    deleted,
+    adjusted,
+    createdLabels: createdLabels.length,
+    skipped,
+    grid: gridResult(),
+  };
 }
 
 function mutationResult(api: ExcalidrawImperativeAPI, result: Record<string, unknown>) {

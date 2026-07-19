@@ -29,6 +29,11 @@ Optional settings:
 
 The only persistent voice control is the microphone button in the bottom-right. Muting disables capture only; playback and background work continue.
 
+Optional safety settings:
+
+- `WILEY_APPROVAL_MODEL`: cheap reviewer model for risky bash/edit/write calls (default `gpt-5.4-mini`).
+- `WILEY_APPROVAL_DISABLED=1`: turns the approval reviewer off; the hard catastrophic-command guard always stays on.
+
 ## Verify and package
 
 ```bash
@@ -37,6 +42,14 @@ npm test
 npm run build
 npm run package:mac
 ```
+
+### Full scenario run (real model, costs tokens)
+
+```bash
+npm run test:e2e:landing
+```
+
+Drives the whole loop against the live Pi model and a real browser canvas: architecture diagram, simulated hand-drawn wireframe, label fill-in on the human's boxes, website generation, screenshot placed on the board, and a real `open` of the built page. Artifacts (logs, board JSON, screenshots) land in `.e2e/run-*/`; render any run's persisted board with `node scripts/board-shot.mjs <run>/data out.png`.
 
 The unsigned Apple Silicon DMG is written to `release/`. Signing and notarization require the developer's Apple credentials.
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Excalidraw } from "@excalidraw/excalidraw";
+import { convertToExcalidrawElements, Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { bridge, type AgentStatus } from "./bridge";
@@ -219,7 +219,14 @@ export default function App() {
 
   const captureApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
-    (window as unknown as { excalidrawAPI?: ExcalidrawImperativeAPI }).excalidrawAPI = api;
+    const testHooks = window as unknown as {
+      excalidrawAPI?: ExcalidrawImperativeAPI;
+      convertToExcalidrawElements?: typeof convertToExcalidrawElements;
+    };
+    testHooks.excalidrawAPI = api;
+    // Layer-3 test rigs simulate human drawing through the app's own
+    // pipeline instead of fabricating raw Excalidraw internals.
+    testHooks.convertToExcalidrawElements = convertToExcalidrawElements;
     void syncVisibleCanvas().catch(() => undefined);
   }, [syncVisibleCanvas]);
 

@@ -366,6 +366,38 @@ describe("diagram renderer", () => {
     expect(container.text).toBeUndefined();
   });
 
+  it("creates a bound label when text is patched onto an unlabelled human box, even with flat update shape", async () => {
+    let elements: Array<Record<string, any>> = [
+      { id: "wire1", type: "rectangle", x: 0, y: 500, width: 900, height: 70, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+    } as unknown as ExcalidrawImperativeAPI;
+
+    // Flat {id, text} shape, exactly as models tend to emit it.
+    const result = await handleCanvasRequest(api, {
+      id: 35,
+      op: "apply-patch",
+      params: { updates: [{ id: "wire1", text: "Navbar · logo · links" }] },
+    }) as { updated: number; createdLabels: number };
+
+    expect(result.createdLabels).toBe(1);
+    const label = elements.find((element) => element.type === "text")!;
+    expect(label.text).toBe("Navbar · logo · links");
+    expect(label.containerId).toBe("wire1");
+    const box = elements.find((element) => element.id === "wire1")!;
+    expect(box.boundElements).toContainEqual({ id: label.id, type: "text" });
+    expect(box.text).toBeUndefined();
+    // Label sits inside the box, not at the origin.
+    expect(label.y).toBeGreaterThan(500);
+    expect(label.y).toBeLessThan(570);
+  });
+
   it("deleting a labelled shape removes its label and strips dangling bindings", async () => {
     let elements: Array<Record<string, any>> = [
       {
