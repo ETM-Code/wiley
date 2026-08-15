@@ -6,13 +6,13 @@ import { TranscriptStore } from "./transcript";
 import { CanvasBridge } from "./canvas-bridge";
 import { VoiceBridge } from "./voice-bridge";
 import { callVoiceTool } from "./voice-tools";
+import { isTrustedOrigin } from "./trusted-origin";
 import type { RuntimeLedger } from "./ledger";
 import type { PiRuntime } from "./pi-runtime";
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
   const url = event.senderFrame?.url ?? "";
-  const trusted = url.startsWith("wiley://app/") || /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\//.test(url);
-  if (!trusted) throw new Error(`Rejected IPC from untrusted origin: ${url || "unknown"}`);
+  if (!isTrustedOrigin(url)) throw new Error(`Rejected IPC from untrusted origin: ${url || "unknown"}`);
 }
 
 export function registerIpc(options: {
