@@ -1,6 +1,16 @@
 import ELK from "elkjs/lib/elk.bundled";
 import type { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 
+import {
+  deriveDiagramId,
+  edgeElementId,
+  edgeKey,
+  edgeLabelElementId,
+  edgeOrdinals,
+  nodeElementId,
+  titleElementId,
+} from "./diagram-spec";
+
 type JsonObject = Record<string, unknown>;
 
 export type GraphShape = "rectangle" | "diamond" | "ellipse";
@@ -36,7 +46,7 @@ export type DiagramElementRole = "node" | "nodeLabel" | "edge" | "edgeLabel" | "
  */
 export type DiagramElementRoleEntry = {
   role: DiagramElementRole;
-  /** Semantic node id for nodes and their labels; absent for edges. */
+  /** Semantic node id for nodes, endpoint key for edges; absent for titles. */
   key?: string;
   edgeIndex?: number;
 };
@@ -47,7 +57,7 @@ export interface DiagramPlan {
   edgeCount: number;
   edgeLabelCount: number;
   elementIdByNode: Map<string, string>;
-  idPrefix: string;
+  diagramId: string;
   roles: Map<string, DiagramElementRoleEntry>;
 }
 
@@ -225,10 +235,12 @@ function dedupePoints(points: Array<{ x: number; y: number }>): Array<{ x: numbe
 export async function planDiagramLayout(
   params: LayoutParams,
   origin: { x: number; y: number },
-  idPrefix = `agent-${Date.now().toString(36)}`,
+  diagramId = deriveDiagramId(params),
 ): Promise<DiagramPlan> {
   validateGraph(params);
   const edges = params.edges ?? [];
+  const ordinals = edgeOrdinals(edges);
+  const edgeKeys = edges.map((edge, index) => edgeKey(edge, ordinals[index]));
   const direction = params.layout?.direction ?? "RIGHT";
   const nodeSpacing = Math.min(240, Math.max(60, snapModelCoordinate(params.layout?.nodeSpacing, 80)));
   const layerSpacing = Math.min(360, Math.max(80, snapModelCoordinate(params.layout?.layerSpacing, 140)));
@@ -288,9 +300,14 @@ export async function planDiagramLayout(
   );
   const elkEdges = (layoutResult.edges ?? []) as ElkExtendedEdge[];
   const elementIdByNode = new Map(
-    params.nodes.map((node, index) => [node.id, `${idPrefix}-node-${index}`]),
+    params.nodes.map((node) => [node.id, nodeElementId(diagramId, node.id)]),
   );
   const roles = new Map<string, DiagramElementRoleEntry>();
+  // Every element carries its own identity, so a later call can find, restyle,
+  // or replace exactly this diagram's parts without re-reading the scene.
+  const stamp = (role: DiagramElementRole, key?: string) => ({
+    customData: { wiley: { diagram: diagramId, role, ...(key ? { key } : {}) } },
+  });
 
   const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
     const position = positions.get(node.id) ?? { x: 0, y: 0 };
@@ -301,6 +318,7 @@ export async function planDiagramLayout(
     return {
       id,
       type,
+      ...stamp("node", node.id),
       x: snapModelCoordinate(origin.x + position.x),
       y: snapModelCoordinate(origin.y + position.y),
       width: size.width,
@@ -341,11 +359,13 @@ export async function planDiagramLayout(
       y: origin.y + point.y,
     })));
     const routeOrigin = absoluteRoute[0];
-    const edgeId = `${idPrefix}-edge-${index}`;
-    roles.set(edgeId, { role: "edge", edgeIndex: index });
+    const key = edgeKeys[index];
+    const edgeId = edgeElementId(diagramId, key);
+    roles.set(edgeId, { role: "edge", key, edgeIndex: index });
     edgeSkeletons.push({
       id: edgeId,
       type: "arrow",
+      ...stamp("edge", key),
       x: routeOrigin.x,
       y: routeOrigin.y,
       points: absoluteRoute.map((point) => [point.x - routeOrigin.x, point.y - routeOrigin.y]),
@@ -356,11 +376,12 @@ export async function planDiagramLayout(
     const label = elkEdge?.labels?.[0];
     if (label?.text) {
       const size = measureText(label.text, EDGE_LABEL_FONT_SIZE);
-      const edgeLabelId = `${idPrefix}-edgelabel-${index}`;
-      roles.set(edgeLabelId, { role: "edgeLabel", edgeIndex: index });
+      const edgeLabelId = edgeLabelElementId(diagramId, key);
+      roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index });
       edgeLabelSkeletons.push({
         id: edgeLabelId,
         type: "text",
+        ...stamp("edgeLabel", key),
         x: origin.x + finiteNumber(label.x),
         y: origin.y + finiteNumber(label.y),
         width: size.width,
@@ -379,12 +400,13 @@ export async function planDiagramLayout(
   // centered across the graph sits exactly where inbound arrows and
   // neighboring clusters land.
   const titleSize = title ? measureText(title, 24) : { width: 0, height: 0 };
-  const titleId = `${idPrefix}-title`;
+  const titleId = titleElementId(diagramId);
   if (title) roles.set(titleId, { role: "title" });
   const skeletons: JsonObject[] = [
     ...(title ? [{
       id: titleId,
       type: "text",
+      ...stamp("title"),
       x: origin.x,
       y: snapModelCoordinate(origin.y - 100),
       width: titleSize.width,
@@ -408,7 +430,7 @@ export async function planDiagramLayout(
     edgeCount: edges.length,
     edgeLabelCount: edgeLabelSkeletons.length,
     elementIdByNode,
-    idPrefix,
+    diagramId,
     roles,
   };
 }
