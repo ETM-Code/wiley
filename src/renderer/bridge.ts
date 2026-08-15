@@ -9,6 +9,7 @@ import type {
   SettingsView,
   TranscriptDraft,
   VoiceInjection,
+  WileySettings,
   WorkerProbes,
 } from "../shared/contracts";
 
@@ -23,6 +24,7 @@ export type {
   SettingsView,
   TranscriptDraft,
   VoiceInjection,
+  WileySettings,
   WorkerProbes,
 };
 

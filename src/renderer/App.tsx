@@ -10,6 +10,7 @@ import {
 } from "./canvas-handlers";
 import { HouseMusicPlayer } from "./house-music";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
+import SettingsPanel from "./SettingsPanel";
 
 const MUSIC_PREFERENCE_KEY = "wiley:house-music";
 const ACTIVITY_LIMIT = 8;
@@ -88,6 +89,15 @@ function MicrophoneIcon({ muted }: { muted: boolean }) {
     <svg aria-hidden="true" viewBox="0 0 24 24">
       <rect x="9" y="2" width="6" height="13" rx="3" />
       <path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v4M8 23h8" />
+    </svg>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 14.5a1.6 1.6 0 0 0 .32 1.77l.06.06a1.95 1.95 0 1 1-2.76 2.76l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47v.17a1.95 1.95 0 1 1-3.9 0v-.09a1.6 1.6 0 0 0-1.05-1.46 1.6 1.6 0 0 0-1.77.32l-.06.06a1.95 1.95 0 1 1-2.76-2.76l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97h-.17a1.95 1.95 0 1 1 0-3.9h.09a1.6 1.6 0 0 0 1.46-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a1.95 1.95 0 1 1 2.76-2.76l.06.06a1.6 1.6 0 0 0 1.77.32h.08a1.6 1.6 0 0 0 .97-1.47v-.17a1.95 1.95 0 1 1 3.9 0v.09a1.6 1.6 0 0 0 .97 1.46 1.6 1.6 0 0 0 1.77-.32l.06-.06a1.95 1.95 0 1 1 2.76 2.76l-.06.06a1.6 1.6 0 0 0-.32 1.77v.08a1.6 1.6 0 0 0 1.47.97h.17a1.95 1.95 0 1 1 0 3.9h-.09a1.6 1.6 0 0 0-1.46.97Z" />
     </svg>
   );
 }
@@ -191,6 +201,7 @@ export default function App() {
   const snapshotPendingRef = useRef(false);
   const canvasMutationActiveRef = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<AgentStatus>({ agentRunning: false, subagents: [] });
   const [activity, setActivity] = useState<AgentEvent[]>([]);
   const [toast, setToast] = useState<string | null>(null);
@@ -464,6 +475,17 @@ export default function App() {
               <span className={`agent-dot${status.agentRunning ? " agent-dot--active" : ""}`} />
               Status
             </button>
+            <button
+              type="button"
+              className="status-button status-button--icon"
+              onClick={() => setSettingsOpen((open) => !open)}
+              aria-expanded={settingsOpen}
+              aria-controls="wiley-settings-panel"
+              aria-label="Settings"
+              title="Settings"
+            >
+              <GearIcon />
+            </button>
           </>
         )}
       />
@@ -471,6 +493,12 @@ export default function App() {
       {sidebarOpen ? (
         <div id="agent-status-sidebar">
           <AgentSidebar status={status} activity={activity} onClose={() => setSidebarOpen(false)} />
+        </div>
+      ) : null}
+
+      {settingsOpen ? (
+        <div id="wiley-settings-panel">
+          <SettingsPanel onClose={() => setSettingsOpen(false)} />
         </div>
       ) : null}
 
