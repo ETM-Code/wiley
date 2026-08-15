@@ -1,12 +1,9 @@
-import path from "node:path";
-import { readFile } from "node:fs/promises";
-import { Type } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import {
-  defineTool,
   ModelRuntime,
   type AgentSession,
   type InlineExtension,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { BOARD_AGENT_SYSTEM_PROMPT, INTERRUPT_NOTE, SUBAGENT_SYSTEM_PROMPT } from "./agent-prompt";
 import type { AgentEvent, JobSummary } from "../shared/contracts";
@@ -16,13 +13,13 @@ import { type CanvasBridge } from "./canvas-bridge";
 import type { ApprovalJudge } from "./safety";
 import { type VoiceBridge } from "./voice-bridge";
 import { MAX_ACTIVE_SUBAGENTS, PI_MODEL, PI_PROVIDER } from "./pi/constants";
-import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./pi/image";
 import { lastAssistantText } from "./pi/messages";
 import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
 import { DiagramPreviewQueue } from "./pi/diagram-preview-queue";
 import { redact } from "./pi/redact";
 import { createApprovalJudge, createGuardExtension } from "./pi/safety-extension";
 import { createRootSession, createSubagentSession, type PiSessionOptions } from "./pi/session-factory";
+import { createPiTools, type CanvasMutation, type PiToolHost } from "./pi/tools";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
@@ -256,296 +253,55 @@ export class PiRuntime {
     this.voice.endWork();
   }
 
-  #tools(agentId: string) {
-    const canvasTools = [
-      defineTool({
-        name: "draw_shape",
-        label: "Draw Shape",
-        description: "Fast path: immediately add one rectangle, ellipse, or diamond centered in the visible viewport. The current canvas context is already in the task, so do not read the canvas first for a simple additive request.",
-        parameters: Type.Object({
-          shape: Type.Union([Type.Literal("rectangle"), Type.Literal("ellipse"), Type.Literal("diamond")]),
-          width: Type.Optional(Type.Number()),
-          height: Type.Optional(Type.Number()),
-          label: Type.Optional(Type.String()),
-          strokeColor: Type.Optional(Type.String()),
-          backgroundColor: Type.Optional(Type.String()),
-        }),
-        execute: async (_id, params, signal) => this.#toolText(
-          await this.#mutateCanvas(agentId, "add-shape", params, signal),
-        ),
-      }),
-      defineTool({
-        name: "get_canvas",
-        label: "Get Canvas",
-        description: "Get the board scene summary. Pass full only when complete element JSON is necessary.",
-        parameters: Type.Object({ full: Type.Optional(Type.Boolean()) }),
-        execute: async (_id, params, signal) => this.#toolText(
-          await this.canvas.request(params.full ? "get-scene-full" : "get-scene-summary", undefined, signal),
-        ),
-      }),
-      defineTool({
-        name: "screenshot_canvas",
-        label: "Screenshot Canvas",
-        description: "Render the current board to PNG for spatial or visual understanding.",
-        parameters: Type.Object({}),
-        execute: async (_id, _params, signal) => {
-          const data = await this.canvas.request<string>("export-png", undefined, signal);
-          return { content: [{ type: "text" as const, text: "Current board:" }, { type: "image" as const, data, mimeType: "image/png" }], details: {} };
-        },
-      }),
-      defineTool({
-        name: "clear_canvas",
-        label: "Clear Canvas",
-        description: "Remove every element from the canvas, destroying the user's own drawings. Call it only when the user's verbatim words explicitly ask to wipe the board (clear, erase everything, start over, replace it all). Requests to fill in, connect, finish, extend, or tidy existing content must never clear; work with the elements already on the board instead.",
-        parameters: Type.Object({}),
-        execute: async (_id, _params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "clear-scene", {}, signal)),
-      }),
-      defineTool({
-        name: "connect_shapes",
-        label: "Connect Shapes",
-        description: "Connect existing elements, including the user's hand-drawn ones, with properly bound arrows. Give element ids from the canvas context plus an optional short label; perimeter attachment points and routing are computed automatically and the arrows stay attached when shapes move. Set bidirectional true for a two-headed arrow. Always use this to link existing elements; never draw connector coordinates yourself.",
-        parameters: Type.Object({
-          connections: Type.Array(Type.Object({
-            from: Type.String(),
-            to: Type.String(),
-            label: Type.Optional(Type.String()),
-            bidirectional: Type.Optional(Type.Boolean()),
-          }, { additionalProperties: false })),
-        }, { additionalProperties: false }),
-        execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "connect-elements", params, signal)),
-      }),
-      defineTool({
-        name: "draw_diagram",
-        label: "Draw Diagram",
-        description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Layout, grid snapping, viewport fitting, and perimeter bindings are automatic. To add the diagram beside existing content, pass anchor (an existing element id, or omit to use the whole scene) with anchorDirection right, left, above, or below. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection.",
-        parameters: Type.Object({
-          title: Type.Optional(Type.String()),
-          nodes: Type.Array(Type.Object({
-            id: Type.String(),
-            label: Type.String(),
-            shape: Type.Optional(Type.Union([
-              Type.Literal("rectangle"),
-              Type.Literal("diamond"),
-              Type.Literal("ellipse"),
-            ])),
-            backgroundColor: Type.Optional(Type.String()),
-            strokeColor: Type.Optional(Type.String()),
-            rounded: Type.Optional(Type.Boolean()),
-          }, { additionalProperties: false })),
-          edges: Type.Array(Type.Object({
-            from: Type.String(),
-            to: Type.String(),
-            label: Type.Optional(Type.String()),
-          }, { additionalProperties: false })),
-          anchor: Type.Optional(Type.String()),
-          anchorDirection: Type.Optional(Type.Union([
-            Type.Literal("right"),
-            Type.Literal("left"),
-            Type.Literal("above"),
-            Type.Literal("below"),
-          ])),
-          layout: Type.Optional(Type.Object({
-            direction: Type.Optional(Type.Union([Type.Literal("RIGHT"), Type.Literal("DOWN")])),
-            nodeSpacing: Type.Optional(Type.Number()),
-            layerSpacing: Type.Optional(Type.Number()),
-          }, { additionalProperties: false })),
-        }, { additionalProperties: false }),
-        execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "layout-diagram", params, signal)),
-      }),
-      defineTool({
-        name: "draw_on_canvas",
-        label: "Draw On Canvas",
-        description: "Add sanitized Excalidraw skeleton elements, optionally placed near an existing id. For annotations and callouts only; to link existing elements use connect_shapes, which computes routing and bindings. Any arrow drawn here must still use start and end element bindings; never aim arrow coordinates at box centers.",
-        parameters: Type.Object({
-          elements: Type.Array(Type.Any()),
-          placeNear: Type.Optional(Type.String()),
-          placeDirection: Type.Optional(Type.Union([
-            Type.Literal("right"),
-            Type.Literal("left"),
-            Type.Literal("above"),
-            Type.Literal("below"),
-          ])),
-          scrollTo: Type.Optional(Type.Boolean()),
-        }),
-        execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "add-elements", params, signal)),
-      }),
-      defineTool({
-        name: "place_image",
-        label: "Place Image",
-        description: "Put an image file from the workspace onto the canvas, such as a screenshot you rendered. Give the file path (relative to the project or absolute); size is read from the file. Use placeNear and placeDirection to position it beside existing content.",
-        parameters: Type.Object({
-          path: Type.String(),
-          width: Type.Optional(Type.Number()),
-          placeNear: Type.Optional(Type.String()),
-          placeDirection: Type.Optional(Type.Union([
-            Type.Literal("right"),
-            Type.Literal("left"),
-            Type.Literal("above"),
-            Type.Literal("below"),
-          ])),
-        }, { additionalProperties: false }),
-        execute: async (_id, params, signal) => {
-          const filePath = path.resolve(this.projectDir, params.path);
-          const mime = IMAGE_MIME_BY_EXT[path.extname(filePath).toLowerCase()];
-          if (!mime) throw new Error(`Unsupported image type: ${path.extname(filePath) || "(none)"}`);
-          const data = await readFile(filePath);
-          if (data.byteLength > 4_000_000) {
-            throw new Error("Image exceeds 4 MB; render a smaller screenshot instead");
-          }
-          const natural = sniffImageSize(data, mime) ?? { width: 800, height: 600 };
-          const width = Math.min(960, Math.max(120, params.width ?? Math.min(640, natural.width)));
-          const height = Math.max(80, Math.round(width * (natural.height / Math.max(1, natural.width))));
-          const fileId = crypto.randomUUID().replaceAll("-", "");
-          return this.#toolText(await this.#mutateCanvas(agentId, "add-elements", {
-            elements: [{ type: "image", fileId, width, height }],
-            files: {
-              [fileId]: {
-                id: fileId,
-                mimeType: mime,
-                dataURL: `data:${mime};base64,${data.toString("base64")}`,
-                created: Date.now(),
-              },
-            },
-            placeNear: params.placeNear,
-            placeDirection: params.placeDirection,
-          }, signal));
-        },
-      }),
-      defineTool({
-        name: "edit_canvas",
-        label: "Edit Canvas",
-        description: "Patch or delete existing elements by id, including the user's hand-drawn ones: move, resize, recolor, restyle, or change text. Setting text or fontSize on a labelled shape automatically edits its attached label, moving a shape carries its label and bound arrows along, and deleting a shape removes its label. Read the canvas first and change only necessary properties.",
-        parameters: Type.Object({ updates: Type.Optional(Type.Array(Type.Any())), deletes: Type.Optional(Type.Array(Type.String())) }),
-        execute: async (_id, params, signal) => this.#toolText(await this.#mutateCanvas(agentId, "apply-patch", params, signal)),
-      }),
-    ];
-
-    return [
-      ...canvasTools,
-      defineTool({
-        name: "read_conversation",
-        label: "Read Conversation",
-        description: "Read the lossless voice conversation after a sequence cursor.",
-        parameters: Type.Object({ afterSequence: Type.Optional(Type.Number()) }),
-        execute: async (_id, params) => this.#toolText(this.transcript.after(params.afterSequence ?? 0)),
-      }),
-      defineTool({
-        name: "tell_user",
-        label: "Tell User",
-        description: "Speak a short truthful first-person progress update while continuing work.",
-        parameters: Type.Object({ message: Type.String(), interrupt: Type.Optional(Type.Boolean()) }),
-        execute: async (_id, params) => {
-          this.voice.push(`[agent progress] ${params.message}`, { interrupt: params.interrupt });
-          return this.#toolText("Narrated to user.");
-        },
-      }),
-      agentId === "root" ? this.#rootAskTool() : this.#subagentAskTool(agentId),
-      defineTool({
-        name: "list_agents",
-        label: "List Agents",
-        description: "List current peer work and status.",
-        parameters: Type.Object({}),
-        execute: async () => this.#toolText(this.listSubagents()),
-      }),
-      defineTool({
-        name: "read_agent_events",
-        label: "Read Agent Events",
-        description: "Read observable messages, tools, changes, milestones, and results from all agents.",
-        parameters: Type.Object({ afterSequence: Type.Optional(Type.Number()) }),
-        execute: async (_id, params) => this.#toolText(
-          this.ledger.getAgentEvents(Math.max(params.afterSequence ?? 0, this.#eventBaseline)),
-        ),
-      }),
-      defineTool({
-        name: "send_agent_message",
-        label: "Message Agent",
-        description: "Interrupt a running peer with a correction or useful context.",
-        parameters: Type.Object({ id: Type.String(), message: Type.String() }),
-        execute: async (_id, params) => {
-          const sub = this.#subagents.get(params.id);
-          if (!sub) throw new Error(`No such subagent: ${params.id}`);
-          await this.#interruptSubagent(sub, params.message, true);
-          return this.#toolText("Delivered immediately; current work was interrupted.");
-        },
-      }),
-      ...(agentId === "root" ? this.#rootOnlyTools() : []),
-    ];
+  #tools(agentId: string): ToolDefinition[] {
+    return createPiTools(this.#toolHost(), agentId);
   }
 
-  #rootOnlyTools() {
-    return [
-      defineTool({
-        name: "spawn_agent",
-        label: "Spawn Subagent",
-        description: "Start a Luna-medium worker with the complete voice conversation and shared canvas access. Returns immediately after dispatch.",
-        parameters: Type.Object({ task: Type.String() }),
-        execute: async (_id, params) => {
-          const id = await this.#spawnSubagent(params.task, this.#currentJobId ?? "system");
-          return this.#toolText(`${id} started`);
-        },
-      }),
-      defineTool({
-        name: "check_agent",
-        label: "Check Subagent",
-        description: "Non-blocking status check; completion is delivered automatically.",
-        parameters: Type.Object({ id: Type.String() }),
-        execute: async (_id, params) => {
-          const sub = this.#subagents.get(params.id);
-          if (!sub) throw new Error(`No such subagent: ${params.id}`);
-          return this.#toolText({ status: sub.status, report: sub.report });
-        },
-      }),
-      defineTool({
-        name: "answer_subagent",
-        label: "Answer Subagent",
-        description: "Resolve a pending subagent question by qid.",
-        parameters: Type.Object({ qid: Type.String(), answer: Type.String() }),
-        execute: async (_id, params) => {
-          const resolve = this.#pendingSubQuestions.get(params.qid);
-          if (!resolve) throw new Error(`No pending question: ${params.qid}`);
-          this.#pendingSubQuestions.delete(params.qid);
-          resolve(params.answer);
-          return this.#toolText("Delivered.");
-        },
-      }),
-    ];
-  }
-
-  #rootAskTool() {
-    return defineTool({
-      name: "ask_user",
-      label: "Ask User",
-      description: "Ask the user a real decision through voice and wait for the spoken answer.",
-      parameters: Type.Object({ question: Type.String() }),
-      executionMode: "sequential",
-      execute: async (_id, params, signal) => this.#toolText(`User answered: ${await this.voice.ask(params.question, signal)}`),
-    });
-  }
-
-  #subagentAskTool(subId: string) {
-    return defineTool({
-      name: "ask_user",
-      label: "Ask Up",
-      description: "Ask the coordinating root for a blocking decision. The root may consult the user.",
-      parameters: Type.Object({ question: Type.String() }),
-      executionMode: "sequential",
-      execute: async (_id, params, signal) => {
-        const qid = crypto.randomUUID();
-        const answer = await new Promise<string>((resolve) => {
-          this.#pendingSubQuestions.set(qid, resolve);
-          signal?.addEventListener("abort", () => {
-            this.#pendingSubQuestions.delete(qid);
-            resolve("Aborted before an answer arrived.");
-          }, { once: true });
-          void this.#injectMain(
-            this.#requireMain(),
-            "[question from your own background work]",
-            `<subagent_question id="${subId}" qid="${qid}">\n${params.question}\n</subagent_question>\nAnswer via answer_subagent.`,
-            true,
-          );
-        });
-        return this.#toolText(`Answer: ${answer}`);
+  #toolHost(): PiToolHost {
+    return {
+      projectDir: this.projectDir,
+      mutateCanvas: (agentId, operation, params, signal) => this.#mutateCanvas(agentId, operation, params, signal),
+      canvasRequest: (op, signal) => this.canvas.request(op, undefined, signal),
+      readConversation: (afterSequence) => this.transcript.after(afterSequence),
+      readAgentEvents: (afterSequence) => this.ledger.getAgentEvents(Math.max(afterSequence, this.#eventBaseline)),
+      narrate: (message, interrupt) => this.voice.push(`[agent progress] ${message}`, { interrupt }),
+      askUser: (question, signal) => this.voice.ask(question, signal),
+      askRoot: (subagentId, question, signal) => this.#askRoot(subagentId, question, signal),
+      listSubagents: () => this.listSubagents(),
+      messageSubagent: async (id, message) => {
+        const sub = this.#subagents.get(id);
+        if (!sub) throw new Error(`No such subagent: ${id}`);
+        await this.#interruptSubagent(sub, message, true);
       },
+      spawnSubagent: (task) => this.#spawnSubagent(task, this.#currentJobId ?? "system"),
+      checkSubagent: (id) => {
+        const sub = this.#subagents.get(id);
+        if (!sub) throw new Error(`No such subagent: ${id}`);
+        return { status: sub.status, report: sub.report };
+      },
+      answerSubagent: (qid, answer) => {
+        const resolve = this.#pendingSubQuestions.get(qid);
+        if (!resolve) throw new Error(`No pending question: ${qid}`);
+        this.#pendingSubQuestions.delete(qid);
+        resolve(answer);
+      },
+    };
+  }
+
+  #askRoot(subId: string, question: string, signal?: AbortSignal): Promise<string> {
+    const qid = crypto.randomUUID();
+    return new Promise<string>((resolve) => {
+      this.#pendingSubQuestions.set(qid, resolve);
+      signal?.addEventListener("abort", () => {
+        this.#pendingSubQuestions.delete(qid);
+        resolve("Aborted before an answer arrived.");
+      }, { once: true });
+      void this.#injectMain(
+        this.#requireMain(),
+        "[question from your own background work]",
+        `<subagent_question id="${subId}" qid="${qid}">\n${question}\n</subagent_question>\nAnswer via answer_subagent.`,
+        true,
+      );
     });
   }
 
@@ -708,13 +464,9 @@ export class PiRuntime {
     for (const listener of this.#eventListeners) listener(persisted);
   }
 
-  #toolText(value: unknown) {
-    return { content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value) }], details: {} };
-  }
-
   async #mutateCanvas(
     agentId: string,
-    operation: "add-shape" | "layout-diagram" | "add-elements" | "connect-elements" | "clear-scene" | "apply-patch",
+    operation: CanvasMutation,
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<unknown> {
