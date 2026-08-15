@@ -6,6 +6,20 @@ export interface DiagramPreviewTarget {
 }
 
 /**
+ * Only a diagram being drawn from scratch is worth showing while its
+ * arguments stream: an update lands on a diagram that is already on the
+ * board, and a half-parsed version of it would paint over the real thing.
+ */
+export function previewsWhileStreaming(toolName: unknown): boolean {
+  return toolName === "draw_diagram";
+}
+
+/** A tool that never previews still has to leave no earlier preview behind. */
+export function clearsPreviewWhenDone(toolName: unknown): boolean {
+  return toolName === "update_diagram";
+}
+
+/**
  * Debounces the diagram previews reconstructed from streaming tool-call
  * deltas. Identical successive previews are dropped so a delta that only
  * changed unparsed trailing text never repaints the board, and the final

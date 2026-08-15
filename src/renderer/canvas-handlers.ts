@@ -3,6 +3,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { bridge, type CanvasRequest } from "./bridge";
 import { addShape, layoutDiagram } from "./canvas/diagram-render";
+import { updateDiagram } from "./canvas/diagram-update";
 import { exportScenePng } from "./canvas/export";
 import { applyPatch, connectElements } from "./canvas/patch";
 import { clearDiagramPreview } from "./canvas/preview-state";
@@ -40,6 +41,8 @@ export async function handleCanvasRequest(
       return exportScenePng(api);
     case "layout-diagram":
       return mutationResult(api, await layoutDiagram(api, request.params));
+    case "update-diagram":
+      return mutationResult(api, await updateDiagram(api, request.params));
     case "preview-diagram":
       return layoutDiagram(api, request.params, true);
     case "clear-diagram-preview":
@@ -69,6 +72,7 @@ export function subscribeToCanvasRequests(
   const mutationOperations = new Set<CanvasRequest["op"]>([
     "add-shape",
     "layout-diagram",
+    "update-diagram",
     "preview-diagram",
     "clear-diagram-preview",
     "add-elements",

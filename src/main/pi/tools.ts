@@ -19,6 +19,7 @@ import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./image";
 export type CanvasMutation =
   | "add-shape"
   | "layout-diagram"
+  | "update-diagram"
   | "add-elements"
   | "connect-elements"
   | "clear-scene"
@@ -72,6 +73,73 @@ export function diagramToolText(value: unknown) {
   const { quality, ...rest } = value as Record<string, unknown>;
   const summary = summarizeDiagramQuality(quality);
   return toolText(summary === undefined ? rest : { ...rest, quality: summary });
+}
+
+/**
+ * The graph vocabulary, shared by the tool that draws a diagram and the tool
+ * that evolves one. Two copies would drift, and a field only one of them
+ * accepts is a field the agent cannot rely on.
+ */
+function diagramNodeSchema() {
+  return Type.Object({
+    id: Type.String(),
+    label: Type.String(),
+    shape: Type.Optional(Type.Union([
+      Type.Literal("rectangle"),
+      Type.Literal("diamond"),
+      Type.Literal("ellipse"),
+      Type.Literal("text"),
+    ])),
+    role: Type.Optional(Type.Union(DIAGRAM_NODE_ROLES.map((role) => Type.Literal(role)))),
+    emphasis: Type.Optional(Type.Union(DIAGRAM_NODE_EMPHASES.map((value) => Type.Literal(value)))),
+    backgroundColor: Type.Optional(Type.String()),
+    strokeColor: Type.Optional(Type.String()),
+    rounded: Type.Optional(Type.Boolean()),
+    container: Type.Optional(Type.String()),
+  }, { additionalProperties: false });
+}
+
+function diagramContainerSchema() {
+  return Type.Object({
+    id: Type.String(),
+    label: Type.Optional(Type.String()),
+    parent: Type.Optional(Type.String()),
+    role: Type.Optional(Type.Union(DIAGRAM_NODE_ROLES.map((role) => Type.Literal(role)))),
+    render: Type.Optional(Type.Union(DIAGRAM_CONTAINER_RENDERS.map((value) => Type.Literal(value)))),
+  }, { additionalProperties: false });
+}
+
+function diagramEdgeSchema() {
+  return Type.Object({
+    from: Type.String(),
+    to: Type.String(),
+    label: Type.Optional(Type.String()),
+    style: Type.Optional(Type.Union(DIAGRAM_EDGE_LINE_STYLES.map((value) => Type.Literal(value)))),
+    weight: Type.Optional(Type.Union(DIAGRAM_EDGE_WEIGHTS.map((value) => Type.Literal(value)))),
+    color: Type.Optional(Type.String()),
+    arrow: Type.Optional(Type.Union(DIAGRAM_EDGE_ARROWS.map((value) => Type.Literal(value)))),
+    labelMode: Type.Optional(Type.Union(DIAGRAM_EDGE_LABEL_MODES.map((value) => Type.Literal(value)))),
+  }, { additionalProperties: false });
+}
+
+function diagramLayoutSchema() {
+  return Type.Object({
+    algorithm: Type.Optional(Type.Union([
+      Type.Literal("layered"),
+      Type.Literal("tree"),
+      Type.Literal("radial"),
+      Type.Literal("force"),
+      Type.Literal("stress"),
+    ])),
+    direction: Type.Optional(Type.Union([
+      Type.Literal("RIGHT"),
+      Type.Literal("DOWN"),
+      Type.Literal("LEFT"),
+      Type.Literal("UP"),
+    ])),
+    nodeSpacing: Type.Optional(Type.Number()),
+    layerSpacing: Type.Optional(Type.Number()),
+  }, { additionalProperties: false });
 }
 
 function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
@@ -139,43 +207,9 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
       parameters: Type.Object({
         title: Type.Optional(Type.String()),
         theme: Type.Optional(Type.Union(DIAGRAM_THEME_NAMES.map((name) => Type.Literal(name)))),
-        nodes: Type.Array(Type.Object({
-          id: Type.String(),
-          label: Type.String(),
-          shape: Type.Optional(Type.Union([
-            Type.Literal("rectangle"),
-            Type.Literal("diamond"),
-            Type.Literal("ellipse"),
-            Type.Literal("text"),
-          ])),
-          role: Type.Optional(Type.Union(DIAGRAM_NODE_ROLES.map((role) => Type.Literal(role)))),
-          emphasis: Type.Optional(Type.Union(DIAGRAM_NODE_EMPHASES.map((value) => Type.Literal(value)))),
-          backgroundColor: Type.Optional(Type.String()),
-          strokeColor: Type.Optional(Type.String()),
-          rounded: Type.Optional(Type.Boolean()),
-          container: Type.Optional(Type.String()),
-        }, { additionalProperties: false })),
-        containers: Type.Optional(Type.Array(Type.Object({
-          id: Type.String(),
-          label: Type.Optional(Type.String()),
-          parent: Type.Optional(Type.String()),
-          role: Type.Optional(Type.Union(DIAGRAM_NODE_ROLES.map((role) => Type.Literal(role)))),
-          render: Type.Optional(Type.Union(
-            DIAGRAM_CONTAINER_RENDERS.map((value) => Type.Literal(value)),
-          )),
-        }, { additionalProperties: false }))),
-        edges: Type.Array(Type.Object({
-          from: Type.String(),
-          to: Type.String(),
-          label: Type.Optional(Type.String()),
-          style: Type.Optional(Type.Union(DIAGRAM_EDGE_LINE_STYLES.map((value) => Type.Literal(value)))),
-          weight: Type.Optional(Type.Union(DIAGRAM_EDGE_WEIGHTS.map((value) => Type.Literal(value)))),
-          color: Type.Optional(Type.String()),
-          arrow: Type.Optional(Type.Union(DIAGRAM_EDGE_ARROWS.map((value) => Type.Literal(value)))),
-          labelMode: Type.Optional(Type.Union(
-            DIAGRAM_EDGE_LABEL_MODES.map((value) => Type.Literal(value)),
-          )),
-        }, { additionalProperties: false })),
+        nodes: Type.Array(diagramNodeSchema()),
+        containers: Type.Optional(Type.Array(diagramContainerSchema())),
+        edges: Type.Array(diagramEdgeSchema()),
         anchor: Type.Optional(Type.String()),
         anchorDirection: Type.Optional(Type.Union([
           Type.Literal("right"),
@@ -183,26 +217,29 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
           Type.Literal("above"),
           Type.Literal("below"),
         ])),
-        layout: Type.Optional(Type.Object({
-          algorithm: Type.Optional(Type.Union([
-            Type.Literal("layered"),
-            Type.Literal("tree"),
-            Type.Literal("radial"),
-            Type.Literal("force"),
-            Type.Literal("stress"),
-          ])),
-          direction: Type.Optional(Type.Union([
-            Type.Literal("RIGHT"),
-            Type.Literal("DOWN"),
-            Type.Literal("LEFT"),
-            Type.Literal("UP"),
-          ])),
-          nodeSpacing: Type.Optional(Type.Number()),
-          layerSpacing: Type.Optional(Type.Number()),
-        }, { additionalProperties: false })),
+        layout: Type.Optional(diagramLayoutSchema()),
       }, { additionalProperties: false }),
       execute: async (_id, params, signal) => diagramToolText(
         await host.mutateCanvas(agentId, "layout-diagram", params, signal),
+      ),
+    }),
+    defineTool({
+      name: "update_diagram",
+      label: "Update Diagram",
+      description: "Evolve a diagram you already drew instead of drawing it again. Name it with diagram: its diagramId, or the id of any element inside it; the canvas context lists every diagram on the board. Never redraw a diagram you own, and never clear the canvas to change one; this keeps the surviving shapes as the same elements, animates them to their new places, and leaves the user's own drawings alone. mode merge (the default) overlays what you pass onto the graph already on the board: a node or container you name by id is replaced, an edge you name by its endpoints is replaced, and everything you leave out survives. mode replace treats what you pass as the entire graph, which is how you delete. The diagram is rebuilt from the board, so the theme, labels, shapes, and containers carry over, but the layout algorithm and direction do not: pass layout again if you want something other than the default. keepPosition (default true) pins the result to the corner the diagram already occupies and reports shifted if growth forced it aside. The result returns counts of what was added, removed, moved, and relabeled.",
+      parameters: Type.Object({
+        diagram: Type.String(),
+        mode: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("replace")])),
+        keepPosition: Type.Optional(Type.Boolean()),
+        title: Type.Optional(Type.String()),
+        theme: Type.Optional(Type.Union(DIAGRAM_THEME_NAMES.map((name) => Type.Literal(name)))),
+        nodes: Type.Optional(Type.Array(diagramNodeSchema())),
+        edges: Type.Optional(Type.Array(diagramEdgeSchema())),
+        containers: Type.Optional(Type.Array(diagramContainerSchema())),
+        layout: Type.Optional(diagramLayoutSchema()),
+      }, { additionalProperties: false }),
+      execute: async (_id, params, signal) => diagramToolText(
+        await host.mutateCanvas(agentId, "update-diagram", params, signal),
       ),
     }),
     defineTool({
