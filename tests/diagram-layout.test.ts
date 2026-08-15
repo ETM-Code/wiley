@@ -15,10 +15,11 @@ beforeAll(() => installExcalifontMeasurer());
 afterAll(() => uninstallExcalifontMeasurer());
 
 const ORIGIN = { x: 200, y: 200 };
+const DIAGRAM_ID = "wd-test";
 
 describe("diagram layout quality", () => {
   it.each(stressGraphs)("lays out $name without overlaps, shared ports, or collisions", async ({ params }) => {
-    const plan = await planDiagramLayout(params, ORIGIN, "agent-test");
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
     const report = evaluateDiagramPlan(plan);
     expect(report.nodeOverlaps).toEqual([]);
     expect(report.labelCollisions).toEqual([]);
@@ -29,7 +30,7 @@ describe("diagram layout quality", () => {
   });
 
   it.each(stressGraphs)("produces complete, finite geometry for $name", async ({ params }) => {
-    const plan = await planDiagramLayout(params, ORIGIN, "agent-test");
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
     expect(plan.nodeCount).toBe(params.nodes.length);
     expect(plan.edgeCount).toBe(params.edges.length);
     const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
@@ -47,7 +48,7 @@ describe("diagram layout quality", () => {
   });
 
   it.each(stressGraphs)("labels every emitted element with a semantic role for $name", async ({ params }) => {
-    const plan = await planDiagramLayout(params, ORIGIN, "agent-test");
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
     for (const skeleton of plan.skeletons) {
       expect(plan.roles.get(String(skeleton.id))).toBeTruthy();
     }
@@ -61,15 +62,32 @@ describe("diagram layout quality", () => {
     expect(counts.title).toBe(params.title ? 1 : 0);
   });
 
+  it.each(stressGraphs)("stamps derived ids and diagram customData on every element of $name", async ({ params }) => {
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    expect(plan.diagramId).toBe(DIAGRAM_ID);
+    const ids = plan.skeletons.map((skeleton) => String(skeleton.id));
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const skeleton of plan.skeletons) {
+      const role = plan.roles.get(String(skeleton.id))!;
+      expect(String(skeleton.id).startsWith(`${DIAGRAM_ID}-`)).toBe(true);
+      expect(skeleton.customData).toEqual({
+        wiley: { diagram: DIAGRAM_ID, role: role.role, ...(role.key ? { key: role.key } : {}) },
+      });
+    }
+  });
+
+  it("derives the same element ids for the same request", async () => {
+    const first = await planDiagramLayout(planningDiagram, ORIGIN);
+    const second = await planDiagramLayout(planningDiagram, ORIGIN, first.diagramId);
+    expect(second.skeletons.map((skeleton) => skeleton.id))
+      .toEqual(first.skeletons.map((skeleton) => skeleton.id));
+  });
+
   it("fits every wrapped label line inside its node's usable width", async () => {
-    const plan = await planDiagramLayout(planningDiagram, ORIGIN, "agent-test");
-    const nodesById = new Map(
-      plan.skeletons
-        .filter((skeleton) => String(skeleton.id).includes("-node-"))
-        .map((skeleton) => [String(skeleton.id), skeleton]),
-    );
-    for (const [index, node] of planningDiagram.nodes.entries()) {
-      const skeleton = nodesById.get(`agent-test-node-${index}`);
+    const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
+    const nodesById = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    for (const node of planningDiagram.nodes) {
+      const skeleton = nodesById.get(plan.elementIdByNode.get(node.id)!);
       expect(skeleton).toBeTruthy();
       const factor = node.shape === "diamond" ? 2 : node.shape === "ellipse" ? Math.SQRT2 : 1;
       const usable = (skeleton!.width as number) / factor - 16;
@@ -91,12 +109,14 @@ describe("diagram layout quality", () => {
   });
 
   it("keeps the title clear of nodes, labels, and its own headroom band", async () => {
-    const plan = await planDiagramLayout(planningDiagram, ORIGIN, "agent-test");
-    const title = plan.skeletons.find((skeleton) => String(skeleton.id).endsWith("-title"))!;
+    const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
+    const title = plan.skeletons.find(
+      (skeleton) => plan.roles.get(String(skeleton.id))?.role === "title",
+    )!;
     expect(title).toBeTruthy();
     expect(title.textAlign).toBe("left");
     const nodeTops = plan.skeletons
-      .filter((skeleton) => String(skeleton.id).includes("-node-"))
+      .filter((skeleton) => plan.roles.get(String(skeleton.id))?.role === "node")
       .map((skeleton) => skeleton.y as number);
     // Full headroom band between the title and the top row of nodes.
     expect((title.y as number) + (title.height as number)).toBeLessThanOrEqual(Math.min(...nodeTops) - 40);
@@ -111,7 +131,7 @@ describe("diagram layout quality", () => {
   });
 
   it("snaps node geometry to the hidden model grid", async () => {
-    const plan = await planDiagramLayout(planningDiagram, ORIGIN, "agent-test");
+    const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
     for (const skeleton of plan.skeletons) {
       if (skeleton.type === "text" || skeleton.type === "arrow") continue;
       expect((skeleton.x as number) % MODEL_GRID_SIZE).toBe(0);
