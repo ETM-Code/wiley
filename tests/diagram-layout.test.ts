@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   MODEL_GRID_SIZE,
-  evaluateDiagramPlan,
   measureText,
   nodeDimensions,
   planDiagramLayout,
   wrapLabel,
 } from "../src/renderer/diagram-layout";
+import { evaluateDiagramPlan } from "../src/renderer/diagram-quality";
 import { installExcalifontMeasurer, uninstallExcalifontMeasurer } from "./helpers/excalifont";
 import { planningDiagram, stressGraphs } from "./fixtures/diagram-gallery";
 
