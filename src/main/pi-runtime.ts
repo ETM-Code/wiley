@@ -15,7 +15,11 @@ import { type VoiceBridge } from "./voice-bridge";
 import { MAX_ACTIVE_SUBAGENTS, PI_MODEL, PI_PROVIDER } from "./pi/constants";
 import { lastAssistantText } from "./pi/messages";
 import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
-import { DiagramPreviewQueue } from "./pi/diagram-preview-queue";
+import {
+  clearsPreviewWhenDone,
+  DiagramPreviewQueue,
+  previewsWhileStreaming,
+} from "./pi/diagram-preview-queue";
 import { redact } from "./pi/redact";
 import { createApprovalJudge, createGuardExtension } from "./pi/safety-extension";
 import { createRootSession, createSubagentSession, type PiSessionOptions } from "./pi/session-factory";
@@ -434,7 +438,7 @@ export class PiRuntime {
           const toolCall = update.type === "toolcall_end"
             ? update.toolCall as Record<string, unknown> | undefined
             : ((update.partial as { content?: unknown[] } | undefined)?.content?.[Number(update.contentIndex)] as Record<string, unknown> | undefined);
-          if (toolCall?.name === "draw_diagram") {
+          if (toolCall && previewsWhileStreaming(toolCall.name)) {
             this.#diagramPreviews.queue(toolCall.arguments, update.type === "toolcall_end");
           }
         } else if (update?.type === "error") {
@@ -443,9 +447,13 @@ export class PiRuntime {
       } else if (value.type === "tool_execution_start") {
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_started", payload: redact({ toolName: value.toolName, input: value.args ?? value.input }) });
       } else if (value.type === "tool_execution_end") {
-        if (agentId === "root" && value.toolName === "draw_diagram") {
+        if (agentId === "root" && previewsWhileStreaming(value.toolName)) {
           if (value.isError) this.#clearDiagramPreview();
           else this.#diagramPreviews.reset();
+        } else if (agentId === "root" && clearsPreviewWhenDone(value.toolName)) {
+          // An update is never previewed, so anything still showing is stale
+          // from an earlier draw and has to come off either way.
+          this.#clearDiagramPreview();
         }
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_completed", payload: redact({ toolName: value.toolName, isError: value.isError, result: value.result }) });
       } else if (value.type === "tool_execution_update") {

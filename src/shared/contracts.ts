@@ -103,6 +103,7 @@ export interface CanvasRequest {
     | "export-png"
     | "add-shape"
     | "layout-diagram"
+    | "update-diagram"
     | "preview-diagram"
     | "clear-diagram-preview"
     | "add-elements"
@@ -126,7 +127,14 @@ export interface BoardTransaction {
   baseRevision: number;
   leaseIds?: string[];
   summary: string;
-  operation: "add-shape" | "layout-diagram" | "add-elements" | "connect-elements" | "clear-scene" | "apply-patch";
+  operation:
+    | "add-shape"
+    | "layout-diagram"
+    | "update-diagram"
+    | "add-elements"
+    | "connect-elements"
+    | "clear-scene"
+    | "apply-patch";
   params: unknown;
 }
 

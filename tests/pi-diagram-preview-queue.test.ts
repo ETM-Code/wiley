@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DiagramPreviewQueue } from "../src/main/pi/diagram-preview-queue";
+import {
+  clearsPreviewWhenDone,
+  DiagramPreviewQueue,
+  previewsWhileStreaming,
+} from "../src/main/pi/diagram-preview-queue";
 
 function target() {
   const calls: Array<Record<string, unknown>> = [];
@@ -16,6 +20,30 @@ function target() {
 function diagram(...labels: string[]) {
   return { nodes: labels.map((label, index) => ({ id: `n${index}`, label })), edges: [] };
 }
+
+describe("which tools stream a preview", () => {
+  it("previews a diagram being drawn and never one being updated", () => {
+    expect(previewsWhileStreaming("draw_diagram")).toBe(true);
+    // An update lands on a diagram already on the board; a half-parsed
+    // version of it would paint over the real thing.
+    expect(previewsWhileStreaming("update_diagram")).toBe(false);
+    expect(previewsWhileStreaming("draw_on_canvas")).toBe(false);
+    expect(previewsWhileStreaming(undefined)).toBe(false);
+  });
+
+  it("still clears anything left over when an update finishes", () => {
+    expect(clearsPreviewWhenDone("update_diagram")).toBe(true);
+    expect(clearsPreviewWhenDone("draw_diagram")).toBe(false);
+  });
+
+  it("drops update_diagram arguments even though they look like a diagram", () => {
+    const canvas = target();
+    const queue = new DiagramPreviewQueue(canvas);
+    const args = { diagram: "wd-x", ...diagram("A", "B") };
+    if (previewsWhileStreaming("update_diagram")) queue.queue(args, true);
+    expect(canvas.calls).toHaveLength(0);
+  });
+});
 
 describe("DiagramPreviewQueue", () => {
   beforeEach(() => vi.useFakeTimers());

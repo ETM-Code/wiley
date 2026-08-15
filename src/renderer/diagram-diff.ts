@@ -47,6 +47,72 @@ export type DiagramDiff = {
   removals: string[];
 };
 
+/** Slow at both ends, quick through the middle: the shape a move should have. */
+export function easeInOutCubic(t: number): number {
+  const clamped = Math.min(1, Math.max(0, t));
+  return clamped < 0.5 ? 4 * clamped ** 3 : 1 - (-2 * clamped + 2) ** 3 / 2;
+}
+
+/**
+ * The same route drawn with a given number of points, spaced evenly along its
+ * own length. Two routes resampled to a common count can be interpolated
+ * point by point, which is what lets a two-point line grow a bend without the
+ * arrow snapping between shapes.
+ */
+export function resampleRoute(
+  points: ReadonlyArray<readonly number[]>,
+  count: number,
+): Array<[number, number]> {
+  const path = points.map((point) => [finiteNumber(point[0]), finiteNumber(point[1])] as [number, number]);
+  if (path.length === 0) return Array.from({ length: Math.max(0, count) }, () => [0, 0]);
+  if (count <= 1) return [path[0]];
+  if (path.length === 1) return Array.from({ length: count }, () => path[0]);
+  const spans = [0];
+  for (let index = 1; index < path.length; index++) {
+    spans.push(spans[index - 1] + Math.hypot(
+      path[index][0] - path[index - 1][0],
+      path[index][1] - path[index - 1][1],
+    ));
+  }
+  const total = spans[spans.length - 1];
+  if (total <= 1e-9) return Array.from({ length: count }, () => path[0]);
+  return Array.from({ length: count }, (_, index) => {
+    const target = (total * index) / (count - 1);
+    let segment = 1;
+    while (segment < spans.length - 1 && spans[segment] < target) segment += 1;
+    const span = spans[segment] - spans[segment - 1];
+    const ratio = span <= 1e-9 ? 0 : (target - spans[segment - 1]) / span;
+    return [
+      path[segment - 1][0] + (path[segment][0] - path[segment - 1][0]) * ratio,
+      path[segment - 1][1] + (path[segment][1] - path[segment - 1][1]) * ratio,
+    ] as [number, number];
+  });
+}
+
+/** Where a survivor is at a given point in its journey. */
+export function tweenGeometry(from: DiffGeometry, to: DiffGeometry, progress: number): DiffGeometry {
+  // The ends are exact: resampling is for the journey, not the destination.
+  if (progress <= 0) return from;
+  if (progress >= 1) return to;
+  const eased = easeInOutCubic(progress);
+  const mix = (a: number, b: number) => a + (b - a) * eased;
+  const geometry: DiffGeometry = {
+    x: mix(from.x, to.x),
+    y: mix(from.y, to.y),
+    width: mix(from.width, to.width),
+    height: mix(from.height, to.height),
+  };
+  if (!from.points && !to.points) return geometry;
+  const count = Math.max(from.points?.length ?? 0, to.points?.length ?? 0, 2);
+  const start = resampleRoute(from.points ?? [[0, 0], [from.width, from.height]], count);
+  const end = resampleRoute(to.points ?? [[0, 0], [to.width, to.height]], count);
+  geometry.points = start.map((point, index) => [
+    mix(point[0], end[index][0]),
+    mix(point[1], end[index][1]),
+  ]);
+  return geometry;
+}
+
 function geometryOf(element: DiffElement): DiffGeometry {
   const points = Array.isArray(element.points)
     ? element.points.map((point) => [finiteNumber(point[0]), finiteNumber(point[1])] as [number, number])
