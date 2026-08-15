@@ -157,6 +157,24 @@ export const stressGraphs: DiagramFixture[] = [
     },
   },
   {
+    name: "emoji labels on nodes and edges",
+    params: {
+      title: "🚀 Release train",
+      nodes: [
+        { id: "build", label: "🔨 Build" },
+        { id: "review", label: "🔍 Review changes" },
+        { id: "ship", label: "🚀 Ship it 🎉", shape: "ellipse" },
+        { id: "rollback", label: "⛔️ Rollback", shape: "diamond" },
+      ],
+      edges: [
+        { from: "build", to: "review", label: "✅ green" },
+        { from: "review", to: "ship", label: "approved" },
+        { from: "ship", to: "rollback", label: "🔥 alarm" },
+        { from: "rollback", to: "build" },
+      ],
+    },
+  },
+  {
     name: "cycle with parallel edges",
     params: {
       nodes: [
