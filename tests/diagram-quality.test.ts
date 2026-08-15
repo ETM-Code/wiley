@@ -138,6 +138,102 @@ describe("crowdedPorts", () => {
   });
 });
 
+function region(
+  id: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  parent?: string,
+): PlanPart {
+  return {
+    role: "container",
+    key: id,
+    ...(parent ? { parent } : {}),
+    skeleton: { id, type: "rectangle", x, y, width, height, backgroundColor: "transparent" },
+  };
+}
+
+function member(id: string, x: number, y: number, container: string, width = 160, height = 80): PlanPart {
+  return { ...node(id, x, y, width, height), container };
+}
+
+describe("containers", () => {
+  it("reports which side a member escapes through and by how much", () => {
+    const plan = handBuiltPlan([
+      region("box", 0, 0, 400, 300),
+      member("inside", 40, 60, "box"),
+      // Hangs 60px past the right border and 20px below it.
+      member("escapee", 300, 240, "box"),
+    ]);
+    const report = evaluateDiagramPlan(plan);
+    expect(report.containerContainment).toEqual(["box > escapee overflows right 72, bottom 32"]);
+    expect(report.containerIntrusion).toEqual([]);
+  });
+
+  it("lets a nested region sit inside its parent and flags one that does not", () => {
+    const nested = handBuiltPlan([
+      region("outer", 0, 0, 600, 400),
+      region("inner", 40, 40, 300, 200, "outer"),
+      member("deep", 80, 100, "inner"),
+    ]);
+    const report = evaluateDiagramPlan(nested);
+    expect(report.containerContainment).toEqual([]);
+    expect(report.containerIntrusion).toEqual([]);
+    expect(report.nodeOverlaps).toEqual([]);
+
+    const straddling = handBuiltPlan([
+      region("outer", 0, 0, 600, 400),
+      region("inner", 500, 40, 300, 200, "outer"),
+    ]);
+    expect(evaluateDiagramPlan(straddling).containerContainment).toEqual([
+      "outer > inner overflows right 212",
+    ]);
+  });
+
+  it("flags a stranger standing on a region and two regions standing on each other", () => {
+    const intruder = handBuiltPlan([
+      region("box", 0, 0, 400, 300),
+      member("mine", 40, 60, "box"),
+      node("theirs", 300, 100),
+    ]);
+    expect(evaluateDiagramPlan(intruder).containerIntrusion).toEqual(["box x theirs"]);
+
+    const collided = handBuiltPlan([
+      region("left", 0, 0, 400, 300),
+      region("right", 300, 0, 400, 300),
+      member("a", 40, 60, "left"),
+      member("b", 340, 60, "right"),
+    ]);
+    const report = evaluateDiagramPlan(collided);
+    // Region on region is a node overlap; the stray member is the intrusion.
+    expect(report.nodeOverlaps).toEqual(["left x right"]);
+    expect(report.containerIntrusion).toEqual(["left x b"]);
+  });
+
+  it("lets an arrow leave a region it belongs to and catches one merely passing through", () => {
+    const legal = handBuiltPlan([
+      region("box", 0, 0, 400, 300),
+      member("inner", 40, 60, "box"),
+      node("outer", 700, 60),
+      arrow("wire", [[200, 100], [700, 100]], { start: "inner", end: "outer" }),
+    ]);
+    expect(evaluateDiagramPlan(legal).edgesThroughContainers).toEqual([]);
+
+    const trespass = handBuiltPlan([
+      region("box", 200, 0, 400, 300),
+      member("inner", 240, 60, "box"),
+      node("west", 0, 400),
+      node("east", 900, 400),
+      // Straight through both vertical borders, belonging to neither end.
+      arrow("wire", [[160, 100], [900, 100]], { start: "west", end: "east" }),
+    ]);
+    expect(evaluateDiagramPlan(trespass).edgesThroughContainers).toEqual([
+      "wire x box (2 crossings)",
+    ]);
+  });
+});
+
 describe("styleCoherence", () => {
   it("flags a colour that is neither theme-derived nor requested", () => {
     const report = evaluateDiagramPlan(strayColorPlan);

@@ -91,16 +91,23 @@ export const QUALITY_EVALUATION_LIMIT = 120;
 /**
  * The last gate before a diagram reaches the board.
  *
- * Everything in the report is worth telling the agent about, but only two
- * findings mean the picture is actually wrong: boxes on top of each other and
- * an arrow driven through a box it does not belong to. Both survive the
- * repair pass only when something upstream is broken, so they fail the call
- * rather than shipping a diagram the user has to squint at.
+ * Everything in the report is worth telling the agent about, but only four
+ * findings mean the picture is actually wrong: boxes on top of each other, an
+ * arrow driven through a box it does not belong to, a member escaping the
+ * region that is supposed to hold it, and an arrow cutting through a region it
+ * has no business in. All of them survive the repair pass only when something
+ * upstream is broken, so they fail the call rather than shipping a diagram the
+ * user has to squint at.
  */
 export function assertDiagramQuality(plan: DiagramPlan): DiagramQualityReport | undefined {
   if (plan.skeletons.length > QUALITY_EVALUATION_LIMIT) return undefined;
   const quality = evaluateDiagramPlan(plan);
-  const defects = [...quality.nodeOverlaps, ...quality.edgesThroughNodes];
+  const defects = [
+    ...quality.nodeOverlaps,
+    ...quality.edgesThroughNodes,
+    ...quality.containerContainment,
+    ...quality.edgesThroughContainers,
+  ];
   if (defects.length > 0) {
     throw new Error(`Diagram quality check failed: ${defects.slice(0, 3).join("; ")}`);
   }

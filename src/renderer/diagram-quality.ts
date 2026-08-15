@@ -24,7 +24,13 @@ export interface DiagramQualityReport {
   overlappingParallelSegments: string[];
   offGrid: string[];
   styleCoherence: string[];
+  containerContainment: string[];
+  containerIntrusion: string[];
+  edgesThroughContainers: string[];
 }
+
+/** How far inside a container's border its members have to stay. */
+export const CONTAINER_INSET = 12;
 
 /** Two ports nearer than this on one node read as a single attachment. */
 const MIN_PORT_SEPARATION = 14;
@@ -104,6 +110,142 @@ function evaluateStyleCoherence(plan: DiagramPlan, report: DiagramQualityReport)
   }
 }
 
+function pointsBounds(points: readonly Point[], id: string): Box {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { id, x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+function inset(box: Box, amount: number): Box {
+  return {
+    id: box.id,
+    x: box.x + amount,
+    y: box.y + amount,
+    width: box.width - amount * 2,
+    height: box.height - amount * 2,
+  };
+}
+
+/** Which side, and by how much, a box pokes out of another. */
+function overflows(inner: Box, outer: Box): string[] {
+  const found: string[] = [];
+  if (inner.x < outer.x) found.push(`left ${Math.round(outer.x - inner.x)}`);
+  if (inner.y < outer.y) found.push(`top ${Math.round(outer.y - inner.y)}`);
+  const right = inner.x + inner.width - (outer.x + outer.width);
+  const bottom = inner.y + inner.height - (outer.y + outer.height);
+  if (right > 0) found.push(`right ${Math.round(right)}`);
+  if (bottom > 0) found.push(`bottom ${Math.round(bottom)}`);
+  return found;
+}
+
+/** The four thin bands an arrow has to cross to get in or out of a region. */
+function borderBands(box: Box): Box[] {
+  const thickness = 2;
+  return [
+    { id: `${box.id}:top`, x: box.x, y: box.y - thickness / 2, width: box.width, height: thickness },
+    { id: `${box.id}:bottom`, x: box.x, y: box.y + box.height - thickness / 2, width: box.width, height: thickness },
+    { id: `${box.id}:left`, x: box.x - thickness / 2, y: box.y, width: thickness, height: box.height },
+    { id: `${box.id}:right`, x: box.x + box.width - thickness / 2, y: box.y, width: thickness, height: box.height },
+  ];
+}
+
+/**
+ * The container tree as the checks need it: every drawn region by its
+ * semantic id, and the chain of regions any element sits inside.
+ */
+type ContainerView = {
+  boxes: Map<string, Box>;
+  chainOf: (elementId: string) => string[];
+  semanticOf: Map<string, string>;
+};
+
+function containerView(plan: DiagramPlan, boxById: ReadonlyMap<string, Box>): ContainerView {
+  const boxes = new Map<string, Box>();
+  const semanticOf = new Map<string, string>();
+  for (const [semantic, entry] of plan.containers) {
+    const box = boxById.get(entry.elementId);
+    if (!box) continue;
+    boxes.set(semantic, box);
+    semanticOf.set(entry.elementId, semantic);
+  }
+  const chainOf = (elementId: string): string[] => {
+    const chain: string[] = [];
+    let cursor = plan.roles.get(elementId)?.container;
+    while (cursor && boxes.has(cursor) && !chain.includes(cursor)) {
+      chain.push(cursor);
+      cursor = plan.containers.get(cursor)?.parent;
+    }
+    return chain;
+  };
+  return { boxes, chainOf, semanticOf };
+}
+
+function evaluateContainers(
+  view: ContainerView,
+  boxById: ReadonlyMap<string, Box>,
+  arrows: readonly JsonObject[],
+  report: DiagramQualityReport,
+): void {
+  if (view.boxes.size === 0) return;
+  const arrowIds = new Set(arrows.map((arrow) => String(arrow.id)));
+
+  for (const [semantic, container] of view.boxes) {
+    const room = inset(container, CONTAINER_INSET);
+    for (const [elementId, box] of boxById) {
+      if (elementId === container.id) continue;
+      const chain = view.chainOf(elementId);
+      if (chain.includes(semantic)) {
+        const found = overflows(box, room);
+        if (found.length > 0) {
+          report.containerContainment.push(`${container.id} > ${elementId} overflows ${found.join(", ")}`);
+        }
+        continue;
+      }
+      // An arrow is judged by where it crosses, not by the box its route
+      // happens to span, and two regions on top of each other are already a
+      // node overlap rather than an intrusion.
+      if (arrowIds.has(elementId) || view.semanticOf.has(elementId)) continue;
+      if (boxesOverlap(box, container)) {
+        report.containerIntrusion.push(`${container.id} x ${elementId}`);
+      }
+    }
+  }
+
+  for (const arrow of arrows) {
+    const id = String(arrow.id);
+    const geometry = arrowGeometry(arrow);
+    const startNode = String((arrow.start as { id?: string } | undefined)?.id ?? "");
+    const endNode = String((arrow.end as { id?: string } | undefined)?.id ?? "");
+    const allowed = new Set([
+      ...view.chainOf(startNode),
+      ...view.chainOf(endNode),
+      ...view.chainOf(id),
+    ]);
+    for (const [semantic, container] of view.boxes) {
+      if (allowed.has(semantic)) continue;
+      const crossings = borderBands(container)
+        .filter((band) => geometryIntersectsBox(geometry, band, 0)).length;
+      if (crossings > 0) {
+        report.edgesThroughContainers.push(`${id} x ${container.id} (${crossings} crossings)`);
+      }
+    }
+  }
+
+  // Two regions may share space only where one genuinely holds the other.
+  const semantics = [...view.boxes.keys()];
+  for (let a = 0; a < semantics.length; a++) {
+    for (let b = a + 1; b < semantics.length; b++) {
+      const first = view.boxes.get(semantics[a])!;
+      const second = view.boxes.get(semantics[b])!;
+      if (view.chainOf(first.id).includes(semantics[b])) continue;
+      if (view.chainOf(second.id).includes(semantics[a])) continue;
+      if (boxesOverlap(first, second)) report.nodeOverlaps.push(`${first.id} x ${second.id}`);
+    }
+  }
+}
+
 export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
   const report: DiagramQualityReport = {
     nodeOverlaps: [],
@@ -114,10 +256,14 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     overlappingParallelSegments: [],
     offGrid: [],
     styleCoherence: [],
+    containerContainment: [],
+    containerIntrusion: [],
+    edgesThroughContainers: [],
   };
   const nodes: Box[] = [];
   const labels: Box[] = [];
   const arrows: JsonObject[] = [];
+  const boxById = new Map<string, Box>();
   for (const skeleton of plan.skeletons) {
     const id = String(skeleton.id ?? "");
     const box: Box = {
@@ -128,11 +274,17 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
       height: finiteNumber(skeleton.height),
     };
     const role = plan.roles.get(id)?.role;
-    if (role === "edge") arrows.push(skeleton);
-    else if (role === "node") nodes.push(box);
+    if (role === "edge") {
+      arrows.push(skeleton);
+      const points = absoluteArrowPoints(skeleton);
+      boxById.set(id, points.length > 0 ? pointsBounds(points, id) : box);
+      continue;
+    }
+    boxById.set(id, box);
+    if (role === "node") nodes.push(box);
     // The title competes for the same space as edge labels; hold it to the
-    // same collision standard.
-    else if (role === "edgeLabel" || role === "title") labels.push(box);
+    // same collision standard, and a region's own caption with it.
+    else if (role === "edgeLabel" || role === "title" || role === "containerLabel") labels.push(box);
   }
 
   for (let a = 0; a < nodes.length; a++) {
@@ -214,6 +366,7 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     }
   }
 
+  evaluateContainers(containerView(plan, boxById), boxById, arrows, report);
   evaluateStyleCoherence(plan, report);
 
   return report;
