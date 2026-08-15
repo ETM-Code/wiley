@@ -15,9 +15,11 @@ import {
   translatePlan,
   type LayoutParams,
 } from "../diagram-layout";
+import { deriveDiagramId, readDiagramStamp, titleElementId } from "../diagram-spec";
 import { asRecord, gridResult, resolveDiagramOrigin } from "./geometry";
 import {
   diagramPreviewElementIds,
+  diagramPreviewStream,
   diagramPreviewVersions,
   reportDiagramPreviewProgress,
   withoutDiagramPreviewElements,
@@ -76,6 +78,14 @@ export async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
   };
 }
 
+/** Monotonic even when two diagrams are requested within the same millisecond. */
+let lastDiagramSeed = 0;
+
+function nextDiagramSeed(): number {
+  lastDiagramSeed = Math.max(Date.now(), lastDiagramSeed + 1);
+  return lastDiagramSeed;
+}
+
 export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, preview = false) {
   const params = value as LayoutParams;
   const previewVersion = finite(asRecord(value).__previewVersion, 0);
@@ -87,9 +97,14 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   }
   const hadPreview = diagramPreviewElementIds.size > 0;
   const previousPreviewIds = new Set(diagramPreviewElementIds);
+  // A streaming preview claims one diagram id and every later frame, plus
+  // the final commit, reuses it: same ids, so updateScene replaces the
+  // provisional elements in place instead of stacking copies.
+  const diagramId = diagramPreviewStream.diagramId ?? deriveDiagramId(params, nextDiagramSeed());
+  if (preview) diagramPreviewStream.diagramId = diagramId;
   // Plan at the origin first: above/left placement needs the diagram's own
   // bounds before an anchor-relative position can be chosen.
-  const plan = await planDiagramLayout(params, { x: 0, y: 0 });
+  const plan = await planDiagramLayout(params, { x: 0, y: 0 }, diagramId);
   const origin = resolveDiagramOrigin(
     api,
     params.anchor,
@@ -100,8 +115,22 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   translatePlan(plan, origin.x, origin.y);
   const title = params.title?.trim();
 
+  // Derived ids are only safe while nothing else owns them. The converter
+  // drops a duplicate id with nothing but a console error, so a foreign
+  // element sitting on one of these ids has to fail the request loudly.
+  const expectedIds = plan.skeletons.map((skeleton) => String(skeleton.id));
+  const claimed = new Set(expectedIds);
+  const foreign = [...api.getSceneElements()].filter((element) => claimed.has(element.id)
+    && !previousPreviewIds.has(element.id)
+    && readDiagramStamp(element)?.diagram !== diagramId);
+  if (foreign.length > 0) {
+    const sample = foreign.slice(0, 3).map((element) => element.id).join(", ");
+    throw new Error(`Diagram id collision: ${sample} already on the board outside this diagram`);
+  }
+
   const created = convertToExcalidrawElements(
     plan.skeletons as Parameters<typeof convertToExcalidrawElements>[0],
+    { regenerateIds: false },
   );
   const createdIds = new Set(created.map((element) => element.id));
   // The human may draw while ELK runs or while elements stream in. Always
@@ -113,9 +142,8 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
     throw new Error("Diagram layout produced invalid element geometry");
   }
-  // Excalidraw intentionally regenerates skeleton ids. Group converted primary
-  // elements with their bound labels using the converted container ids instead
-  // of trying to match the original skeleton ids.
+  // Bound labels are created by the converter rather than requested, so they
+  // are the only elements without an id we chose. Group them by container.
   const labelsByContainer = new Map<string, SceneElement[]>();
   for (const element of created) {
     const candidate = element as SceneElement & { containerId?: string | null };
@@ -124,13 +152,32 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     labels.push(element);
     labelsByContainer.set(candidate.containerId, labels);
   }
-  const convertedNodes = created
-    .filter((element) => element.type !== "text" && element.type !== "arrow")
-    .slice(0, params.nodes.length);
-  const convertedEdges = created.filter((element) => element.type === "arrow");
-  if (convertedNodes.length !== params.nodes.length || convertedEdges.length !== (params.edges ?? []).length) {
-    throw new Error("Diagram validation failed: rendered element counts do not match the request");
+  const convertedById = new Map(created.map((element) => [element.id, element]));
+  const expectedCount = plan.skeletons.length + plan.skeletons.filter(
+    (skeleton) => (skeleton.label as { text?: string } | undefined)?.text,
+  ).length;
+  if (created.length !== expectedCount) {
+    throw new Error(`Diagram validation failed: converted ${created.length} elements, expected ${expectedCount}`);
   }
+  for (const id of expectedIds) {
+    if (!convertedById.has(id)) {
+      throw new Error(`Diagram validation failed: element ${id} was dropped during conversion`);
+    }
+  }
+
+  const edgeIdByIndex = new Map<number, string>();
+  const edgeLabelIdByIndex = new Map<number, string>();
+  for (const [id, entry] of plan.roles) {
+    if (entry.edgeIndex === undefined) continue;
+    if (entry.role === "edge") edgeIdByIndex.set(entry.edgeIndex, id);
+    if (entry.role === "edgeLabel") edgeLabelIdByIndex.set(entry.edgeIndex, id);
+  }
+  const convertedNodes = params.nodes.map(
+    (node) => convertedById.get(plan.elementIdByNode.get(node.id)!)!,
+  );
+  const convertedEdges = (params.edges ?? []).map(
+    (_edge, index) => convertedById.get(edgeIdByIndex.get(index)!)!,
+  );
   for (const [index, node] of params.nodes.entries()) {
     const rendered = convertedNodes[index] as SceneElement & {
       backgroundColor?: string;
@@ -151,37 +198,34 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
       throw new Error(`Diagram validation failed: ${node.id} lost its rounded corners`);
     }
   }
+  for (const [index, edge] of (params.edges ?? []).entries()) {
+    if (convertedEdges[index]?.type !== "arrow") {
+      throw new Error(`Diagram validation failed: ${edge.from} -> ${edge.to} did not render as an arrow`);
+    }
+  }
+
   const nodeGroups = convertedNodes.map((element) => [
     element,
     ...(labelsByContainer.get(element.id) ?? []),
   ]);
-  const edgeGroups = convertedEdges.map((element) => [
-    element,
-    ...(labelsByContainer.get(element.id) ?? []),
-  ]);
-  const standaloneTexts = created.filter((element) => {
-    const candidate = element as SceneElement & { containerId?: string | null };
-    return element.type === "text" && !candidate.containerId;
+  const edgeGroups = convertedEdges.map((element, index) => {
+    const label = convertedById.get(edgeLabelIdByIndex.get(index) ?? "");
+    return [
+      element,
+      ...(labelsByContainer.get(element.id) ?? []),
+      ...(label ? [label] : []),
+    ];
   });
-  // Standalone texts convert in skeleton order: title first, then one label
-  // per labelled edge. Attach each label to its edge so they stream together.
-  const titleTexts = standaloneTexts.slice(0, title ? 1 : 0);
-  const edgeLabelTexts = standaloneTexts.slice(title ? 1 : 0);
-  const labelledEdgeIndexes = (params.edges ?? [])
-    .map((edge, index) => (edge.label?.trim() ? index : -1))
-    .filter((index) => index >= 0);
-  labelledEdgeIndexes.forEach((edgeIndex, labelIndex) => {
-    const label = edgeLabelTexts[labelIndex];
-    if (label && edgeGroups[edgeIndex]) edgeGroups[edgeIndex].push(label);
-  });
+  const titleElement = title ? convertedById.get(titleElementId(diagramId)) : undefined;
+  const titleTexts = titleElement ? [titleElement] : [];
   const groupedIds = new Set([...nodeGroups, ...edgeGroups, titleTexts].flat().map((element) => element.id));
   const leftovers = created.filter((element) => !groupedIds.has(element.id));
   const result = {
     count: created.length,
-    idMap: Object.fromEntries(params.nodes.map((node, index) => [
-      node.id,
-      convertedNodes[index]?.id ?? plan.elementIdByNode.get(node.id),
-    ])),
+    diagramId,
+    idMap: Object.fromEntries(params.nodes.map(
+      (node) => [node.id, plan.elementIdByNode.get(node.id)],
+    )),
     validation: {
       title: title ? titleTexts.some((element) => (element as SceneElement & { text?: string }).text === title) : true,
       nodes: convertedNodes.length,
@@ -211,11 +255,12 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
         animate: false,
       });
     }
-    return { preview: true, nodes: params.nodes.length, edges: (params.edges ?? []).length };
+    return { preview: true, diagramId, nodes: params.nodes.length, edges: (params.edges ?? []).length };
   }
 
   diagramPreviewElementIds.clear();
   diagramPreviewVersions.lastNodeCount = 0;
+  diagramPreviewStream.diagramId = null;
   reportDiagramPreviewProgress(0, 0, previewVersion);
   const applyFinalScene = async () => {
     api.updateScene({
