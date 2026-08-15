@@ -1,4 +1,4 @@
-import { mkdir, open, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import type {
@@ -6,7 +6,6 @@ import type {
   BoardTransaction,
   BoardSnapshot,
   JobSummary,
-  JsonlRecord,
   TranscriptEntry,
 } from "../shared/contracts";
 
@@ -23,168 +22,7 @@ export interface RuntimeLedger {
   hasBoardTransaction(idempotencyKey: string): boolean;
   putBoardSnapshot(snapshot: BoardSnapshot): Promise<void>;
   getBoardSnapshot(): BoardSnapshot | undefined;
-}
-
-/**
- * An append-only JSONL ledger. Its interface intentionally maps one-to-one to
- * tables so it can be replaced by SQLite without changing the agent runtime.
- * Writes are serialized and fsynced before returning.
- */
-export class JsonlRuntimeLedger implements RuntimeLedger {
-  readonly #file: string;
-  #writeTail: Promise<void> = Promise.resolve();
-  #transcriptTail: Promise<unknown> = Promise.resolve();
-  #eventTail: Promise<unknown> = Promise.resolve();
-  #transcript: TranscriptEntry[] = [];
-  #events: AgentEvent[] = [];
-  #jobs = new Map<string, JobSummary>();
-  #transactionKeys = new Set<string>();
-  #boardSnapshot?: BoardSnapshot;
-
-  constructor(file: string) {
-    this.#file = file;
-  }
-
-  async initialize(): Promise<void> {
-    await mkdir(path.dirname(this.#file), { recursive: true });
-    let raw = "";
-    try {
-      raw = await readFile(this.#file, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        this.#replay(JSON.parse(line) as JsonlRecord);
-      } catch (error) {
-        // A crash may leave one partial final line. Earlier durable records are
-        // still usable, so only ignore a malformed final record.
-        if (line !== raw.trimEnd().split("\n").at(-1)) throw error;
-      }
-    }
-  }
-
-  async appendTranscript(
-    entry: Omit<TranscriptEntry, "id" | "sequence" | "at">,
-  ): Promise<TranscriptEntry> {
-    const run = this.#transcriptTail.then(async () => {
-      const value: TranscriptEntry = {
-        ...entry,
-        id: crypto.randomUUID(),
-        sequence: (this.#transcript.at(-1)?.sequence ?? 0) + 1,
-        at: new Date().toISOString(),
-      };
-      await this.#append({ kind: "transcript", at: value.at, data: value });
-      this.#transcript.push(value);
-      return value;
-    });
-    this.#transcriptTail = run.catch(() => undefined);
-    return run;
-  }
-
-  getTranscript(afterSequence = 0): TranscriptEntry[] {
-    return this.#transcript
-      .filter((entry) => entry.sequence > afterSequence)
-      .map((entry) => structuredClone(entry));
-  }
-
-  async appendAgentEvent(
-    entry: Omit<AgentEvent, "id" | "sequence" | "at">,
-  ): Promise<AgentEvent> {
-    const run = this.#eventTail.then(async () => {
-      const value: AgentEvent = {
-        ...entry,
-        id: crypto.randomUUID(),
-        sequence: (this.#events.at(-1)?.sequence ?? 0) + 1,
-        at: new Date().toISOString(),
-      };
-      await this.#append({ kind: "agent_event", at: value.at, data: value });
-      this.#events.push(value);
-      return value;
-    });
-    this.#eventTail = run.catch(() => undefined);
-    return run;
-  }
-
-  getAgentEvents(afterSequence = 0): AgentEvent[] {
-    return this.#events
-      .filter((event) => event.sequence > afterSequence)
-      .map((event) => structuredClone(event));
-  }
-
-  async putJob(job: JobSummary): Promise<void> {
-    await this.#append({ kind: "job", at: new Date().toISOString(), data: job });
-    this.#jobs.set(job.id, structuredClone(job));
-  }
-
-  getJob(id: string): JobSummary | undefined {
-    const job = this.#jobs.get(id);
-    return job ? structuredClone(job) : undefined;
-  }
-
-  listJobs(): JobSummary[] {
-    return [...this.#jobs.values()].map((job) => structuredClone(job));
-  }
-
-  async appendBoardTransaction(transaction: BoardTransaction): Promise<void> {
-    await this.#append({
-      kind: "board_transaction",
-      at: new Date().toISOString(),
-      data: transaction,
-    });
-    this.#transactionKeys.add(transaction.idempotencyKey);
-  }
-
-  hasBoardTransaction(idempotencyKey: string): boolean {
-    return this.#transactionKeys.has(idempotencyKey);
-  }
-
-  async putBoardSnapshot(snapshot: BoardSnapshot): Promise<void> {
-    await this.#append({ kind: "board_snapshot", at: new Date().toISOString(), data: snapshot });
-    this.#boardSnapshot = structuredClone(snapshot);
-  }
-
-  getBoardSnapshot(): BoardSnapshot | undefined {
-    return this.#boardSnapshot ? structuredClone(this.#boardSnapshot) : undefined;
-  }
-
-  async #append(record: JsonlRecord): Promise<void> {
-    const run = this.#writeTail.then(async () => {
-      const handle = await open(this.#file, "a", 0o600);
-      try {
-        await handle.appendFile(`${JSON.stringify(record)}\n`, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-    });
-    this.#writeTail = run.catch(() => undefined);
-    return run;
-  }
-
-  #replay(record: JsonlRecord): void {
-    switch (record.kind) {
-      case "transcript":
-        this.#transcript.push(record.data as TranscriptEntry);
-        break;
-      case "agent_event":
-        this.#events.push(record.data as AgentEvent);
-        break;
-      case "job": {
-        const job = record.data as JobSummary;
-        this.#jobs.set(job.id, job);
-        break;
-      }
-      case "board_transaction":
-        this.#transactionKeys.add((record.data as BoardTransaction).idempotencyKey);
-        break;
-      case "board_snapshot":
-        this.#boardSnapshot = structuredClone(record.data as BoardSnapshot);
-        break;
-    }
-  }
+  close(): void;
 }
 
 /** Production ledger with WAL durability and unique idempotency keys. */

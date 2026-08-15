@@ -148,12 +148,6 @@ export interface VoiceInjection {
   silent?: boolean;
 }
 
-export interface JsonlRecord {
-  kind: "transcript" | "agent_event" | "job" | "board_transaction" | "board_snapshot";
-  at: string;
-  data: unknown;
-}
-
 /** The surface the Electron preload exposes on window.api. */
 export interface BoardApi {
   getVoiceToken(): Promise<string | { value: string }>;

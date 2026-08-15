@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { JsonlRuntimeLedger, SqliteRuntimeLedger } from "../src/main/ledger";
+import { SqliteRuntimeLedger } from "../src/main/ledger";
 import { TranscriptStore } from "../src/main/transcript";
 
 const cleanup: string[] = [];
@@ -18,9 +18,9 @@ afterEach(async () => {
 });
 
 describe("durable ledgers", () => {
-  it("serializes concurrent JSONL transcript and event appends", async () => {
+  it("serializes concurrent transcript and event appends", async () => {
     const directory = await tempDir();
-    const ledger = new JsonlRuntimeLedger(path.join(directory, "ledger.jsonl"));
+    const ledger = new SqliteRuntimeLedger(path.join(directory, "runtime.sqlite"));
     await ledger.initialize();
 
     await Promise.all(Array.from({ length: 20 }, (_, index) => ledger.appendTranscript({
@@ -40,6 +40,7 @@ describe("durable ledgers", () => {
     expect(ledger.getAgentEvents().map((entry) => entry.sequence)).toEqual(
       Array.from({ length: 20 }, (_, index) => index + 1),
     );
+    ledger.close();
   });
 
   it("persists SQLite conversations, jobs, events, and idempotency keys", async () => {
@@ -97,7 +98,7 @@ describe("durable ledgers", () => {
 describe("conversation delivery", () => {
   it("does not lose a delta until prompt acceptance is committed", async () => {
     const directory = await tempDir();
-    const ledger = new JsonlRuntimeLedger(path.join(directory, "ledger.jsonl"));
+    const ledger = new SqliteRuntimeLedger(path.join(directory, "runtime.sqlite"));
     await ledger.initialize();
     const store = new TranscriptStore(ledger);
     await store.append("user", "first");
@@ -111,5 +112,6 @@ describe("conversation delivery", () => {
     await store.append("assistant", "working on it");
     expect(store.prepareDelta().entries.map((entry) => entry.text)).toEqual(["working on it"]);
     expect(store.contextForNewAgent().map((entry) => entry.text)).toEqual(["first", "working on it"]);
+    ledger.close();
   });
 });
