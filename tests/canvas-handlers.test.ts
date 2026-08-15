@@ -736,7 +736,10 @@ describe("diagram renderer", () => {
 
     expect(result.layout).toEqual({ requested: "layered", used: "layered" });
     expect(Object.keys(result.quality).sort()).toEqual([
+      "containerContainment",
+      "containerIntrusion",
       "crowdedPorts",
+      "edgesThroughContainers",
       "edgesThroughNodes",
       "labelCollisions",
       "nodeOverlaps",
