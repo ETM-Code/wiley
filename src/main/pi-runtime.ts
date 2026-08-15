@@ -18,7 +18,6 @@ import type { AgentEvent, JobSummary } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
-import { stableDiagramPreview } from "./diagram-preview";
 import { ApprovalJudge, CatastrophicCommandGuard, ReadBeforeEditGuard, isReadOnlyCommand } from "./safety";
 import { type VoiceBridge } from "./voice-bridge";
 import {
@@ -32,6 +31,7 @@ import {
 import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./pi/image";
 import { lastAssistantText } from "./pi/messages";
 import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
+import { DiagramPreviewQueue } from "./pi/diagram-preview-queue";
 import { redact } from "./pi/redact";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
@@ -71,9 +71,7 @@ export class PiRuntime {
   #pendingSubQuestions = new Map<string, (answer: string) => void>();
   #currentJobId?: string;
   #eventListeners = new Set<(event: AgentEvent) => void>();
-  #diagramPreviewTimer?: NodeJS.Timeout;
-  #pendingDiagramPreview?: Record<string, unknown>;
-  #lastDiagramPreviewSignature = "";
+  #diagramPreviews: DiagramPreviewQueue;
   #approvalJudge?: ApprovalJudge;
   #eventBaseline = 0;
 
@@ -83,7 +81,9 @@ export class PiRuntime {
     private readonly transcript: TranscriptStore,
     private readonly canvas: CanvasBridge,
     private readonly voice: VoiceBridge,
-  ) {}
+  ) {
+    this.#diagramPreviews = new DiagramPreviewQueue(canvas);
+  }
 
   async initialize(): Promise<void> {
     this.#modelRuntime = await ModelRuntime.create();
@@ -723,7 +723,7 @@ export class PiRuntime {
             ? update.toolCall as Record<string, unknown> | undefined
             : ((update.partial as { content?: unknown[] } | undefined)?.content?.[Number(update.contentIndex)] as Record<string, unknown> | undefined);
           if (toolCall?.name === "draw_diagram") {
-            this.#queueDiagramPreview(toolCall.arguments, update.type === "toolcall_end");
+            this.#diagramPreviews.queue(toolCall.arguments, update.type === "toolcall_end");
           }
         } else if (update?.type === "error") {
           this.#clearDiagramPreview();
@@ -733,7 +733,7 @@ export class PiRuntime {
       } else if (value.type === "tool_execution_end") {
         if (agentId === "root" && value.toolName === "draw_diagram") {
           if (value.isError) this.#clearDiagramPreview();
-          else this.#resetDiagramPreviewQueue();
+          else this.#diagramPreviews.reset();
         }
         void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_completed", payload: redact({ toolName: value.toolName, isError: value.isError, result: value.result }) });
       } else if (value.type === "tool_execution_update") {
@@ -744,41 +744,8 @@ export class PiRuntime {
     });
   }
 
-  #queueDiagramPreview(value: unknown, immediate: boolean): void {
-    const preview = stableDiagramPreview(value);
-    if (!preview) return;
-    const signature = JSON.stringify(preview);
-    if (signature === this.#lastDiagramPreviewSignature) return;
-    this.#lastDiagramPreviewSignature = signature;
-    this.#pendingDiagramPreview = preview;
-    if (immediate) {
-      if (this.#diagramPreviewTimer) clearTimeout(this.#diagramPreviewTimer);
-      this.#diagramPreviewTimer = undefined;
-      this.#flushDiagramPreview();
-      return;
-    }
-    if (this.#diagramPreviewTimer) return;
-    this.#diagramPreviewTimer = setTimeout(() => {
-      this.#diagramPreviewTimer = undefined;
-      this.#flushDiagramPreview();
-    }, 90);
-  }
-
-  #flushDiagramPreview(): void {
-    const preview = this.#pendingDiagramPreview;
-    this.#pendingDiagramPreview = undefined;
-    if (preview) this.canvas.previewDiagram(preview);
-  }
-
-  #resetDiagramPreviewQueue(): void {
-    if (this.#diagramPreviewTimer) clearTimeout(this.#diagramPreviewTimer);
-    this.#diagramPreviewTimer = undefined;
-    this.#pendingDiagramPreview = undefined;
-    this.#lastDiagramPreviewSignature = "";
-  }
-
   #clearDiagramPreview(): void {
-    this.#resetDiagramPreviewQueue();
+    this.#diagramPreviews.reset();
     this.canvas.clearDiagramPreview();
   }
 
