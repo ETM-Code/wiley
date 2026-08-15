@@ -4,7 +4,14 @@
  * diagrams from it, the main process sanitizes streaming tool arguments
  * against it, and neither may drift from the other.
  */
-export type DiagramElementRole = "node" | "nodeLabel" | "edge" | "edgeLabel" | "title";
+export type DiagramElementRole =
+  | "node"
+  | "nodeLabel"
+  | "edge"
+  | "edgeLabel"
+  | "title"
+  | "container"
+  | "containerLabel";
 
 export type DiagramThemeName = "slate" | "ocean" | "forest" | "sunset" | "grape" | "mono";
 
@@ -52,20 +59,37 @@ export type DiagramEdgeArrow = "none" | "end" | "both";
 
 export const DIAGRAM_EDGE_ARROWS: readonly DiagramEdgeArrow[] = ["none", "end", "both"];
 
+export type DiagramContainerRender = "group" | "frame";
+
+export const DIAGRAM_CONTAINER_RENDERS: readonly DiagramContainerRender[] = ["group", "frame"];
+
 export type DiagramStamp = {
   diagram: string;
   role: DiagramElementRole;
   key?: string;
   theme?: DiagramThemeName;
+  /**
+   * The semantic id of the container this element sits inside, so the live
+   * scene alone is enough to rebuild the graph that produced it.
+   */
+  container?: string;
 };
 
-const ROLES = new Set<string>(["node", "nodeLabel", "edge", "edgeLabel", "title"]);
+const ROLES = new Set<string>([
+  "node",
+  "nodeLabel",
+  "edge",
+  "edgeLabel",
+  "title",
+  "container",
+  "containerLabel",
+]);
 const THEMES = new Set<string>(DIAGRAM_THEME_NAMES);
 
 export function readDiagramStamp(element: unknown): DiagramStamp | undefined {
   const customData = (element as { customData?: unknown } | null)?.customData;
   const wiley = (customData as { wiley?: unknown } | null | undefined)?.wiley as
-    | { diagram?: unknown; role?: unknown; key?: unknown; theme?: unknown }
+    | { diagram?: unknown; role?: unknown; key?: unknown; theme?: unknown; container?: unknown }
     | undefined;
   if (!wiley || typeof wiley.diagram !== "string") return undefined;
   if (typeof wiley.role !== "string" || !ROLES.has(wiley.role)) return undefined;
@@ -76,5 +100,6 @@ export function readDiagramStamp(element: unknown): DiagramStamp | undefined {
     ...(typeof wiley.theme === "string" && THEMES.has(wiley.theme)
       ? { theme: wiley.theme as DiagramThemeName }
       : {}),
+    ...(typeof wiley.container === "string" ? { container: wiley.container } : {}),
   };
 }

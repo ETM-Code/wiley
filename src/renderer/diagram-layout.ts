@@ -1,7 +1,11 @@
 import ELK from "elkjs/lib/elk.bundled";
 import type { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 
-import type { DiagramElementRole } from "../shared/diagram-stamp";
+import {
+  DIAGRAM_CONTAINER_RENDERS,
+  type DiagramContainerRender,
+  type DiagramElementRole,
+} from "../shared/diagram-stamp";
 import {
   NODE_EMPHASES,
   NODE_ROLES,
@@ -57,6 +61,26 @@ export type GraphNode = {
   backgroundColor?: string;
   strokeColor?: string;
   rounded?: boolean;
+  /** The container this node is a member of. */
+  container?: string;
+};
+
+export type ContainerRender = DiagramContainerRender;
+
+export const CONTAINER_RENDERS = DIAGRAM_CONTAINER_RENDERS;
+
+/**
+ * A labelled region the layout keeps its members inside. `group` draws a
+ * tinted rounded rectangle behind its members and ties them into one
+ * Excalidraw group; `frame` emits a real Excalidraw frame, which cannot nest
+ * and so is only allowed at the top level.
+ */
+export type GraphContainer = {
+  id: string;
+  label?: string;
+  parent?: string;
+  role?: NodeRole;
+  render?: ContainerRender;
 };
 export type GraphEdge = {
   from: string;
@@ -118,6 +142,7 @@ export type LayoutParams = {
   theme?: ThemeName;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  containers?: GraphContainer[];
   anchor?: string;
   anchorDirection?: "right" | "left" | "above" | "below";
   layout?: DiagramLayoutOptions;
@@ -345,6 +370,60 @@ function requireMember<T extends string>(
   }
 }
 
+/**
+ * Containers nest at most two deep, ids never collide with node ids, and a
+ * frame is only legal where Excalidraw can actually draw one: at the top
+ * level, with no container of its own inside it.
+ */
+export const MAX_CONTAINER_DEPTH = 2;
+
+function validateContainers(params: LayoutParams, nodeIds: ReadonlySet<string>): void {
+  const containers = params.containers ?? [];
+  const byId = new Map<string, GraphContainer>();
+  for (const container of containers) {
+    if (!container?.id) throw new Error("Diagram containers require an id");
+    if (byId.has(container.id)) {
+      throw new Error(`Diagram container ${container.id} is declared twice`);
+    }
+    if (nodeIds.has(container.id)) {
+      throw new Error(`Diagram container ${container.id} collides with a node id`);
+    }
+    requireMember(container.role, NODE_ROLES, `container ${container.id} role`);
+    requireMember(container.render, CONTAINER_RENDERS, `container ${container.id} render`);
+    byId.set(container.id, container);
+  }
+  const hasChildContainer = new Set<string>();
+  for (const container of containers) {
+    if (container.parent === undefined) continue;
+    if (container.parent === container.id || !byId.has(container.parent)) {
+      throw new Error(`Diagram container ${container.id} names an unknown parent ${container.parent}`);
+    }
+    hasChildContainer.add(container.parent);
+  }
+  for (const container of containers) {
+    let depth = 1;
+    let cursor = byId.get(container.parent ?? "");
+    while (cursor) {
+      depth += 1;
+      if (depth > MAX_CONTAINER_DEPTH) {
+        throw new Error(`Diagram container ${container.id} nests deeper than ${MAX_CONTAINER_DEPTH} levels`);
+      }
+      cursor = byId.get(cursor.parent ?? "");
+    }
+    if (container.render === "frame" && container.parent !== undefined) {
+      throw new Error(`Diagram container ${container.id} cannot render as a frame inside another container`);
+    }
+    if (container.render === "frame" && hasChildContainer.has(container.id)) {
+      throw new Error(`Diagram container ${container.id} cannot render as a frame while holding another container`);
+    }
+  }
+  for (const node of params.nodes) {
+    if (node.container !== undefined && !byId.has(node.container)) {
+      throw new Error(`Diagram node ${node.id} names an unknown container ${node.container}`);
+    }
+  }
+}
+
 function validateGraph(params: LayoutParams): void {
   if (!Array.isArray(params?.nodes) || params.nodes.length === 0) {
     throw new Error("layout-diagram requires at least one node");
@@ -361,6 +440,7 @@ function validateGraph(params: LayoutParams): void {
     requireMember(node.emphasis, NODE_EMPHASES, `node ${node.id} emphasis`);
     nodeIds.add(node.id);
   }
+  validateContainers(params, nodeIds);
   requireMember(params.layout?.direction, DIAGRAM_DIRECTIONS, "layout direction");
   requireMember(params.layout?.algorithm, DIAGRAM_ALGORITHMS, "layout algorithm");
   for (const edge of params.edges ?? []) {
