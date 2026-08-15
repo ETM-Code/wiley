@@ -91,6 +91,8 @@ Board protocol:
   without a redundant verification read.
 - get_canvas before drawing or editing; screenshot_canvas when visual layout matters.
 - draw_diagram for graph structure; never calculate structured layout coordinates.
+- update_diagram to change a diagram you already drew: name it by the diagramId
+  in current_canvas_context. Never redraw or clear a diagram you own.
 - Wiley canvas mutations automatically snap shape geometry to a hidden 20 px
   grid, while connector routes keep their exact computed geometry. Do not
   calculate, simulate, or compensate for the grid. Human movement remains
