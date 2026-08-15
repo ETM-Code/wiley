@@ -46,6 +46,21 @@ describe("diagram layout quality", () => {
     }
   });
 
+  it.each(stressGraphs)("labels every emitted element with a semantic role for $name", async ({ params }) => {
+    const plan = await planDiagramLayout(params, ORIGIN, "agent-test");
+    for (const skeleton of plan.skeletons) {
+      expect(plan.roles.get(String(skeleton.id))).toBeTruthy();
+    }
+    const counts = { node: 0, edge: 0, edgeLabel: 0, title: 0 };
+    for (const entry of plan.roles.values()) {
+      if (entry.role in counts) counts[entry.role as keyof typeof counts] += 1;
+    }
+    expect(counts.node).toBe(params.nodes.length);
+    expect(counts.edge).toBe(params.edges.length);
+    expect(counts.edgeLabel).toBe(plan.edgeLabelCount);
+    expect(counts.title).toBe(params.title ? 1 : 0);
+  });
+
   it("fits every wrapped label line inside its node's usable width", async () => {
     const plan = await planDiagramLayout(planningDiagram, ORIGIN, "agent-test");
     const nodesById = new Map(

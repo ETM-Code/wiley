@@ -73,11 +73,12 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
       width: finiteNumber(skeleton.width),
       height: finiteNumber(skeleton.height),
     };
-    if (skeleton.type === "arrow") arrows.push(skeleton);
-    else if (id.includes("-node-")) nodes.push(box);
+    const role = plan.roles.get(id)?.role;
+    if (role === "edge") arrows.push(skeleton);
+    else if (role === "node") nodes.push(box);
     // The title competes for the same space as edge labels; hold it to the
     // same collision standard.
-    else if (id.includes("-edgelabel-") || id.endsWith("-title")) labels.push(box);
+    else if (role === "edgeLabel" || role === "title") labels.push(box);
   }
 
   for (let a = 0; a < nodes.length; a++) {
