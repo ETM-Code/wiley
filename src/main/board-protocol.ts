@@ -114,3 +114,21 @@ The user's drawings are first-class:
   placeNear plus placeDirection (draw_on_canvas) to grow the board right,
   left, above, or below. Never draw new content on top of what is there.
 `;
+
+/**
+ * The full text the live-excalidraw skill file must carry verbatim, in the
+ * order the agent prompts state it. `npm run sync:skill` writes this between
+ * the skill's board-protocol markers.
+ */
+export const CANONICAL_BOARD_PROTOCOL = [
+	BOARD_PROTOCOL,
+	CONNECTOR_GEOMETRY_RULES,
+	HUMAN_ELEMENT_RULES,
+	VISIBLE_PROCESS_RULES,
+]
+	.map((block) => block.trim())
+	.join("\n\n");
+
+/** Markers delimiting the generated block inside the skill file. */
+export const SKILL_BLOCK_BEGIN = "<!-- BEGIN board-protocol -->";
+export const SKILL_BLOCK_END = "<!-- END board-protocol -->";
