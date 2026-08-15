@@ -18,6 +18,7 @@
     "test:e2e:interactive": "node scripts/e2e-interactive.mjs",
     "start": "electron-vite preview",
     "package:mac": "npm run build && electron-builder --mac dmg --arm64",
+    "sync:skill": "tsx scripts/sync-skill.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
