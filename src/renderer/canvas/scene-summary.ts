@@ -1,4 +1,4 @@
-import { readDiagramStamp } from "../../shared/diagram-stamp";
+import { readDiagramStamp, type DiagramThemeName } from "../../shared/diagram-stamp";
 import type { SceneElement } from "./types";
 
 export function uint8ToBase64(bytes: Uint8Array): string {
@@ -13,6 +13,8 @@ export function uint8ToBase64(bytes: Uint8Array): string {
 export type DiagramSummary = {
   id: string;
   title?: string;
+  /** So a follow-up call can extend a diagram in the palette it already uses. */
+  theme?: DiagramThemeName;
   nodeKeys: string[];
   bounds: { x: number; y: number; w: number; h: number };
   elementCount: number;
@@ -25,6 +27,7 @@ export type DiagramSummary = {
 export function diagramIndex(elements: readonly SceneElement[]): DiagramSummary[] {
   const accumulators = new Map<string, {
     title?: string;
+    theme?: DiagramThemeName;
     nodeKeys: string[];
     elementCount: number;
     minX: number;
@@ -44,6 +47,7 @@ export function diagramIndex(elements: readonly SceneElement[]): DiagramSummary[
       maxY: Number.NEGATIVE_INFINITY,
     };
     entry.elementCount += 1;
+    if (stamp.theme) entry.theme = stamp.theme;
     if (stamp.role === "node" && stamp.key) entry.nodeKeys.push(stamp.key);
     if (stamp.role === "title") {
       const text = (element as SceneElement & { text?: string }).text;
@@ -60,6 +64,7 @@ export function diagramIndex(elements: readonly SceneElement[]): DiagramSummary[
   return [...accumulators].map(([id, entry]) => ({
     id,
     ...(entry.title ? { title: entry.title } : {}),
+    ...(entry.theme ? { theme: entry.theme } : {}),
     nodeKeys: entry.nodeKeys,
     bounds: Number.isFinite(entry.minX)
       ? {
