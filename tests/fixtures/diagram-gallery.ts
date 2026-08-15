@@ -681,6 +681,46 @@ export const stressGraphs: DiagramFixture[] = [
     },
   },
   {
+    name: "parallel labelled edges between one pair",
+    params: {
+      title: "Sync protocol",
+      theme: "ocean",
+      nodes: [
+        { id: "client", label: "Client" },
+        { id: "server", label: "Server" },
+        { id: "audit", label: "Audit log" },
+      ],
+      edges: [
+        { from: "client", to: "server", label: "push" },
+        { from: "client", to: "server", label: "pull" },
+        { from: "server", to: "client", label: "ack" },
+        { from: "server", to: "audit", label: "record" },
+      ],
+    },
+  },
+  {
+    name: "a label too long for the route to carry",
+    params: {
+      theme: "mono",
+      layout: { algorithm: "stress" },
+      nodes: [
+        { id: "collector", label: "Collector" },
+        { id: "ledger", label: "Ledger" },
+        { id: "alerting", label: "Alerting" },
+        { id: "archive", label: "Archive" },
+      ],
+      edges: [
+        {
+          from: "collector",
+          to: "ledger",
+          label: "every accepted revision with its author and timestamp",
+        },
+        { from: "ledger", to: "alerting" },
+        { from: "ledger", to: "archive" },
+      ],
+    },
+  },
+  {
     name: "cycle with parallel edges",
     params: {
       nodes: [

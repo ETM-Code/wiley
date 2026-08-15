@@ -64,11 +64,27 @@ describe("streaming diagram arguments", () => {
     expect(stableDiagramPreview({
       theme: "oce",
       nodes: [{ id: "a", label: "Ingest", role: "prim", emphasis: "stro", shape: "te" }],
-      edges: [{ from: "a", to: "a", style: "das", weight: "quie", arrow: "bot" }],
+      edges: [{ from: "a", to: "a", style: "das", weight: "quie", arrow: "bot", labelMode: "boun" }],
       layout: { algorithm: "rad" },
     })).toEqual({
       nodes: [{ id: "a", label: "Ingest" }],
       edges: [{ from: "a", to: "a" }],
+    });
+  });
+
+  it("carries an explicit edge label mode through to the preview", () => {
+    expect(stableDiagramPreview({
+      nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+      edges: [
+        { from: "a", to: "b", label: "ride", labelMode: "bound" },
+        { from: "b", to: "a", label: "stand", labelMode: "standalone" },
+      ],
+    })).toEqual({
+      nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+      edges: [
+        { from: "a", to: "b", label: "ride", labelMode: "bound" },
+        { from: "b", to: "a", label: "stand", labelMode: "standalone" },
+      ],
     });
   });
 

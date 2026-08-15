@@ -3,7 +3,9 @@ import type { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 
 import {
   DIAGRAM_CONTAINER_RENDERS,
+  DIAGRAM_EDGE_LABEL_MODES,
   type DiagramContainerRender,
+  type DiagramEdgeLabelMode,
   type DiagramElementRole,
 } from "../shared/diagram-stamp";
 import { resolveAbsolute } from "./diagram-elk";
@@ -87,6 +89,10 @@ export type GraphContainer = {
   role?: NodeRole;
   render?: ContainerRender;
 };
+export type EdgeLabelMode = DiagramEdgeLabelMode;
+
+export const EDGE_LABEL_MODES = DIAGRAM_EDGE_LABEL_MODES;
+
 export type GraphEdge = {
   from: string;
   to: string;
@@ -96,6 +102,7 @@ export type GraphEdge = {
   /** A hex value or one of the node role names. */
   color?: string;
   arrow?: EdgeArrow;
+  labelMode?: EdgeLabelMode;
 };
 export type DiagramDirection = "RIGHT" | "DOWN" | "LEFT" | "UP";
 
@@ -167,6 +174,8 @@ export type DiagramElementRoleEntry = {
   edgeIndex?: number;
   /** Semantic id of the container holding this element, if any. */
   container?: string;
+  /** Set on an edge label the converter attaches to the arrow itself. */
+  bound?: boolean;
 };
 
 /** A container as it was actually drawn, keyed by its semantic id. */
@@ -201,7 +210,11 @@ export interface DiagramPlan {
 export const MODEL_GRID_SIZE = 20;
 
 const NODE_FONT_SIZE = 20;
-const EDGE_LABEL_FONT_SIZE = 16;
+export const EDGE_LABEL_FONT_SIZE = 16;
+/** Clear space a bound label needs on either side before auto mode uses one. */
+export const BOUND_LABEL_CLEARANCE = 24;
+/** A curved arrow's midpoint sits off the polyline; allow for the sag. */
+export const CURVED_LABEL_SLACK = 4;
 // fontFamily 5 in Excalidraw's FONT_FAMILY map; the editor loads this face,
 // so canvas measureText below measures the genuinely rendered font.
 const DIAGRAM_FONT_CSS = "Excalifont";
@@ -239,6 +252,68 @@ function snapUpSize(value: number): number {
 
 export function nodeToType(node: GraphNode): GraphShape {
   return node.shape ?? "rectangle";
+}
+
+function distance(a: RoutePoint, b: RoutePoint): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+/**
+ * Where Excalidraw centres a label bound to an arrow. An odd number of points
+ * centres it on the middle point; an even number centres it on the midpoint of
+ * the middle segment. Both branches are the editor's own rule, so a label
+ * measured here lands where the editor is going to draw it.
+ */
+export function boundLabelAnchor(points: readonly RoutePoint[]): RoutePoint {
+  if (points.length === 0) return { x: 0, y: 0 };
+  if (points.length % 2 === 1) return points[(points.length - 1) / 2];
+  const index = points.length / 2 - 1;
+  return {
+    x: (points[index].x + points[index + 1].x) / 2,
+    y: (points[index].y + points[index + 1].y) / 2,
+  };
+}
+
+/**
+ * Whether the label, sitting where the editor will put it, stays clear of
+ * every box on the board. Run length alone is not enough: a route leaving the
+ * side of a tall node still passes alongside it, and an axis-aligned label
+ * centred on that run lands on the node it just left.
+ */
+export function boundLabelClears(
+  points: readonly RoutePoint[],
+  size: { width: number; height: number },
+  boxes: readonly RouteBox[],
+  margin = 4,
+): boolean {
+  const anchor = boundLabelAnchor(points);
+  const box = {
+    x: anchor.x - size.width / 2,
+    y: anchor.y - size.height / 2,
+    width: size.width,
+    height: size.height,
+  };
+  return boxes.every((other) => !(box.x < other.x + other.width + margin
+    && other.x < box.x + box.width + margin
+    && box.y < other.y + other.height + margin
+    && other.y < box.y + box.height + margin));
+}
+
+/**
+ * How much straight run the label has to sit in. Centred on a bendpoint it
+ * spills into both neighbouring segments, so the shorter of the two decides.
+ */
+export function boundLabelRoom(points: readonly RoutePoint[]): number {
+  if (points.length < 2) return 0;
+  if (points.length % 2 === 0) {
+    const index = points.length / 2 - 1;
+    return distance(points[index], points[index + 1]);
+  }
+  const index = (points.length - 1) / 2;
+  return 2 * Math.min(
+    distance(points[index - 1], points[index]),
+    distance(points[index], points[index + 1]),
+  );
 }
 
 let measuringContext: CanvasRenderingContext2D | null | undefined;
@@ -469,6 +544,7 @@ function validateGraph(params: LayoutParams): void {
     requireMember(edge.style, EDGE_LINE_STYLES, `${where} style`);
     requireMember(edge.weight, EDGE_WEIGHTS, `${where} weight`);
     requireMember(edge.arrow, EDGE_ARROWS, `${where} arrow`);
+    requireMember(edge.labelMode, EDGE_LABEL_MODES, `${where} labelMode`);
     if (edge.color !== undefined && !isNodeRole(edge.color) && !isHexColor(edge.color)) {
       throw new Error(`Diagram ${where} colour must be a hex value or a role name`);
     }
@@ -1128,8 +1204,19 @@ function assemblePlan(
     };
   });
 
+  const nodeBoxes: RouteBox[] = params.nodes.map((node) => {
+    const position = geometry.positions.get(node.id) ?? { x: 0, y: 0 };
+    const size = geometry.sizes.get(node.id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
+    return {
+      id: node.id,
+      x: snapModelCoordinate(origin.x + position.x),
+      y: snapModelCoordinate(origin.y + position.y),
+      ...size,
+    };
+  });
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
+  let boundLabelCount = 0;
   for (const [index, edge] of edges.entries()) {
     const routed = geometry.edges[index];
     const absoluteRoute = dedupePoints(routed.points.map((point) => ({
@@ -1146,6 +1233,17 @@ function assemblePlan(
     const ownerGroups = owner && boxes.has(owner) ? groupsFor(owner) : [];
     const edgeGroups: JsonObject = ownerGroups.length ? { groupIds: ownerGroups } : {};
     roles.set(edgeId, { role: "edge", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
+    const text = edge.label?.trim();
+    const labelSize = text ? measureText(text, EDGE_LABEL_FONT_SIZE) : { width: 0, height: 0 };
+    // A label rides the arrow when the middle of the route is long enough to
+    // carry it, and stands beside the route when it is not. A label the
+    // layout never found a place for rides the arrow rather than vanishing.
+    const labelMode = edge.labelMode ?? "auto";
+    const bound = Boolean(text) && (labelMode === "bound" || (labelMode === "auto" && (
+      routed.label === undefined
+      || (boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
+        && boundLabelClears(absoluteRoute, labelSize, nodeBoxes))
+    )));
     edgeSkeletons.push({
       id: edgeId,
       type: "arrow",
@@ -1165,28 +1263,40 @@ function assemblePlan(
       // A repaired route bends once; the curve reads as a deliberate detour
       // rather than a mistake, and the quality checks account for it.
       ...(routed.rounded ? { roundness: { type: 2 } } : {}),
+      ...(bound && text ? { label: { text, strokeColor: edgeStyle.labelColor, fontSize: EDGE_LABEL_FONT_SIZE, fontFamily: 5 } } : {}),
     });
-    const text = edge.label?.trim();
-    if (text && routed.label) {
-      const size = measureText(text, EDGE_LABEL_FONT_SIZE);
-      const edgeLabelId = edgeLabelElementId(diagramId, key);
-      roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
-      edgeLabelSkeletons.push({
-        id: edgeLabelId,
-        type: "text",
-        ...stamp("edgeLabel", key, owner),
-        ...edgeGroups,
-        x: origin.x + routed.label.x,
-        y: origin.y + routed.label.y,
-        width: size.width,
-        height: size.height,
-        text,
-        fontSize: EDGE_LABEL_FONT_SIZE,
-        fontFamily: 5,
-        strokeColor: edgeStyle.labelColor,
-        backgroundColor: "transparent",
+    if (!text) continue;
+    // A bound label has no skeleton of its own; the converter makes it. It
+    // still gets an identity so every check and every later edit can name it.
+    const edgeLabelId = edgeLabelElementId(diagramId, key);
+    if (bound) {
+      boundLabelCount += 1;
+      roles.set(edgeLabelId, {
+        role: "edgeLabel",
+        key,
+        edgeIndex: index,
+        bound: true,
+        ...(owner ? { container: owner } : {}),
       });
+      continue;
     }
+    if (!routed.label) continue;
+    roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
+    edgeLabelSkeletons.push({
+      id: edgeLabelId,
+      type: "text",
+      ...stamp("edgeLabel", key, owner),
+      ...edgeGroups,
+      x: origin.x + routed.label.x,
+      y: origin.y + routed.label.y,
+      width: labelSize.width,
+      height: labelSize.height,
+      text,
+      fontSize: EDGE_LABEL_FONT_SIZE,
+      fontFamily: 5,
+      strokeColor: edgeStyle.labelColor,
+      backgroundColor: "transparent",
+    });
   }
 
   const regionSkeletons: JsonObject[] = [];
@@ -1315,7 +1425,7 @@ function assemblePlan(
     skeletons,
     nodeCount: params.nodes.length,
     edgeCount: edges.length,
-    edgeLabelCount: edgeLabelSkeletons.length,
+    edgeLabelCount: edgeLabelSkeletons.length + boundLabelCount,
     elementIdByNode,
     diagramId,
     roles,
