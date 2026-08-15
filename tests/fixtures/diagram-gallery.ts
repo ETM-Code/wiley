@@ -261,6 +261,55 @@ export const stressGraphs: DiagramFixture[] = [
     },
   },
   {
+    name: "right-to-left dependency flow",
+    params: {
+      title: "Who depends on whom",
+      layout: { direction: "LEFT" },
+      nodes: [
+        { id: "ui", label: "Web UI" },
+        { id: "api", label: "Public API" },
+        { id: "auth", label: "Auth service" },
+        { id: "billing", label: "Billing service" },
+        { id: "db", label: "Primary database", shape: "ellipse" },
+        { id: "cache", label: "Cache", shape: "ellipse" },
+      ],
+      edges: [
+        { from: "ui", to: "api", label: "calls" },
+        { from: "api", to: "auth", label: "verifies" },
+        { from: "api", to: "billing", label: "charges" },
+        { from: "auth", to: "db" },
+        { from: "billing", to: "db" },
+        { from: "auth", to: "cache", label: "sessions" },
+      ],
+    },
+  },
+  {
+    name: "bottom-up escalation ladder",
+    params: {
+      theme: "sunset",
+      layout: { direction: "UP" },
+      nodes: [
+        ...Array.from({ length: 5 }, (_, index) => ({
+          id: `reporter-${index}`,
+          label: `Reporter ${index + 1}`,
+          role: "primary" as const,
+        })),
+        { id: "triage", label: "Triage desk", role: "warning" },
+        { id: "oncall", label: "On call", role: "warning" },
+        { id: "exec", label: "Executive brief", shape: "ellipse" as const, role: "danger" },
+      ],
+      edges: [
+        ...Array.from({ length: 5 }, (_, index) => ({
+          from: `reporter-${index}`,
+          to: "triage",
+          label: index % 2 === 0 ? "report" : undefined,
+        })),
+        { from: "triage", to: "oncall", label: "page" },
+        { from: "oncall", to: "exec", label: "escalate", weight: "strong" as const },
+      ],
+    },
+  },
+  {
     name: "forest theme incident response",
     params: {
       theme: "forest",

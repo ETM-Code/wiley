@@ -145,7 +145,12 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
           Type.Literal("below"),
         ])),
         layout: Type.Optional(Type.Object({
-          direction: Type.Optional(Type.Union([Type.Literal("RIGHT"), Type.Literal("DOWN")])),
+          direction: Type.Optional(Type.Union([
+            Type.Literal("RIGHT"),
+            Type.Literal("DOWN"),
+            Type.Literal("LEFT"),
+            Type.Literal("UP"),
+          ])),
           nodeSpacing: Type.Optional(Type.Number()),
           layerSpacing: Type.Optional(Type.Number()),
         }, { additionalProperties: false })),

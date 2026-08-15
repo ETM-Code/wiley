@@ -121,6 +121,42 @@ describe("diagram layout quality", () => {
     expect(busyDown.height).toBeLessThan(busy.height);
   });
 
+  it("grows the same axis for a direction and its mirror", () => {
+    const node = { id: "a", label: "Hub" };
+    // LEFT mirrors RIGHT: connectors still land on the vertical sides.
+    expect(nodeDimensions(node, 8, "LEFT")).toEqual(nodeDimensions(node, 8, "RIGHT"));
+    // UP mirrors DOWN: connectors land on the horizontal sides.
+    expect(nodeDimensions(node, 8, "UP")).toEqual(nodeDimensions(node, 8, "DOWN"));
+    expect(nodeDimensions(node, 8, "UP").width).toBeGreaterThanOrEqual(9 * 28);
+    expect(nodeDimensions(node, 8, "LEFT").height).toBeGreaterThanOrEqual(9 * 28);
+  });
+
+  it("lays LEFT and UP out along the axis they name", async () => {
+    const chain = (direction: "RIGHT" | "LEFT" | "DOWN" | "UP") => planDiagramLayout({
+      layout: { direction },
+      nodes: [{ id: "a", label: "First" }, { id: "b", label: "Second" }],
+      edges: [{ from: "a", to: "b" }],
+    }, ORIGIN, DIAGRAM_ID);
+    const at = (plan: Awaited<ReturnType<typeof chain>>, id: string) => {
+      const skeleton = plan.skeletons.find((entry) => entry.id === plan.elementIdByNode.get(id))!;
+      return { x: skeleton.x as number, y: skeleton.y as number };
+    };
+    const left = await chain("LEFT");
+    expect(at(left, "b").x).toBeLessThan(at(left, "a").x);
+    expect(at(left, "b").y).toBe(at(left, "a").y);
+    const up = await chain("UP");
+    expect(at(up, "b").y).toBeLessThan(at(up, "a").y);
+    expect(at(up, "b").x).toBe(at(up, "a").x);
+  });
+
+  it("rejects a direction outside the supported set", async () => {
+    await expect(planDiagramLayout({
+      layout: { direction: "SIDEWAYS" as never },
+      nodes: [{ id: "a", label: "A" }],
+      edges: [],
+    }, ORIGIN, DIAGRAM_ID)).rejects.toThrow(/direction/);
+  });
+
   it("keeps the title clear of nodes, labels, and its own headroom band", async () => {
     const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
     const title = plan.skeletons.find(
