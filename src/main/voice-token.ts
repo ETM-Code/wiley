@@ -1,16 +1,25 @@
+import { DEFAULT_VOICE_MODEL, DEFAULT_VOICE_NAME } from "./settings/settings-schema";
+
 const REALTIME_ENDPOINT = "https://api.openai.com/v1/realtime/client_secrets";
-export const VOICE_MODEL = "gpt-realtime-2.1" as const;
+
+export { DEFAULT_VOICE_MODEL, DEFAULT_VOICE_NAME };
 
 export interface RealtimeClientSecret {
   value: string;
   expires_at?: number;
 }
 
-export async function mintRealtimeToken(
-  apiKey = process.env.OPENAI_API_KEY,
-  signal?: AbortSignal,
-): Promise<RealtimeClientSecret> {
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured in the Electron main process");
+export interface MintRealtimeTokenOptions {
+  /** The realtime model id from settings. */
+  model?: string;
+  voice?: string;
+  apiKey?: string;
+  signal?: AbortSignal;
+}
+
+export async function mintRealtimeToken(options: MintRealtimeTokenOptions = {}): Promise<RealtimeClientSecret> {
+  const { model = DEFAULT_VOICE_MODEL, voice = DEFAULT_VOICE_NAME, apiKey, signal } = options;
+  if (!apiKey) throw new Error("No OpenAI API key is configured. Add one in Settings, or set OPENAI_API_KEY.");
   const response = await fetch(REALTIME_ENDPOINT, {
     method: "POST",
     signal,
@@ -22,8 +31,8 @@ export async function mintRealtimeToken(
       expires_after: { anchor: "created_at", seconds: 600 },
       session: {
         type: "realtime",
-        model: VOICE_MODEL,
-        audio: { output: { voice: "marin" } },
+        model,
+        audio: { output: { voice } },
       },
     }),
   });
