@@ -25,7 +25,9 @@ describe("transcript session baseline", () => {
     const store = await makeStore();
     await store.append("user", "old request from the previous session");
     await store.append("assistant", "old answer");
-    expect(store.takeDelta().length).toBe(2);
+    const previousSession = store.prepareDelta();
+    expect(previousSession.entries.length).toBe(2);
+    store.commitDelivered(previousSession.cursor);
 
     store.beginSession();
     expect(store.all()).toEqual([]);
@@ -35,7 +37,9 @@ describe("transcript session baseline", () => {
 
     const fresh = await store.append("user", "brand new request");
     expect(store.all().map((entry) => entry.text)).toEqual(["brand new request"]);
-    expect(store.takeDelta().map((entry) => entry.text)).toEqual(["brand new request"]);
+    const delta = store.prepareDelta();
+    expect(delta.entries.map((entry) => entry.text)).toEqual(["brand new request"]);
+    store.commitDelivered(delta.cursor);
     expect(store.after(0)).toHaveLength(1);
     expect(store.after(fresh.sequence)).toEqual([]);
   });
