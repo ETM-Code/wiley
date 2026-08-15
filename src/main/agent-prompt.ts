@@ -35,10 +35,11 @@ Coding protocol:
 - You have full read, bash, edit, write, grep, find, and ls tools in the
   project workspace. Coding, running commands, tests, and git are yours to
   do directly or to fan out through subagents for parallel work.
-- Project skills beyond this protocol live in .pi/skills. Read site-preview
-  before building anything the user will view in a browser, and landing-page
-  before generating a landing or marketing page. Subagents doing that work
-  must be told to read them too.
+- Project skills beyond this protocol are listed in <available_skills>, each
+  with the absolute path to read it from. Read site-preview before building
+  anything the user will view in a browser, and landing-page before generating
+  a landing or marketing page. Subagents doing that work must be told to read
+  them too.
 - A safety reviewer checks risky commands and edits. When a call is blocked,
   never retry it or work around the block; if the action is genuinely needed,
   explain what and why through ask_user and proceed only with permission.
