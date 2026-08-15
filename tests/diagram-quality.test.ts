@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   arrowGeometry,
+  evaluateConvertedScene,
   evaluateDiagramPlan,
+  mergeQualityReports,
   segmentsVisuallyMerge,
 } from "../src/renderer/diagram-quality";
 import {
@@ -231,6 +233,90 @@ describe("containers", () => {
     expect(evaluateDiagramPlan(trespass).edgesThroughContainers).toEqual([
       "wire x box (2 crossings)",
     ]);
+  });
+});
+
+describe("bound edge labels", () => {
+  const labelled = (points: Array<[number, number]>, rounded = false) => handBuiltPlan([
+    node("from", 0, 0),
+    node("to", 600, 0),
+    {
+      ...arrow("wire", points, { start: "from", end: "to", rounded }),
+      skeleton: {
+        ...arrow("wire", points, { start: "from", end: "to", rounded }).skeleton,
+        label: { text: "emit" },
+      },
+    },
+  ]);
+
+  it("puts the label where Excalidraw puts it and leaves its own arrow alone", () => {
+    const report = evaluateDiagramPlan(labelled([[160, 40], [600, 40]]));
+    expect(report.labelCollisions).toEqual([]);
+  });
+
+  it("flags a bound label sitting on somebody else's arrow", () => {
+    const plan = handBuiltPlan([
+      node("from", 0, 0),
+      node("to", 600, 0),
+      {
+        role: "edge",
+        key: "wire",
+        skeleton: {
+          id: "wire",
+          type: "arrow",
+          x: 160,
+          y: 40,
+          points: [[0, 0], [440, 0]],
+          start: { id: "from" },
+          end: { id: "to" },
+          label: { text: "emit" },
+        },
+      },
+      // A second connector run straight through the middle of that label.
+      arrow("crosser", [[380, -60], [380, 140]], { start: "from", end: "to" }),
+    ]);
+    expect(evaluateDiagramPlan(plan).labelCollisions).toEqual(["wire:label x crosser"]);
+  });
+
+  it("reads the converter's own measurement instead of predicting one", () => {
+    const plan = labelled([[160, 40], [600, 40]]);
+    expect(evaluateDiagramPlan(plan).labelCollisions).toEqual([]);
+    // The editor measured the label far wider than the plan expected, so it
+    // now reaches back over the node the arrow left.
+    const converted = [
+      { id: "from", type: "rectangle", x: 0, y: 0, width: 160, height: 80 },
+      { id: "to", type: "rectangle", x: 600, y: 0, width: 160, height: 80 },
+      {
+        id: "wire",
+        type: "arrow",
+        x: 160,
+        y: 40,
+        width: 440,
+        height: 0,
+        points: [[0, 0], [440, 0]],
+        startBinding: { elementId: "from" },
+        endBinding: { elementId: "to" },
+      },
+      {
+        id: "wire-label",
+        type: "text",
+        x: 100,
+        y: 28,
+        width: 560,
+        height: 24,
+        text: "emit",
+        containerId: "wire",
+      },
+    ];
+    const report = evaluateConvertedScene(converted, plan);
+    expect(report.labelCollisions.sort()).toEqual(["wire:label x from", "wire:label x to"]);
+  });
+
+  it("merges the two passes without repeating a finding", () => {
+    const first = evaluateDiagramPlan(strayColorPlan);
+    const merged = mergeQualityReports(first, first);
+    expect(merged.styleCoherence).toEqual(first.styleCoherence);
+    expect(Object.keys(merged).sort()).toEqual(Object.keys(first).sort());
   });
 });
 

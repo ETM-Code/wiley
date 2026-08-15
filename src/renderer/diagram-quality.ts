@@ -424,3 +424,77 @@ export function evaluateDiagramPlan(
 
   return report;
 }
+
+/** The shape of a converted element the checks actually read. */
+type ConvertedElement = {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  points?: ReadonlyArray<readonly number[]>;
+  containerId?: string | null;
+  startBinding?: { elementId?: string } | null;
+  endBinding?: { elementId?: string } | null;
+  text?: string;
+  roundness?: unknown;
+};
+
+/**
+ * The same checks over what the converter actually produced.
+ *
+ * The plan says where things should be; the converter re-measures every bound
+ * label with the editor's own font metrics and recomputes arrow geometry from
+ * the points. Running the checks again over the result is how a difference
+ * between the two is caught rather than assumed away.
+ */
+export function evaluateConvertedScene(
+  elements: readonly ConvertedElement[],
+  plan: DiagramPlan,
+): DiagramQualityReport {
+  const boundLabelBoxes = new Map<string, Box>();
+  const boundTextByArrow = new Map<string, string>();
+  const arrowIds = new Set(
+    [...plan.roles].filter(([, entry]) => entry.role === "edge").map(([id]) => id),
+  );
+  for (const element of elements) {
+    const container = element.containerId;
+    if (element.type !== "text" || !container || !arrowIds.has(container)) continue;
+    boundLabelBoxes.set(container, {
+      id: `${container}:label`,
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+    });
+    boundTextByArrow.set(container, element.text ?? "");
+  }
+  const skeletons: JsonObject[] = elements
+    .filter((element) => plan.roles.has(element.id))
+    .map((element) => ({
+      ...element,
+      ...(element.type === "arrow"
+        ? {
+            start: { id: element.startBinding?.elementId },
+            end: { id: element.endBinding?.elementId },
+            ...(boundTextByArrow.has(element.id)
+              ? { label: { text: boundTextByArrow.get(element.id) } }
+              : {}),
+          }
+        : {}),
+    }));
+  return evaluateDiagramPlan({ ...plan, skeletons }, boundLabelBoxes);
+}
+
+/** Union of two reports, with each check's findings deduplicated. */
+export function mergeQualityReports(
+  first: DiagramQualityReport,
+  second: DiagramQualityReport,
+): DiagramQualityReport {
+  const merged = {} as DiagramQualityReport;
+  for (const key of Object.keys(first) as Array<keyof DiagramQualityReport>) {
+    merged[key] = [...new Set([...first[key], ...second[key]])];
+  }
+  return merged;
+}
