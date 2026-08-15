@@ -199,12 +199,17 @@ export class RealtimeVoiceController {
   }
 
   private async createConnection(): Promise<void> {
-    const [token, stream] = await Promise.all([
+    const [token, stream, settings] = await Promise.all([
       bridge.getVoiceToken(),
       navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       }),
+      // Voice settings shape this session only. The realtime model itself is
+      // baked into the minted token, so a model change lands at the next
+      // connect rather than being rewired underneath a live call.
+      bridge.getSettings().catch(() => undefined),
     ]);
+    const voiceSettings = settings?.voice;
 
     const peer = new RTCPeerConnection();
     const channel = peer.createDataChannel("oai-events");
@@ -255,11 +260,11 @@ export class RealtimeVoiceController {
       session: {
         type: "realtime",
         instructions: SESSION_INSTRUCTIONS,
-        reasoning: { effort: "low" },
+        reasoning: { effort: voiceSettings?.reasoningEffort ?? "low" },
         output_modalities: ["audio"],
         audio: {
           input: {
-            transcription: { model: "gpt-realtime-whisper" },
+            transcription: { model: voiceSettings?.transcriptionModel ?? "gpt-realtime-whisper" },
             turn_detection: {
               type: "semantic_vad",
               eagerness: "auto",
@@ -267,7 +272,7 @@ export class RealtimeVoiceController {
               interrupt_response: true,
             },
           },
-          output: { voice: "marin" },
+          output: { voice: voiceSettings?.voice ?? "marin" },
         },
         tools: TOOLS,
         tool_choice: "auto",

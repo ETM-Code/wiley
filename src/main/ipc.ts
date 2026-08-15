@@ -44,7 +44,14 @@ export function registerIpc(options: {
     handled.push(channel);
   };
 
-  handle(IPC.voiceToken, () => mintRealtimeToken());
+  handle(IPC.voiceToken, () => {
+    const voiceSettings = settings.settings.voice;
+    return mintRealtimeToken({
+      model: voiceSettings.model,
+      voice: voiceSettings.voice,
+      apiKey: settings.resolveApiKey().key,
+    });
+  });
   handle(IPC.setMicrophoneEnabled, (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") throw new Error("enabled must be boolean");
     return runtime.setMicrophoneEnabled(enabled);

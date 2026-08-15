@@ -233,7 +233,12 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, await settings.view());
     }
     if (request.method === "POST" && url.pathname === "/api/voice-token") {
-      return sendJson(response, 200, await mintRealtimeToken());
+      const voiceSettings = settings.settings.voice;
+      return sendJson(response, 200, await mintRealtimeToken({
+        model: voiceSettings.model,
+        voice: voiceSettings.voice,
+        apiKey: settings.resolveApiKey().key,
+      }));
     }
 
     const body = request.method === "POST" ? await readJson(request) : {};
