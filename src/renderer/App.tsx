@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertToExcalidrawElements, Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-import { bridge, type AgentStatus } from "./bridge";
+import { bridge, type AgentEvent, type AgentStatus } from "./bridge";
 import {
   isDiagramPreviewActive,
   subscribeToCanvasRequests,
@@ -12,6 +12,44 @@ import { HouseMusicPlayer } from "./house-music";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
 
 const MUSIC_PREFERENCE_KEY = "wiley:house-music";
+const ACTIVITY_LIMIT = 8;
+const ACTIVITY_TYPES = new Set<AgentEvent["type"]>([
+  "tool_started",
+  "assistant_message",
+  "completed",
+  "error",
+]);
+
+function firstLine(value: string, limit = 84): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
+}
+
+function messageText(payload: unknown): string {
+  const content = (payload as { content?: unknown } | null | undefined)?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part): part is { text: string } =>
+      Boolean(part && typeof part === "object" && (part as { type?: string }).type === "text"))
+    .map((part) => part.text)
+    .join(" ");
+}
+
+/** One quiet line per event: what happened, and just enough of the payload to recognise it. */
+function describeAgentEvent(event: AgentEvent): { label: string; detail: string } {
+  const payload = event.payload as Record<string, unknown> | null | undefined;
+  switch (event.type) {
+    case "tool_started":
+      return { label: String(payload?.toolName ?? "tool"), detail: firstLine(JSON.stringify(payload?.input ?? {})) };
+    case "assistant_message":
+      return { label: "said", detail: firstLine(messageText(payload)) };
+    case "completed":
+      return { label: "done", detail: firstLine(String(payload?.report ?? "")) };
+    default:
+      return { label: "error", detail: firstLine(String(payload?.error ?? "")) };
+  }
+}
 
 function readMusicPreference(): boolean {
   try {
@@ -54,7 +92,9 @@ function MicrophoneIcon({ muted }: { muted: boolean }) {
   );
 }
 
-function AgentSidebar({ status, onClose }: { status: AgentStatus; onClose: () => void }) {
+function AgentSidebar(
+  { status, activity, onClose }: { status: AgentStatus; activity: AgentEvent[]; onClose: () => void },
+) {
   return (
     <aside className="agent-sidebar" aria-label="Wiley status">
       <header className="agent-sidebar__header">
@@ -80,6 +120,24 @@ function AgentSidebar({ status, onClose }: { status: AgentStatus; onClose: () =>
           </ul>
         ) : (
           <p className="agent-sidebar__empty">Nothing running</p>
+        )}
+      </div>
+      <div className="agent-sidebar__section">
+        <h2>Recent activity</h2>
+        {activity.length ? (
+          <ul className="agent-activity">
+            {activity.map((event) => {
+              const { label, detail } = describeAgentEvent(event);
+              return (
+                <li key={event.id} className={`agent-activity__item agent-activity__item--${event.type}`}>
+                  <span className="agent-activity__label">{label}</span>
+                  {detail ? <span className="agent-activity__detail">{detail}</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="agent-sidebar__empty">No activity yet</p>
         )}
       </div>
     </aside>
@@ -134,6 +192,7 @@ export default function App() {
   const canvasMutationActiveRef = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [status, setStatus] = useState<AgentStatus>({ agentRunning: false, subagents: [] });
+  const [activity, setActivity] = useState<AgentEvent[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [voiceDisabled, setVoiceDisabled] = useState(false);
   const voice = useMemo(
@@ -170,6 +229,13 @@ export default function App() {
     setMusicEnabled((enabled) => {
       writeMusicPreference(!enabled);
       return !enabled;
+    });
+  }, []);
+
+  useEffect(() => {
+    return bridge.onAgentEvent((event) => {
+      if (!ACTIVITY_TYPES.has(event.type)) return;
+      setActivity((events) => [event, ...events].slice(0, ACTIVITY_LIMIT));
     });
   }, []);
 
@@ -404,7 +470,7 @@ export default function App() {
 
       {sidebarOpen ? (
         <div id="agent-status-sidebar">
-          <AgentSidebar status={status} onClose={() => setSidebarOpen(false)} />
+          <AgentSidebar status={status} activity={activity} onClose={() => setSidebarOpen(false)} />
         </div>
       ) : null}
 

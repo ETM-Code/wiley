@@ -311,6 +311,35 @@ button {
   margin: 0;
 }
 
+.agent-activity__item {
+  gap: 2px;
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-left: 2px solid transparent;
+}
+
+.agent-activity__item--error {
+  border-left-color: #d6336c;
+}
+
+.agent-activity__item--completed {
+  border-left-color: #2f9e44;
+}
+
+.agent-activity__label {
+  font-family: ui-monospace, sfmono-regular, menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+.agent-activity__detail {
+  overflow: hidden;
+  color: var(--color-on-surface-muted, #6f6e77);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .app-toast {
   position: absolute;
   left: 50%;

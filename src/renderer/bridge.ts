@@ -1,4 +1,5 @@
 import type {
+  AgentEvent,
   BoardSnapshot,
   CanvasRequest,
   CanvasResponse,
@@ -6,7 +7,7 @@ import type {
   VoiceInjection,
 } from "../shared/contracts";
 
-export type { BoardSnapshot, CanvasRequest, CanvasResponse, TranscriptDraft, VoiceInjection };
+export type { AgentEvent, BoardSnapshot, CanvasRequest, CanvasResponse, TranscriptDraft, VoiceInjection };
 
 export type AgentStatus = {
   agentRunning: boolean;
@@ -51,6 +52,7 @@ type PreloadApi = {
   activateCanvas?: () => Promise<unknown>;
   setMicrophoneEnabled?: (enabled: boolean) => Promise<unknown>;
   onAgentStatus?: (listener: (status: AgentStatus) => void) => Unsubscribe | void;
+  onAgentEvent?: (listener: (event: AgentEvent) => void) => Unsubscribe | void;
   onRuntimeState?: (listener: (status: RuntimeStateLike) => void) => Unsubscribe | void;
   submitBoardSnapshot?: (snapshot: BoardSnapshot) => Promise<unknown>;
   getRuntimeConfig?: () => Promise<{ voiceDisabled?: boolean }>;
@@ -115,6 +117,7 @@ function createBrowserApi(): PreloadApi {
     activateCanvas: () => fetchJson("/api/client-active", { method: "POST", body: "{}" }),
     setMicrophoneEnabled: (enabled) => fetchJson("/api/microphone", { method: "POST", body: JSON.stringify({ enabled }) }),
     onRuntimeState: (listener) => subscribe("runtime:state", listener),
+    onAgentEvent: (listener) => subscribe("agent:events", listener),
     submitBoardSnapshot: (snapshot) => fetchJson("/api/board-snapshot", { method: "POST", body: JSON.stringify(snapshot) }),
     getRuntimeConfig: async () => ({ voiceDisabled: false }),
   };
@@ -207,6 +210,10 @@ export const bridge = {
     const api = preload();
     if (api?.onAgentStatus) return optionalSubscription(api.onAgentStatus(listener));
     return optionalSubscription(api?.onRuntimeState?.((status) => listener(normalizeStatus(status))));
+  },
+
+  onAgentEvent(listener: (event: AgentEvent) => void): Unsubscribe {
+    return optionalSubscription(preload()?.onAgentEvent?.(listener));
   },
 
   async submitBoardSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot | undefined> {
