@@ -122,7 +122,10 @@ export class CodexStreamParser {
         this.#terminal = "error";
         return [{
           type: "error",
-          payload: { error: text(message.message) ?? text(message.error) ?? "Codex reported a failure" },
+          payload: {
+            error: text(message.message) ?? text(message.error) ?? "Codex reported a failure",
+            fatal: true,
+          },
         }];
       case "item.started":
       case "item.completed":
