@@ -11,6 +11,8 @@ export const IPC = {
   runtimeConfig: "runtime:config",
   runtimeState: "runtime:state",
   submitBoardSnapshot: "board:submit-snapshot",
+  getBoardSnapshot: "board:get-snapshot",
+  activateCanvas: "board:activate",
   canvasRequest: "canvas:request",
   canvasResponse: "canvas:response",
 } as const;
@@ -152,6 +154,13 @@ export interface BoardApi {
   getAgentStatus(): Promise<RuntimeState>;
   setMicrophoneEnabled(enabled: boolean): Promise<RuntimeState>;
   submitBoardSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot>;
+  getBoardSnapshot(): Promise<BoardSnapshot>;
+  /**
+   * Announces the window that owns the canonical board. Electron has exactly
+   * one window, so the host acknowledges without bookkeeping; the browser host
+   * uses the equivalent call to arbitrate between tabs.
+   */
+  activateCanvas(): Promise<{ ok: true }>;
   getRuntimeConfig(): Promise<RuntimeConfig>;
   onVoiceMessage(callback: (message: VoiceInjection) => void): () => void;
   onCanvasRequest(callback: (request: CanvasRequest) => void): () => void;
