@@ -39,14 +39,12 @@ export function registerIpc(options: {
     return runtime.setMicrophoneEnabled(enabled);
   });
   handle(IPC.runtimeGetState, () => runtime.getState());
-  handle(IPC.listActiveJobs, () => runtime.listActiveJobs());
   handle(IPC.appendTranscript, async (_event, input: { role?: TranscriptRole; text?: string }) => {
     if (!input || !["user", "assistant", "system"].includes(input.role ?? "") || typeof input.text !== "string") {
       throw new Error("Invalid transcript entry");
     }
     return transcript.append(input.role!, input.text);
   });
-  handle(IPC.getTranscript, () => transcript.all());
   handle(IPC.submitBoardSnapshot, (_event, snapshot: BoardSnapshot) => canvas.submitHumanSnapshot(snapshot));
   handle(IPC.agentToolCall, (_event, name: VoiceToolName, args: Record<string, unknown> = {}) =>
     callVoiceTool({ runtime, canvas, voice, ledger, pi }, name, args));
