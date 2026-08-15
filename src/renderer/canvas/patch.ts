@@ -151,8 +151,12 @@ export function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
   const requestedIds = [...updates.keys(), ...deletes];
   const skipped = [...new Set(requestedIds.filter((id) => !byId.has(id)))];
 
+  // Identity and structural bookkeeping the renderer owns. customData carries
+  // the diagram stamp every later lookup depends on; frameId and index belong
+  // to Excalidraw's own scene ordering.
   const protectedProps = new Set([
     "id", "seed", "version", "versionNonce", "updated", "boundElements", "containerId", "groupIds",
+    "customData", "frameId", "index",
   ]);
   const primary = new Map<string, JsonObject>();
   const secondary = new Map<string, JsonObject>();
