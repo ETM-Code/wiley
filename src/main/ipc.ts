@@ -54,6 +54,10 @@ export function registerIpc(options: {
     return transcript.append(input.role!, input.text);
   });
   handle(IPC.submitBoardSnapshot, (_event, snapshot: BoardSnapshot) => canvas.submitHumanSnapshot(snapshot));
+  handle(IPC.getBoardSnapshot, () => canvas.getSnapshot());
+  // The browser host tracks which tab owns the board; Electron has exactly one
+  // window, so activation is a no-op acknowledgement.
+  handle(IPC.activateCanvas, () => ({ ok: true as const }));
   handle(IPC.agentToolCall, (_event, name: VoiceToolName, args: Record<string, unknown> = {}) =>
     callVoiceTool({ runtime, canvas, voice, ledger, pi }, name, args));
 
