@@ -8,8 +8,6 @@ export type GraphNode = {
   id: string;
   label: string;
   shape?: GraphShape;
-  /** Compatibility for diagrams created before `shape` became canonical. */
-  kind?: "box" | "diamond" | "ellipse";
   backgroundColor?: string;
   strokeColor?: string;
   rounded?: boolean;
@@ -36,7 +34,6 @@ export interface DiagramPlan {
   edgeLabelCount: number;
   elementIdByNode: Map<string, string>;
   idPrefix: string;
-  graphWidth: number;
 }
 
 export const MODEL_GRID_SIZE = 20;
@@ -78,10 +75,7 @@ function snapUpSize(value: number): number {
 }
 
 export function nodeToType(node: GraphNode): GraphShape {
-  if (node.shape) return node.shape;
-  if (node.kind === "diamond") return "diamond";
-  if (node.kind === "ellipse") return "ellipse";
-  return "rectangle";
+  return node.shape ?? "rectangle";
 }
 
 let measuringContext: CanvasRenderingContext2D | null | undefined;
@@ -358,11 +352,6 @@ export async function planDiagramLayout(
     }
   }
 
-  const graphWidth = snapUpSize(Math.max(
-    360,
-    finiteNumber((layoutResult as ElkNode).width, 0),
-    ...[...positions.entries()].map(([id, position]) => position.x + (sizes.get(id)?.width ?? 0)),
-  ));
   const title = params.title?.trim();
   // Top-left, its own measured width, and a full band of headroom: a title
   // centered across the graph sits exactly where inbound arrows and
@@ -396,7 +385,6 @@ export async function planDiagramLayout(
     edgeLabelCount: edgeLabelSkeletons.length,
     elementIdByNode,
     idPrefix,
-    graphWidth,
   };
 }
 

@@ -122,13 +122,6 @@ export interface BoardTransaction {
   params: unknown;
 }
 
-export interface BoardLease {
-  id: string;
-  agentId: string;
-  elementIds: string[];
-  expiresAt: number;
-}
-
 export type VoiceToolName =
   | "send_task_to_agent"
   | "answer_agent"
