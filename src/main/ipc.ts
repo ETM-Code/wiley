@@ -1,5 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
-import { IPC, type BoardSnapshot, type TranscriptRole, type VoiceToolName } from "../shared/contracts";
+import { IPC, type BoardSnapshot, type RuntimeConfig, type TranscriptRole, type VoiceToolName } from "../shared/contracts";
 import { mintRealtimeToken } from "./voice-token";
 import { RuntimeController } from "./runtime-controller";
 import { TranscriptStore } from "./transcript";
@@ -39,6 +39,7 @@ export function registerIpc(options: {
     return runtime.setMicrophoneEnabled(enabled);
   });
   handle(IPC.runtimeGetState, () => runtime.getState());
+  handle(IPC.runtimeConfig, (): RuntimeConfig => ({ voiceDisabled: process.env.VOICE_DISABLED === "1" }));
   handle(IPC.appendTranscript, async (_event, input: { role?: TranscriptRole; text?: string }) => {
     if (!input || !["user", "assistant", "system"].includes(input.role ?? "") || typeof input.text !== "string") {
       throw new Error("Invalid transcript entry");

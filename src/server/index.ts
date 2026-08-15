@@ -5,7 +5,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import path from "node:path";
 
 import { CanvasBridge } from "../main/canvas-bridge";
-import { IPC, type BoardSnapshot, type CanvasResponse, type TranscriptRole, type VoiceToolName } from "../shared/contracts";
+import {
+  IPC,
+  type BoardSnapshot,
+  type CanvasResponse,
+  type RuntimeConfig,
+  type TranscriptRole,
+  type VoiceToolName,
+} from "../shared/contracts";
 import { SqliteRuntimeLedger } from "../main/ledger";
 import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";
@@ -163,6 +170,10 @@ const server = createServer(async (request, response) => {
       if (after !== "latest" && !Number.isSafeInteger(after)) throw new Error("Invalid event cursor");
       const events = await hub.wait(after, clientId);
       return sendJson(response, 200, { events, cursor: hub.sequence });
+    }
+    if (request.method === "GET" && url.pathname === "/api/runtime-config") {
+      const config: RuntimeConfig = { voiceDisabled: process.env.VOICE_DISABLED === "1" };
+      return sendJson(response, 200, config);
     }
     if (request.method === "GET" && url.pathname === "/api/status") {
       return sendJson(response, 200, runtime.getState());
