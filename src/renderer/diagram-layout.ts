@@ -27,6 +27,20 @@ export type LayoutParams = {
   layout?: DiagramLayoutOptions;
 };
 
+export type DiagramElementRole = "node" | "nodeLabel" | "edge" | "edgeLabel" | "title";
+
+/**
+ * What an emitted element is, semantically. Everything downstream (quality
+ * evaluation, validation, scene summaries) classifies by this instead of
+ * pattern-matching element ids.
+ */
+export type DiagramElementRoleEntry = {
+  role: DiagramElementRole;
+  /** Semantic node id for nodes and their labels; absent for edges. */
+  key?: string;
+  edgeIndex?: number;
+};
+
 export interface DiagramPlan {
   skeletons: JsonObject[];
   nodeCount: number;
@@ -34,6 +48,7 @@ export interface DiagramPlan {
   edgeLabelCount: number;
   elementIdByNode: Map<string, string>;
   idPrefix: string;
+  roles: Map<string, DiagramElementRoleEntry>;
 }
 
 export const MODEL_GRID_SIZE = 20;
@@ -275,13 +290,16 @@ export async function planDiagramLayout(
   const elementIdByNode = new Map(
     params.nodes.map((node, index) => [node.id, `${idPrefix}-node-${index}`]),
   );
+  const roles = new Map<string, DiagramElementRoleEntry>();
 
   const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
     const position = positions.get(node.id) ?? { x: 0, y: 0 };
     const size = sizes.get(node.id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
     const type = nodeToType(node);
+    const id = elementIdByNode.get(node.id)!;
+    roles.set(id, { role: "node", key: node.id });
     return {
-      id: elementIdByNode.get(node.id),
+      id,
       type,
       x: snapModelCoordinate(origin.x + position.x),
       y: snapModelCoordinate(origin.y + position.y),
@@ -323,8 +341,10 @@ export async function planDiagramLayout(
       y: origin.y + point.y,
     })));
     const routeOrigin = absoluteRoute[0];
+    const edgeId = `${idPrefix}-edge-${index}`;
+    roles.set(edgeId, { role: "edge", edgeIndex: index });
     edgeSkeletons.push({
-      id: `${idPrefix}-edge-${index}`,
+      id: edgeId,
       type: "arrow",
       x: routeOrigin.x,
       y: routeOrigin.y,
@@ -336,8 +356,10 @@ export async function planDiagramLayout(
     const label = elkEdge?.labels?.[0];
     if (label?.text) {
       const size = measureText(label.text, EDGE_LABEL_FONT_SIZE);
+      const edgeLabelId = `${idPrefix}-edgelabel-${index}`;
+      roles.set(edgeLabelId, { role: "edgeLabel", edgeIndex: index });
       edgeLabelSkeletons.push({
-        id: `${idPrefix}-edgelabel-${index}`,
+        id: edgeLabelId,
         type: "text",
         x: origin.x + finiteNumber(label.x),
         y: origin.y + finiteNumber(label.y),
@@ -357,9 +379,11 @@ export async function planDiagramLayout(
   // centered across the graph sits exactly where inbound arrows and
   // neighboring clusters land.
   const titleSize = title ? measureText(title, 24) : { width: 0, height: 0 };
+  const titleId = `${idPrefix}-title`;
+  if (title) roles.set(titleId, { role: "title" });
   const skeletons: JsonObject[] = [
     ...(title ? [{
-      id: `${idPrefix}-title`,
+      id: titleId,
       type: "text",
       x: origin.x,
       y: snapModelCoordinate(origin.y - 100),
@@ -385,6 +409,7 @@ export async function planDiagramLayout(
     edgeLabelCount: edgeLabelSkeletons.length,
     elementIdByNode,
     idPrefix,
+    roles,
   };
 }
 
