@@ -355,6 +355,136 @@ describe("diagram layout quality", () => {
     )).rejects.toThrow(/colour/);
   });
 
+  it("nests members inside their container and groups them with it", async () => {
+    const plan = await planDiagramLayout({
+      theme: "ocean",
+      containers: [
+        { id: "edge", label: "Edge tier", role: "primary" },
+        { id: "core", label: "Core services", role: "accent" },
+      ],
+      nodes: [
+        { id: "cdn", label: "CDN", container: "edge" },
+        { id: "waf", label: "WAF", container: "edge" },
+        { id: "api", label: "API", container: "core" },
+        { id: "db", label: "Database", container: "core" },
+        { id: "client", label: "Client" },
+      ],
+      edges: [
+        { from: "client", to: "cdn" },
+        { from: "cdn", to: "waf", label: "filter" },
+        { from: "waf", to: "api", label: "proxy" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const region = byId.get(plan.containers.get("edge")!.elementId)!;
+    expect(region.type).toBe("rectangle");
+    expect(region.backgroundColor).toBe(THEMES.ocean.entries.primary.soft);
+    for (const nodeId of ["cdn", "waf"]) {
+      const node = byId.get(plan.elementIdByNode.get(nodeId)!)!;
+      expect(node.x as number).toBeGreaterThanOrEqual(region.x as number);
+      expect(node.y as number).toBeGreaterThanOrEqual(region.y as number);
+      expect((node.x as number) + (node.width as number))
+        .toBeLessThanOrEqual((region.x as number) + (region.width as number));
+      expect((node.y as number) + (node.height as number))
+        .toBeLessThanOrEqual((region.y as number) + (region.height as number));
+      expect(node.groupIds).toEqual(region.groupIds);
+    }
+    // The two regions are laid out side by side rather than on top of one
+    // another, and the outsider stays out of both.
+    const core = byId.get(plan.containers.get("core")!.elementId)!;
+    expect((region.x as number) + (region.width as number)).toBeLessThan(core.x as number);
+    const client = byId.get(plan.elementIdByNode.get("client")!)!;
+    expect(client.groupIds).toBeUndefined();
+    // An edge inside one region joins it; an edge across regions belongs to
+    // neither.
+    const edgeGroups = plan.skeletons
+      .filter((skeleton) => plan.roles.get(String(skeleton.id))?.role === "edge")
+      .map((skeleton) => skeleton.groupIds);
+    expect(edgeGroups).toEqual([undefined, region.groupIds, undefined]);
+    // The label sits in the container's top band, above its first member.
+    const label = byId.get(`${DIAGRAM_ID}-cl-edge-${String(region.id).split("-c-edge-")[1]}`);
+    expect(label?.text).toBe("Edge tier");
+  });
+
+  it("nests a container inside a container and reports the whole tree", async () => {
+    const plan = await planDiagramLayout({
+      containers: [
+        { id: "cloud", label: "Cloud" },
+        { id: "vpc", label: "VPC", parent: "cloud", role: "primary" },
+      ],
+      nodes: [
+        { id: "dns", label: "DNS", container: "cloud" },
+        { id: "app", label: "App server", container: "vpc" },
+        { id: "cache", label: "Cache", container: "vpc" },
+      ],
+      edges: [
+        { from: "dns", to: "app" },
+        { from: "app", to: "cache" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const cloud = byId.get(plan.containers.get("cloud")!.elementId)!;
+    const vpc = byId.get(plan.containers.get("vpc")!.elementId)!;
+    expect(plan.containers.get("vpc")!.parent).toBe("cloud");
+    expect(vpc.x as number).toBeGreaterThan(cloud.x as number);
+    expect((vpc.x as number) + (vpc.width as number))
+      .toBeLessThanOrEqual((cloud.x as number) + (cloud.width as number));
+    // Innermost group first, exactly the order Excalidraw nests them in.
+    expect(byId.get(plan.elementIdByNode.get("app")!)!.groupIds).toEqual([
+      ...(vpc.groupIds as string[]),
+    ]);
+    expect((vpc.groupIds as string[]).length).toBe(2);
+    expect((cloud.groupIds as string[]).length).toBe(1);
+    // The outer region is drawn before the inner one, so it sits behind it.
+    const order = plan.skeletons.map((skeleton) => String(skeleton.id));
+    expect(order.indexOf(String(cloud.id))).toBeLessThan(order.indexOf(String(vpc.id)));
+  });
+
+  it("emits a frame with explicit geometry and its members immediately in front", async () => {
+    const plan = await planDiagramLayout({
+      containers: [{ id: "board", label: "Sprint board", render: "frame" }],
+      nodes: [
+        { id: "todo", label: "To do", container: "board" },
+        { id: "doing", label: "Doing", container: "board" },
+        { id: "outside", label: "Backlog" },
+      ],
+      edges: [{ from: "outside", to: "todo" }, { from: "todo", to: "doing" }],
+    }, ORIGIN, DIAGRAM_ID);
+
+    const frame = plan.skeletons.find((skeleton) => skeleton.type === "frame")!;
+    expect(frame.name).toBe("Sprint board");
+    for (const key of ["x", "y", "width", "height"] as const) {
+      expect(typeof frame[key]).toBe("number");
+      expect(frame[key]).not.toBe(0);
+    }
+    const memberIds = ["todo", "doing"].map((id) => plan.elementIdByNode.get(id)!);
+    expect(frame.children).toEqual(memberIds);
+    const order = plan.skeletons.map((skeleton) => String(skeleton.id));
+    // The frame closes the array, directly behind the members it owns.
+    expect(order.slice(-3)).toEqual([...memberIds, String(frame.id)]);
+    // A frame owns its members through frameId, so it never groups them.
+    for (const id of memberIds) {
+      expect(plan.skeletons.find((skeleton) => skeleton.id === id)!.groupIds).toBeUndefined();
+    }
+    expect(plan.roles.get(String(frame.id))).toEqual({ role: "container", key: "board" });
+  });
+
+  it("falls back to layered and says why when containers meet an undirected algorithm", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "force" },
+      containers: [{ id: "box", label: "Box" }],
+      nodes: [{ id: "a", label: "A", container: "box" }, { id: "b", label: "B" }],
+      edges: [{ from: "a", to: "b" }],
+    }, ORIGIN, DIAGRAM_ID);
+    expect(plan.layout).toEqual({
+      requested: "force",
+      used: "layered",
+      reason: "force cannot lay out containers",
+    });
+  });
+
   it("rejects container declarations Excalidraw or the layout cannot honour", async () => {
     const nodes = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
     const attempt = (containers: unknown, extra: Partial<LayoutParams> = {}) => planDiagramLayout(

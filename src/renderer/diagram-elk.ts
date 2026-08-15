@@ -37,16 +37,22 @@ export function resolveAbsolute(root: ElkNode): AbsoluteLayout {
   const boxes = new Map<string, AbsoluteBox>();
   const routes = new Map<string, Point[]>();
   const labels = new Map<string, Point>();
-  const nodesById = new Map<string, ElkNode>();
+  // Graph node ids come from the caller and may legitimately include "root",
+  // so the wrapper's own frame of reference is held by object identity and
+  // never looked up by name.
+  const frames = new Map<ElkNode, AbsoluteBox>();
+  const framesById = new Map<string, AbsoluteBox>();
 
   const walk = (node: ElkNode, originX: number, originY: number): void => {
-    nodesById.set(node.id, node);
-    boxes.set(node.id, {
+    const box: AbsoluteBox = {
       x: originX,
       y: originY,
       width: finite(node.width),
       height: finite(node.height),
-    });
+    };
+    frames.set(node, box);
+    if (node !== root) framesById.set(node.id, box);
+    boxes.set(node.id, box);
     for (const child of node.children ?? []) {
       walk(child, originX + finite(child.x), originY + finite(child.y));
     }
@@ -54,13 +60,13 @@ export function resolveAbsolute(root: ElkNode): AbsoluteLayout {
   walk(root, finite(root.x), finite(root.y));
 
   const resolveEdges = (node: ElkNode): void => {
+    const structural = frames.get(node) ?? { x: 0, y: 0, width: 0, height: 0 };
     for (const candidate of (node.edges ?? []) as EdgeWithContainer[]) {
-      // An edge declared inside a node is measured from that node's origin
-      // unless ELK named a different container on the way back out.
-      const container = candidate.container && boxes.has(candidate.container)
-        ? candidate.container
-        : node.id;
-      const origin = boxes.get(container) ?? { x: 0, y: 0, width: 0, height: 0 };
+      // An edge is measured from the node it was declared in, unless ELK
+      // named a different container on the way back out.
+      const origin = candidate.container && candidate.container !== node.id
+        ? framesById.get(candidate.container) ?? structural
+        : structural;
       const section = candidate.sections?.[0];
       if (section) {
         const points = [section.startPoint, ...(section.bendPoints ?? []), section.endPoint];

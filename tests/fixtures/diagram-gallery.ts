@@ -1,4 +1,9 @@
-import type { DiagramPlan, LayoutParams } from "../../src/renderer/diagram-layout";
+import type {
+  DiagramContainerEntry,
+  DiagramElementRoleEntry,
+  DiagramPlan,
+  LayoutParams,
+} from "../../src/renderer/diagram-layout";
 import type { DiagramElementRole, DiagramThemeName } from "../../src/shared/diagram-stamp";
 
 export type DiagramFixture = {
@@ -10,6 +15,10 @@ export type PlanPart = {
   role: DiagramElementRole;
   key?: string;
   edgeIndex?: number;
+  /** Semantic id of the container holding this part. */
+  container?: string;
+  /** Set on a container part to record its own parent. */
+  parent?: string;
   skeleton: Record<string, unknown>;
 };
 
@@ -22,16 +31,26 @@ export function handBuiltPlan(
   parts: PlanPart[],
   options: { theme?: DiagramThemeName; explicitColors?: string[]; diagramId?: string } = {},
 ): DiagramPlan {
-  const roles = new Map<string, { role: DiagramElementRole; key?: string; edgeIndex?: number }>();
+  const roles = new Map<string, DiagramElementRoleEntry>();
   const elementIdByNode = new Map<string, string>();
+  const containers = new Map<string, DiagramContainerEntry>();
   for (const part of parts) {
     const id = String(part.skeleton.id);
     roles.set(id, {
       role: part.role,
       ...(part.key ? { key: part.key } : {}),
       ...(part.edgeIndex === undefined ? {} : { edgeIndex: part.edgeIndex }),
+      ...(part.container ? { container: part.container } : part.parent ? { container: part.parent } : {}),
     });
     if (part.role === "node" && part.key) elementIdByNode.set(part.key, id);
+    if (part.role === "container" && part.key) {
+      containers.set(part.key, {
+        id: part.key,
+        elementId: id,
+        render: part.skeleton.type === "frame" ? "frame" : "group",
+        ...(part.parent ? { parent: part.parent } : {}),
+      });
+    }
   }
   return {
     skeletons: parts.map((part) => part.skeleton),
@@ -41,6 +60,7 @@ export function handBuiltPlan(
     elementIdByNode,
     diagramId: options.diagramId ?? "wd-dirty",
     roles,
+    containers,
     theme: options.theme ?? "slate",
     explicitColors: new Set(options.explicitColors ?? []),
     layout: { requested: "layered", used: "layered" },
