@@ -24,7 +24,7 @@ const api: BoardApi = {
   getAgentStatus: () => ipcRenderer.invoke(IPC.runtimeGetState),
   setMicrophoneEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.setMicrophoneEnabled, enabled),
   submitBoardSnapshot: (snapshot: BoardSnapshot) => ipcRenderer.invoke(IPC.submitBoardSnapshot, snapshot),
-  getRuntimeConfig: async () => ({ voiceDisabled: process.env.VOICE_DISABLED === "1" }),
+  getRuntimeConfig: () => ipcRenderer.invoke(IPC.runtimeConfig),
   onVoiceMessage: (callback: (message: VoiceInjection) => void) => subscribe(IPC.voiceInject, callback),
   onCanvasRequest: (callback: (request: CanvasRequest) => void) => subscribe(IPC.canvasRequest, callback),
   respondCanvasRequest: (response: CanvasResponse) => ipcRenderer.send(IPC.canvasResponse, response),

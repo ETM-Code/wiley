@@ -8,6 +8,7 @@ export const IPC = {
   voiceInject: "voice:inject",
   setMicrophoneEnabled: "voice:set-microphone-enabled",
   runtimeGetState: "runtime:get-state",
+  runtimeConfig: "runtime:config",
   runtimeState: "runtime:state",
   submitBoardSnapshot: "board:submit-snapshot",
   canvasRequest: "canvas:request",
@@ -68,6 +69,11 @@ export interface JobSummary {
   status: JobStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Host-decided switches the renderer cannot read for itself. */
+export interface RuntimeConfig {
+  voiceDisabled: boolean;
 }
 
 export interface RuntimeState {
@@ -146,7 +152,7 @@ export interface BoardApi {
   getAgentStatus(): Promise<RuntimeState>;
   setMicrophoneEnabled(enabled: boolean): Promise<RuntimeState>;
   submitBoardSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot>;
-  getRuntimeConfig(): Promise<{ voiceDisabled: boolean }>;
+  getRuntimeConfig(): Promise<RuntimeConfig>;
   onVoiceMessage(callback: (message: VoiceInjection) => void): () => void;
   onCanvasRequest(callback: (request: CanvasRequest) => void): () => void;
   respondCanvasRequest(response: CanvasResponse): void;

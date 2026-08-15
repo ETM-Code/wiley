@@ -3,11 +3,20 @@ import type {
   BoardSnapshot,
   CanvasRequest,
   CanvasResponse,
+  RuntimeConfig,
   TranscriptDraft,
   VoiceInjection,
 } from "../shared/contracts";
 
-export type { AgentEvent, BoardSnapshot, CanvasRequest, CanvasResponse, TranscriptDraft, VoiceInjection };
+export type {
+  AgentEvent,
+  BoardSnapshot,
+  CanvasRequest,
+  CanvasResponse,
+  RuntimeConfig,
+  TranscriptDraft,
+  VoiceInjection,
+};
 
 export type AgentStatus = {
   agentRunning: boolean;
@@ -55,7 +64,7 @@ type PreloadApi = {
   onAgentEvent?: (listener: (event: AgentEvent) => void) => Unsubscribe | void;
   onRuntimeState?: (listener: (status: RuntimeStateLike) => void) => Unsubscribe | void;
   submitBoardSnapshot?: (snapshot: BoardSnapshot) => Promise<unknown>;
-  getRuntimeConfig?: () => Promise<{ voiceDisabled?: boolean }>;
+  getRuntimeConfig?: () => Promise<Partial<RuntimeConfig>>;
 };
 
 type BrowserWindow = Window & {
@@ -119,7 +128,7 @@ function createBrowserApi(): PreloadApi {
     onRuntimeState: (listener) => subscribe("runtime:state", listener),
     onAgentEvent: (listener) => subscribe("agent:events", listener),
     submitBoardSnapshot: (snapshot) => fetchJson("/api/board-snapshot", { method: "POST", body: JSON.stringify(snapshot) }),
-    getRuntimeConfig: async () => ({ voiceDisabled: false }),
+    getRuntimeConfig: () => fetchJson<RuntimeConfig>("/api/runtime-config"),
   };
 }
 
