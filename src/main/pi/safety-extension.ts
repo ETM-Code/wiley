@@ -8,10 +8,18 @@ import type { VoiceBridge } from "../voice-bridge";
 import { DEFAULT_APPROVAL_MODEL, JUDGED_TOOLS, PI_PROVIDER } from "./constants";
 import { redact } from "./redact";
 
-export function createApprovalJudge(): ApprovalJudge | undefined {
+/**
+ * Settings decide whether the soft approval layer runs and on which model; the
+ * env switches stay as the escape hatch for a headless or scripted run.
+ */
+export function createApprovalJudge(options: { enabled?: boolean; provider?: string; model?: string } = {}): ApprovalJudge | undefined {
   if (process.env.WILEY_APPROVAL_DISABLED === "1") return undefined;
-  const modelId = process.env.WILEY_APPROVAL_MODEL?.trim() || DEFAULT_APPROVAL_MODEL;
-  const judgeModel = getModel(PI_PROVIDER, modelId as typeof DEFAULT_APPROVAL_MODEL);
+  if (options.enabled === false) return undefined;
+  const modelId = process.env.WILEY_APPROVAL_MODEL?.trim() || options.model?.trim() || DEFAULT_APPROVAL_MODEL;
+  // The static catalog is typed against its own literal ids; settings carry
+  // free text, and an unknown pair simply yields undefined below.
+  const provider = (options.provider ?? PI_PROVIDER) as typeof PI_PROVIDER;
+  const judgeModel = getModel(provider, modelId as typeof DEFAULT_APPROVAL_MODEL);
   if (!judgeModel) return undefined;
   return new ApprovalJudge(async ({ systemPrompt, userMessage, signal }) => {
     const message = await complete(judgeModel, {

@@ -1,4 +1,3 @@
-import { getModel } from "@earendil-works/pi-ai/compat";
 import {
   ModelRuntime,
   type AgentSession,
@@ -12,7 +11,7 @@ import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
 import type { ApprovalJudge } from "./safety";
 import { type VoiceBridge } from "./voice-bridge";
-import { MAX_ACTIVE_SUBAGENTS, PI_MODEL, PI_PROVIDER } from "./pi/constants";
+import { MAX_ACTIVE_SUBAGENTS } from "./pi/constants";
 import { lastAssistantText } from "./pi/messages";
 import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
 import {
@@ -22,8 +21,16 @@ import {
 } from "./pi/diagram-preview-queue";
 import { redact } from "./pi/redact";
 import { createApprovalJudge, createGuardExtension } from "./pi/safety-extension";
-import { createRootSession, createSubagentSession, type PiSessionOptions } from "./pi/session-factory";
+import { createRootSession, createSubagentSession, resolveModel, type PiSessionOptions } from "./pi/session-factory";
+import {
+  assertSpawnModelAllowed,
+  diffSessionModels,
+  resolveSessionModels,
+  type SessionModelPlan,
+} from "./pi/session-models";
 import { createPiTools, type CanvasMutation, type PiToolHost } from "./pi/tools";
+import { resolveOpenAiKey } from "./settings/secret-store";
+import { DEFAULT_SETTINGS, type WileySettings } from "./settings/settings-schema";
 import { type SettingsStore } from "./settings/settings-store";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
@@ -66,6 +73,11 @@ export class PiRuntime {
   #diagramPreviews: DiagramPreviewQueue;
   #approvalJudge?: ApprovalJudge;
   #eventBaseline = 0;
+  #plan: SessionModelPlan = resolveSessionModels(DEFAULT_SETTINGS);
+  /** A model change that arrived mid-turn, applied at the next quiet point. */
+  #pendingRootPlan?: SessionModelPlan;
+  #unsubscribeSettings?: () => void;
+  #apiKey?: string;
 
   constructor(
     private readonly projectDir: string,
@@ -86,27 +98,113 @@ export class PiRuntime {
 
   async initialize(): Promise<void> {
     this.#modelRuntime = await ModelRuntime.create();
-    const model = getModel(PI_PROVIDER, PI_MODEL);
-    if (!model) throw new Error(`Pi model not found: ${PI_PROVIDER}/${PI_MODEL}`);
-    this.#approvalJudge = createApprovalJudge();
+    this.#plan = resolveSessionModels(this.#settings());
+    await this.#applyApiKey();
+    if (!resolveModel(this.#modelRuntime, this.#plan.provider, this.#plan.rootModel)) {
+      throw new Error(`Pi model not found: ${this.#plan.provider}/${this.#plan.rootModel}`);
+    }
+    this.#approvalJudge = this.#buildApprovalJudge();
+    this.#unsubscribeSettings = this.settings?.onChange((next) => this.#onSettingsChanged(next));
     await this.#createRootSession();
     await this.#ensureWarmSubagent();
   }
 
+  #settings(): WileySettings {
+    return this.settings?.get() ?? DEFAULT_SETTINGS;
+  }
+
+  #buildApprovalJudge(): ApprovalJudge | undefined {
+    return createApprovalJudge({
+      enabled: this.#plan.approvalEnabled,
+      provider: this.#plan.provider,
+      model: this.#plan.approvalModel,
+    });
+  }
+
+  /**
+   * A key typed into Settings has to reach the SDK, but the environment still
+   * wins so a developer's .env keeps behaving the way it always has.
+   */
+  async #applyApiKey(): Promise<void> {
+    const resolved = resolveOpenAiKey({ env: process.env, store: this.settings?.secrets });
+    if (!resolved.key || resolved.key === this.#apiKey) return;
+    this.#apiKey = resolved.key;
+    await this.#modelRuntime?.setRuntimeApiKey(this.#plan.provider, resolved.key);
+  }
+
+  /**
+   * Settings changes never interrupt work. The approval judge and the warm
+   * worker are rebuilt immediately because neither is mid-turn; the root
+   * session's model is queued behind the main delivery lock and, if a turn is
+   * streaming, deferred again until that turn settles.
+   */
+  #onSettingsChanged(settings: WileySettings): void {
+    const previous = this.#plan;
+    const next = resolveSessionModels(settings);
+    this.#plan = next;
+    const changed = diffSessionModels(previous, next);
+    void this.#applyApiKey().catch((error: unknown) =>
+      console.error("Could not apply the configured API key", error));
+    if (changed.approval) this.#approvalJudge = this.#buildApprovalJudge();
+    if (changed.subagent) {
+      // The warm worker was built on the old model, so it is no longer the
+      // thing the next spawn asked for.
+      this.#warmSubagent?.session.dispose();
+      this.#warmSubagent = undefined;
+      void this.#ensureWarmSubagent().catch((error: unknown) =>
+        console.error("Could not prewarm a worker on the new model", error));
+    }
+    if (changed.root) {
+      this.#pendingRootPlan = next;
+      void this.#flushPendingRootPlan();
+    }
+  }
+
+  #flushPendingRootPlan(): Promise<void> {
+    return this.#withMainLock(async () => {
+      const plan = this.#pendingRootPlan;
+      const session = this.#main;
+      const runtime = this.#modelRuntime;
+      if (!plan || !session || !runtime) return;
+      // Swapping the model underneath a turn in flight would finish that turn
+      // on a different model than it started. #afterRootRun retries instead.
+      if (session.isStreaming) return;
+      this.#pendingRootPlan = undefined;
+      try {
+        const model = resolveModel(runtime, plan.provider, plan.rootModel);
+        if (!model) throw new Error(`Pi model unavailable: ${plan.provider}/${plan.rootModel}`);
+        await session.setModel(model);
+        session.setThinkingLevel(plan.thinkingLevel);
+      } catch (error) {
+        await this.#emit({
+          jobId: this.#currentJobId ?? "system",
+          agentId: "root",
+          type: "error",
+          payload: { error: `Could not switch to ${plan.rootModel}: ${String(error)}` },
+        });
+      }
+    });
+  }
+
   async #createRootSession(): Promise<void> {
-    const session = await createRootSession(this.#sessionOptions(BOARD_AGENT_SYSTEM_PROMPT, "root"));
+    const session = await createRootSession(
+      this.#sessionOptions(BOARD_AGENT_SYSTEM_PROMPT, "root", this.#plan.rootModel),
+    );
     this.#main = session;
     this.#subscribeSession(session, "root", () => this.#currentJobId ?? "system");
   }
 
-  #sessionOptions(systemPrompt: string, agentId: string): PiSessionOptions {
-    if (!this.#modelRuntime) throw new Error(`Pi model unavailable: ${PI_PROVIDER}/${PI_MODEL}`);
+  #sessionOptions(systemPrompt: string, agentId: string, model: string): PiSessionOptions {
+    if (!this.#modelRuntime) throw new Error(`Pi model unavailable: ${this.#plan.provider}/${model}`);
     return {
       projectDir: this.projectDir,
       systemPrompt,
       guardExtension: this.#guardExtension(),
       modelRuntime: this.#modelRuntime,
       customTools: this.#tools(agentId),
+      provider: this.#plan.provider,
+      model,
+      thinkingLevel: this.#plan.thinkingLevel,
       skillPaths: this.skillsDir ? [this.skillsDir] : [],
     };
   }
@@ -181,6 +279,8 @@ export class PiRuntime {
   }
 
   async dispose(): Promise<void> {
+    this.#unsubscribeSettings?.();
+    this.#unsubscribeSettings = undefined;
     await this.abort("Application is closing");
     this.#main?.dispose();
     for (const sub of this.#subagents.values()) sub.session?.dispose();
@@ -234,10 +334,11 @@ export class PiRuntime {
       void run.then(
         () => {
           if (!preflightSettled) resolve();
-          void this.#finishRootRun(generation);
+          void this.#finishRootRun(generation).finally(() => this.#afterRootRun());
         },
         (error) => {
           if (!preflightSettled) reject(error);
+          this.#afterRootRun();
           if (generation === this.#rootGeneration) {
             void this.#emit({
               jobId: this.#currentJobId ?? "system",
@@ -249,6 +350,11 @@ export class PiRuntime {
         },
       );
     });
+  }
+
+  /** A turn just settled, so a model change that arrived during it can land. */
+  #afterRootRun(): void {
+    if (this.#pendingRootPlan) void this.#flushPendingRootPlan();
   }
 
   async #finishRootRun(generation: number): Promise<void> {
@@ -319,6 +425,7 @@ export class PiRuntime {
   }
 
   async #spawnSubagent(task: string, parentJobId: string): Promise<string> {
+    assertSpawnModelAllowed(this.#settings(), this.#plan.subagentModel);
     const warm = this.#warmSubagent;
     if (warm) this.#warmSubagent = undefined;
     const sub: Subagent = {
@@ -377,7 +484,7 @@ export class PiRuntime {
   }
 
   async #createSubagentSession(agentId: string): Promise<AgentSession> {
-    return createSubagentSession(this.#sessionOptions(SUBAGENT_SYSTEM_PROMPT, agentId));
+    return createSubagentSession(this.#sessionOptions(SUBAGENT_SYSTEM_PROMPT, agentId, this.#plan.subagentModel));
   }
 
   async #ensureWarmSubagent(): Promise<void> {
