@@ -62,11 +62,6 @@ export class VoiceBridge {
   ask(question: string, signal?: AbortSignal, timeoutMs = 120_000): Promise<string> {
     this.push(`[agent question] ${question}`, { interrupt: true });
     return new Promise((resolve) => {
-      const pending: PendingAnswer = {
-        id: crypto.randomUUID(),
-        resolve: () => undefined,
-        timer: setTimeout(() => undefined, timeoutMs),
-      };
       const finish = (answer: string) => {
         clearTimeout(pending.timer);
         pending.removeAbort?.();
@@ -74,15 +69,14 @@ export class VoiceBridge {
         if (index >= 0) this.#pendingAnswers.splice(index, 1);
         resolve(answer);
       };
-      pending.resolve = finish;
-      clearTimeout(pending.timer);
-      pending.timer = setTimeout(
-        () => finish("No answer after two minutes; use your best judgement."),
-        timeoutMs,
-      );
       const onAbort = () => finish("Run aborted before the user answered.");
+      const pending: PendingAnswer = {
+        id: crypto.randomUUID(),
+        resolve: finish,
+        timer: setTimeout(() => finish("No answer after two minutes; use your best judgement."), timeoutMs),
+        removeAbort: () => signal?.removeEventListener("abort", onAbort),
+      };
       signal?.addEventListener("abort", onAbort, { once: true });
-      pending.removeAbort = () => signal?.removeEventListener("abort", onAbort);
       this.#pendingAnswers.push(pending);
     });
   }
