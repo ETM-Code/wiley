@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import path from "node:path";
 
 import { CanvasBridge } from "../main/canvas-bridge";
-import { IPC, type BoardSnapshot, type CanvasResponse, type TranscriptRole, type VoiceToolName } from "../main/contracts";
+import { IPC, type BoardSnapshot, type CanvasResponse, type TranscriptRole, type VoiceToolName } from "../shared/contracts";
 import { SqliteRuntimeLedger } from "../main/ledger";
 import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";

@@ -1,4 +1,4 @@
-import type { VoiceInjection } from "./contracts";
+import type { VoiceInjection } from "../shared/contracts";
 
 interface PendingAnswer {
   id: string;

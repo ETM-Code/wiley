@@ -8,7 +8,7 @@ import type {
   JobSummary,
   JsonlRecord,
   TranscriptEntry,
-} from "./contracts";
+} from "../shared/contracts";
 
 export interface RuntimeLedger {
   initialize(): Promise<void>;

@@ -11,7 +11,7 @@ export type VoiceState = {
 };
 
 type VoiceListener = (state: VoiceState) => void;
-type QueuedInjection = VoiceInjection & { id: number };
+type QueuedInjection = Omit<VoiceInjection, "id"> & { id: number };
 
 const SESSION_INSTRUCTIONS = `You are Wiley, a voice-driven whiteboard coding assistant. You are one person to the user: a sharp coworker standing at the same whiteboard, not a call center. Never mention agents, subagents, engines, layers, tool calls, or internal architecture. You do not edit the board or execute work yourself: every requested action goes through send_task_to_agent. Always include the user's verbatim request in user_words.
 

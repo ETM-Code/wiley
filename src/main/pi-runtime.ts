@@ -14,7 +14,7 @@ import {
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { BOARD_AGENT_SYSTEM_PROMPT, INTERRUPT_NOTE, SUBAGENT_SYSTEM_PROMPT } from "./agent-prompt";
-import type { AgentEvent, JobSummary } from "./contracts";
+import type { AgentEvent, JobSummary } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import { TranscriptStore } from "./transcript";
 import { CanvasBridge } from "./canvas-bridge";

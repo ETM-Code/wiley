@@ -1,4 +1,4 @@
-import { IPC, type AgentEvent, type JobSummary, type RuntimeState } from "./contracts";
+import { IPC, type AgentEvent, type JobSummary, type RuntimeState } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import { PiRuntime } from "./pi-runtime";
 import { TranscriptStore } from "./transcript";

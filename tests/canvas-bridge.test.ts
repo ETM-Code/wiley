@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { CanvasBridge } from "../src/main/canvas-bridge";
-import type { CanvasRequest } from "../src/main/contracts";
+import type { CanvasRequest } from "../src/shared/contracts";
 import type { RuntimeLedger } from "../src/main/ledger";
 
 function ledgerStub(): RuntimeLedger {
