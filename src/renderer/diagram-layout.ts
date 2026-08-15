@@ -6,6 +6,7 @@ import {
   type DiagramContainerRender,
   type DiagramElementRole,
 } from "../shared/diagram-stamp";
+import { resolveAbsolute } from "./diagram-elk";
 import {
   NODE_EMPHASES,
   NODE_ROLES,
@@ -14,6 +15,7 @@ import {
   EDGE_WEIGHTS,
   isHexColor,
   isNodeRole,
+  resolveContainerTint,
   resolveEdgeStyle,
   resolveNodeStyle,
   resolveTheme,
@@ -38,6 +40,9 @@ import {
 } from "./diagram-routes";
 
 import {
+  containerElementId,
+  containerGroupId,
+  containerLabelElementId,
   deriveDiagramId,
   edgeElementId,
   edgeKey,
@@ -160,6 +165,17 @@ export type DiagramElementRoleEntry = {
   /** Semantic node id for nodes, endpoint key for edges; absent for titles. */
   key?: string;
   edgeIndex?: number;
+  /** Semantic id of the container holding this element, if any. */
+  container?: string;
+};
+
+/** A container as it was actually drawn, keyed by its semantic id. */
+export type DiagramContainerEntry = {
+  id: string;
+  elementId: string;
+  render: ContainerRender;
+  parent?: string;
+  label?: string;
 };
 
 export interface DiagramPlan {
@@ -170,6 +186,8 @@ export interface DiagramPlan {
   elementIdByNode: Map<string, string>;
   diagramId: string;
   roles: Map<string, DiagramElementRoleEntry>;
+  /** Every container that was drawn, outermost first. */
+  containers: Map<string, DiagramContainerEntry>;
   /** The theme every derived colour in this plan came from. */
   theme: ThemeName;
   /**
@@ -492,7 +510,151 @@ type LayoutGeometry = {
   sizes: Map<string, { width: number; height: number }>;
   edges: EdgeGeometry[];
   outcome: DiagramLayoutOutcome;
+  /** Present only when the request declared containers. */
+  containers?: Map<string, RouteBox>;
 };
+
+/**
+ * Room reserved inside a container. The top band is wider than the rest
+ * because the container's own label sits in it, above its first member.
+ */
+export const CONTAINER_PADDING = { top: 64, left: 32, bottom: 32, right: 32 };
+const CONTAINER_LABEL_INSET = { x: 20, y: 18 };
+const CONTAINER_LABEL_FONT_SIZE = 20;
+
+/** The membership graph, resolved once and read by layout and emission alike. */
+type ContainerPlan = {
+  /** Outermost first, declaration order within a level. */
+  order: string[];
+  byId: Map<string, GraphContainer>;
+  childContainers: Map<string, string[]>;
+  memberNodes: Map<string, string[]>;
+  rootContainers: string[];
+  rootNodes: string[];
+  /** Node or container id to the container that holds it. */
+  ownerOf: Map<string, string>;
+};
+
+function planContainers(params: LayoutParams): ContainerPlan | null {
+  const containers = params.containers ?? [];
+  if (containers.length === 0) return null;
+  const byId = new Map(containers.map((container) => [container.id, container]));
+  const childContainers = new Map<string, string[]>();
+  const memberNodes = new Map<string, string[]>();
+  const ownerOf = new Map<string, string>();
+  const rootContainers: string[] = [];
+  for (const container of containers) {
+    if (container.parent === undefined) {
+      rootContainers.push(container.id);
+      continue;
+    }
+    ownerOf.set(container.id, container.parent);
+    childContainers.set(container.parent, [...(childContainers.get(container.parent) ?? []), container.id]);
+  }
+  const rootNodes: string[] = [];
+  for (const node of params.nodes) {
+    if (node.container === undefined) {
+      rootNodes.push(node.id);
+      continue;
+    }
+    ownerOf.set(node.id, node.container);
+    memberNodes.set(node.container, [...(memberNodes.get(node.container) ?? []), node.id]);
+  }
+  const order: string[] = [];
+  const visit = (id: string) => {
+    order.push(id);
+    for (const child of childContainers.get(id) ?? []) visit(child);
+  };
+  for (const id of rootContainers) visit(id);
+  return { order, byId, childContainers, memberNodes, rootContainers, rootNodes, ownerOf };
+}
+
+/** Innermost container first, up to the top level. */
+function containerChain(plan: ContainerPlan, id: string): string[] {
+  const chain: string[] = [];
+  let cursor = plan.ownerOf.get(id);
+  while (cursor && !chain.includes(cursor)) {
+    chain.push(cursor);
+    cursor = plan.ownerOf.get(cursor);
+  }
+  return chain;
+}
+
+/** The deepest container holding both ends, or undefined for a root edge. */
+function lowestCommonContainer(plan: ContainerPlan, from: string, to: string): string | undefined {
+  const first = containerChain(plan, from).reverse();
+  const second = containerChain(plan, to).reverse();
+  let common: string | undefined;
+  for (let index = 0; index < Math.min(first.length, second.length); index++) {
+    if (first[index] !== second[index]) break;
+    common = first[index];
+  }
+  return common;
+}
+
+/**
+ * A container's box is derived from where its members actually landed rather
+ * than from the box ELK reported, so snapping every member onto the grid can
+ * never leave one poking through a border.
+ */
+function containerBoxes(
+  plan: ContainerPlan,
+  positions: ReadonlyMap<string, RoutePoint>,
+  sizes: ReadonlyMap<string, { width: number; height: number }>,
+  minWidths: ReadonlyMap<string, number>,
+): Map<string, RouteBox> {
+  const boxes = new Map<string, RouteBox>();
+  const build = (id: string): RouteBox | null => {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    const include = (x: number, y: number, width: number, height: number) => {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    };
+    for (const child of plan.childContainers.get(id) ?? []) {
+      const box = build(child);
+      if (box) include(box.x, box.y, box.width, box.height);
+    }
+    for (const nodeId of plan.memberNodes.get(id) ?? []) {
+      const position = positions.get(nodeId);
+      const size = sizes.get(nodeId);
+      if (position && size) include(position.x, position.y, size.width, size.height);
+    }
+    // A container nobody joined has no geometry and is simply not drawn.
+    if (!Number.isFinite(minX)) return null;
+    const x = Math.floor((minX - CONTAINER_PADDING.left) / MODEL_GRID_SIZE) * MODEL_GRID_SIZE;
+    const y = Math.floor((minY - CONTAINER_PADDING.top) / MODEL_GRID_SIZE) * MODEL_GRID_SIZE;
+    const right = Math.ceil((maxX + CONTAINER_PADDING.right) / MODEL_GRID_SIZE) * MODEL_GRID_SIZE;
+    const bottom = Math.ceil((maxY + CONTAINER_PADDING.bottom) / MODEL_GRID_SIZE) * MODEL_GRID_SIZE;
+    const box: RouteBox = {
+      id,
+      x,
+      y,
+      width: Math.max(right - x, snapUpSize(minWidths.get(id) ?? 0)),
+      height: bottom - y,
+    };
+    boxes.set(id, box);
+    return box;
+  };
+  for (const id of plan.rootContainers) build(id);
+  return boxes;
+}
+
+/** Enough width that the container's own label fits inside its top band. */
+function containerLabelWidths(params: LayoutParams): Map<string, number> {
+  const widths = new Map<string, number>();
+  for (const container of params.containers ?? []) {
+    const label = container.label?.trim();
+    if (!label) continue;
+    const size = measureText(label, CONTAINER_LABEL_FONT_SIZE);
+    widths.set(container.id, size.width + CONTAINER_LABEL_INSET.x * 2);
+  }
+  return widths;
+}
 
 type GeometryInput = {
   params: LayoutParams;
@@ -501,38 +663,70 @@ type GeometryInput = {
   sizes: Map<string, { width: number; height: number }>;
   nodeSpacing: number;
   layerSpacing: number;
+  containers: ContainerPlan | null;
+  containerLabelWidths: ReadonlyMap<string, number>;
 };
 
+const CONTAINER_PADDING_OPTION = `[top=${CONTAINER_PADDING.top},left=${CONTAINER_PADDING.left},bottom=${CONTAINER_PADDING.bottom},right=${CONTAINER_PADDING.right}]`;
+
 function elkGraph(input: GeometryInput, layoutOptions: Record<string, string>): ElkNode {
+  const elkNode = (id: string): ElkNode => ({
+    id,
+    width: input.sizes.get(id)?.width ?? NODE_MIN_WIDTH,
+    height: input.sizes.get(id)?.height ?? NODE_MIN_HEIGHT,
+  });
+  // ELK fills in `sections` on the way back out; declaring one on the way in
+  // would be read as a route it has to preserve.
+  const elkEdge = (edge: GraphEdge, index: number) => ({
+    id: `edge-${index}`,
+    sources: [edge.from],
+    targets: [edge.to],
+    ...(edge.label?.trim()
+      ? {
+          labels: [{
+            text: edge.label.trim(),
+            ...measureText(edge.label.trim(), EDGE_LABEL_FONT_SIZE),
+          }],
+        }
+      : {}),
+  });
+
+  const containers = input.containers;
+  if (!containers) {
+    return {
+      id: "root",
+      layoutOptions,
+      children: input.params.nodes.map((node) => elkNode(node.id)),
+      edges: input.edges.map(elkEdge),
+    };
+  }
+
+  // An edge is declared at the lowest container holding both of its ends, so
+  // ELK routes it in the channel that actually belongs to it.
+  const ROOT = "";
+  const edgesByOwner = new Map<string, ReturnType<typeof elkEdge>[]>();
+  for (const [index, edge] of input.edges.entries()) {
+    const owner = lowestCommonContainer(containers, edge.from, edge.to) ?? ROOT;
+    edgesByOwner.set(owner, [...(edgesByOwner.get(owner) ?? []), elkEdge(edge, index)]);
+  }
+  const build = (id: string): ElkNode => ({
+    id,
+    layoutOptions: { "elk.padding": CONTAINER_PADDING_OPTION },
+    children: [
+      ...(containers.childContainers.get(id) ?? []).map(build),
+      ...(containers.memberNodes.get(id) ?? []).map(elkNode),
+    ],
+    edges: edgesByOwner.get(id) ?? [],
+  });
   return {
     id: "root",
-    layoutOptions,
-    children: input.params.nodes.map((node) => ({
-      id: node.id,
-      width: input.sizes.get(node.id)?.width ?? NODE_MIN_WIDTH,
-      height: input.sizes.get(node.id)?.height ?? NODE_MIN_HEIGHT,
-    })),
-    edges: input.edges.map((edge, index) => ({
-      id: `edge-${index}`,
-      sources: [edge.from],
-      targets: [edge.to],
-      ...(edge.label?.trim()
-        ? {
-            labels: [{
-              text: edge.label.trim(),
-              ...measureText(edge.label.trim(), EDGE_LABEL_FONT_SIZE),
-            }],
-          }
-        : {}),
-    })),
+    layoutOptions: { ...layoutOptions, "elk.hierarchyHandling": "INCLUDE_CHILDREN" },
+    children: [
+      ...containers.rootContainers.map(build),
+      ...containers.rootNodes.map(elkNode),
+    ],
+    edges: edgesByOwner.get(ROOT) ?? [],
   };
-}
-
-function snappedPositions(result: ElkNode): Map<string, RoutePoint> {
-  return new Map((result.children ?? []).map((node: ElkNode) => [node.id, {
-    x: snapModelCoordinate(node.x),
-    y: snapModelCoordinate(node.y),
-  }]));
 }
 
 function elkSection(result: ElkNode, index: number) {
@@ -562,30 +756,33 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
     "elk.spacing.edgeLabel": "10",
   }));
-  const positions = snappedPositions(result);
+  const absolute = resolveAbsolute(result);
+  const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
+    const box = absolute.boxes.get(node.id);
+    return [node.id, { x: snapModelCoordinate(box?.x), y: snapModelCoordinate(box?.y) }];
+  }));
   return {
     positions,
     sizes: input.sizes,
     outcome,
+    ...(input.containers
+      ? { containers: containerBoxes(input.containers, positions, input.sizes, input.containerLabelWidths) }
+      : {}),
     edges: input.edges.map((edge, index) => {
-      const { section, label } = elkSection(result, index);
+      const route = absolute.routes.get(`edge-${index}`);
+      const label = absolute.labels.get(`edge-${index}`);
       const fromPosition = positions.get(edge.from) ?? { x: 0, y: 0 };
       const toPosition = positions.get(edge.to) ?? { x: 0, y: 0 };
       const fromSize = input.sizes.get(edge.from) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
       const toSize = input.sizes.get(edge.to) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
       // ELK routes to distributed border points; fall back to the midpoints
-      // of the two sides this direction actually connects, only if a section
+      // of the two sides this direction actually connects, only if the route
       // is missing entirely.
-      const points = dedupePoints([
-        section?.startPoint ?? exitPoint(fromPosition, fromSize, input.direction),
-        ...(section?.bendPoints ?? []),
-        section?.endPoint ?? entryPoint(toPosition, toSize, input.direction),
+      const points = dedupePoints(route ?? [
+        exitPoint(fromPosition, fromSize, input.direction),
+        entryPoint(toPosition, toSize, input.direction),
       ]);
-      return {
-        points,
-        rounded: false,
-        ...(label ? { label: { x: finiteNumber(label.x), y: finiteNumber(label.y) } } : {}),
-      };
+      return { points, rounded: false, ...(label ? { label } : {}) };
     }),
   };
 }
@@ -790,11 +987,25 @@ export async function planDiagramLayout(
     node.id,
     nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0), direction),
   ]));
-  const input: GeometryInput = { params, edges, direction, sizes, nodeSpacing, layerSpacing };
+  const containers = planContainers(params);
+  const input: GeometryInput = {
+    params,
+    edges,
+    direction,
+    sizes,
+    nodeSpacing,
+    layerSpacing,
+    containers,
+    containerLabelWidths: containerLabelWidths(params),
+  };
 
   let geometry: LayoutGeometry | null = null;
   let reason: string | undefined;
-  if (requested !== "layered") {
+  // Only the layered engine keeps a nested graph nested; the rest place nodes
+  // as free points and would scatter a container's members across the canvas.
+  if (requested !== "layered" && containers) {
+    reason = `${requested} cannot lay out containers`;
+  } else if (requested !== "layered") {
     const attempt = await nonLayeredGeometry(input, requested);
     if ("geometry" in attempt) geometry = attempt.geometry;
     else reason = attempt.reason;
@@ -805,7 +1016,7 @@ export async function planDiagramLayout(
     ...(reason ? { reason } : {}),
   });
 
-  return assemblePlan(params, edges, geometry, origin, diagramId);
+  return assemblePlan(params, edges, geometry, origin, diagramId, containers);
 }
 
 function assemblePlan(
@@ -814,6 +1025,7 @@ function assemblePlan(
   geometry: LayoutGeometry,
   origin: { x: number; y: number },
   diagramId: string,
+  containerPlan: ContainerPlan | null,
 ): DiagramPlan {
   const ordinals = edgeOrdinals(edges);
   const edgeKeys = edges.map((edge, index) => edgeKey(edge, ordinals[index]));
@@ -830,11 +1042,40 @@ function assemblePlan(
     params.nodes.map((node) => [node.id, nodeElementId(diagramId, node.id)]),
   );
   const roles = new Map<string, DiagramElementRoleEntry>();
-  // Every element carries its own identity, so a later call can find, restyle,
-  // or replace exactly this diagram's parts without re-reading the scene.
-  const stamp = (role: DiagramElementRole, key?: string) => ({
-    customData: { wiley: { diagram: diagramId, role, theme: theme.name, ...(key ? { key } : {}) } },
+  // Every element carries its own identity and its place in the container
+  // tree, so a later call can find, restyle, or rebuild exactly this diagram's
+  // parts from the live scene alone.
+  const stamp = (role: DiagramElementRole, key?: string, container?: string) => ({
+    customData: {
+      wiley: {
+        diagram: diagramId,
+        role,
+        theme: theme.name,
+        ...(key ? { key } : {}),
+        ...(container ? { container } : {}),
+      },
+    },
   });
+  const boxes = geometry.containers ?? new Map<string, RouteBox>();
+  const drawnContainers = containerPlan
+    ? containerPlan.order.filter((id) => boxes.has(id))
+    : [];
+  const framed = new Set(
+    drawnContainers.filter((id) => containerPlan?.byId.get(id)?.render === "frame"),
+  );
+  /** Innermost group first, matching Excalidraw's own nesting order. */
+  const groupsFor = (id: string): string[] => {
+    if (!containerPlan) return [];
+    const chain = [id, ...containerChain(containerPlan, id)]
+      .filter((entry) => boxes.has(entry) && !framed.has(entry));
+    return chain.map((entry) => containerGroupId(diagramId, entry));
+  };
+  const memberGroups = (id: string): JsonObject => {
+    if (!containerPlan) return {};
+    const owner = containerPlan.ownerOf.get(id);
+    const groupIds = owner ? groupsFor(owner) : [];
+    return groupIds.length ? { groupIds } : {};
+  };
 
   const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
     const position = geometry.positions.get(node.id) ?? { x: 0, y: 0 };
@@ -845,14 +1086,15 @@ function assemblePlan(
       backgroundColor: node.backgroundColor,
       strokeColor: node.strokeColor,
     });
-    roles.set(id, { role: "node", key: node.id });
+    roles.set(id, { role: "node", key: node.id, ...(node.container ? { container: node.container } : {}) });
     const x = snapModelCoordinate(origin.x + position.x);
     const y = snapModelCoordinate(origin.y + position.y);
     if (type === "text") {
       return {
         id,
         type,
-        ...stamp("node", node.id),
+        ...stamp("node", node.id, node.container),
+        ...memberGroups(node.id),
         x,
         y,
         width: size.width,
@@ -870,7 +1112,8 @@ function assemblePlan(
     return {
       id,
       type,
-      ...stamp("node", node.id),
+      ...stamp("node", node.id, node.container),
+      ...memberGroups(node.id),
       x,
       y,
       width: size.width,
@@ -897,11 +1140,17 @@ function assemblePlan(
     const key = edgeKeys[index];
     const edgeId = edgeElementId(diagramId, key);
     const edgeStyle = resolveEdgeStyle(theme, edge);
-    roles.set(edgeId, { role: "edge", key, edgeIndex: index });
+    // An edge belongs to the deepest container holding both of its ends, so a
+    // connector inside a region moves and reads with that region.
+    const owner = containerPlan ? lowestCommonContainer(containerPlan, edge.from, edge.to) : undefined;
+    const ownerGroups = owner && boxes.has(owner) ? groupsFor(owner) : [];
+    const edgeGroups: JsonObject = ownerGroups.length ? { groupIds: ownerGroups } : {};
+    roles.set(edgeId, { role: "edge", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
     edgeSkeletons.push({
       id: edgeId,
       type: "arrow",
-      ...stamp("edge", key),
+      ...stamp("edge", key, owner),
+      ...edgeGroups,
       x: routeOrigin.x,
       y: routeOrigin.y,
       points: absoluteRoute.map((point) => [point.x - routeOrigin.x, point.y - routeOrigin.y]),
@@ -921,11 +1170,12 @@ function assemblePlan(
     if (text && routed.label) {
       const size = measureText(text, EDGE_LABEL_FONT_SIZE);
       const edgeLabelId = edgeLabelElementId(diagramId, key);
-      roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index });
+      roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
       edgeLabelSkeletons.push({
         id: edgeLabelId,
         type: "text",
-        ...stamp("edgeLabel", key),
+        ...stamp("edgeLabel", key, owner),
+        ...edgeGroups,
         x: origin.x + routed.label.x,
         y: origin.y + routed.label.y,
         width: size.width,
@@ -938,6 +1188,95 @@ function assemblePlan(
       });
     }
   }
+
+  const regionSkeletons: JsonObject[] = [];
+  const frameSkeletons: JsonObject[] = [];
+  const containerEntries = new Map<string, DiagramContainerEntry>();
+  for (const containerId of drawnContainers) {
+    const container = containerPlan!.byId.get(containerId)!;
+    const box = boxes.get(containerId)!;
+    const role = container.role ?? "muted";
+    const entry = theme.entries[role];
+    const elementId = containerElementId(diagramId, containerId);
+    const parent = containerPlan!.ownerOf.get(containerId);
+    const label = container.label?.trim();
+    const x = snapModelCoordinate(origin.x + box.x);
+    const y = snapModelCoordinate(origin.y + box.y);
+    containerEntries.set(containerId, {
+      id: containerId,
+      elementId,
+      render: container.render ?? "group",
+      ...(parent ? { parent } : {}),
+      ...(label ? { label } : {}),
+    });
+    roles.set(elementId, { role: "container", key: containerId, ...(parent ? { container: parent } : {}) });
+    if (framed.has(containerId)) {
+      frameSkeletons.push({
+        id: elementId,
+        type: "frame",
+        ...stamp("container", containerId, parent),
+        // Never rely on the converter's auto-fit: it falls back to the
+        // children's own bounds the moment a coordinate reads as falsy.
+        x,
+        y,
+        width: box.width,
+        height: box.height,
+        ...(label ? { name: label } : {}),
+        children: (containerPlan!.memberNodes.get(containerId) ?? [])
+          .map((nodeId) => elementIdByNode.get(nodeId)!),
+      });
+      continue;
+    }
+    regionSkeletons.push({
+      id: elementId,
+      type: "rectangle",
+      ...stamp("container", containerId, parent),
+      ...(groupsFor(containerId).length ? { groupIds: groupsFor(containerId) } : {}),
+      x,
+      y,
+      width: box.width,
+      height: box.height,
+      strokeColor: entry.stroke,
+      backgroundColor: resolveContainerTint(theme, role),
+      strokeWidth: 1,
+      opacity: 100,
+      fillStyle: "solid",
+      roundness: { type: 3 },
+    });
+    if (!label) continue;
+    const labelId = containerLabelElementId(diagramId, containerId);
+    const labelSize = measureText(label, CONTAINER_LABEL_FONT_SIZE);
+    roles.set(labelId, { role: "containerLabel", key: containerId, container: containerId });
+    regionSkeletons.push({
+      id: labelId,
+      type: "text",
+      ...stamp("containerLabel", containerId, containerId),
+      ...(groupsFor(containerId).length ? { groupIds: groupsFor(containerId) } : {}),
+      x: x + CONTAINER_LABEL_INSET.x,
+      y: y + CONTAINER_LABEL_INSET.y,
+      width: labelSize.width,
+      height: labelSize.height,
+      text: label,
+      fontSize: CONTAINER_LABEL_FONT_SIZE,
+      fontFamily: 5,
+      textAlign: "left",
+      verticalAlign: "top",
+      strokeColor: entry.stroke,
+      backgroundColor: "transparent",
+    });
+  }
+  // A frame owns its members through the array, so they are moved to sit
+  // immediately in front of it and nothing else may come between.
+  const framedNodeIds = new Set(
+    [...framed].flatMap((id) => (containerPlan?.memberNodes.get(id) ?? [])
+      .map((nodeId) => elementIdByNode.get(nodeId)!)),
+  );
+  const framedGroups = frameSkeletons.map((frame) => [
+    ...nodeSkeletons.filter(
+      (skeleton) => (frame.children as string[]).includes(String(skeleton.id)),
+    ),
+    frame,
+  ]);
 
   const title = params.title?.trim();
   // Top-left, its own measured width, and a full band of headroom: a title
@@ -963,9 +1302,13 @@ function assemblePlan(
       strokeColor: theme.titleColor,
       backgroundColor: "transparent",
     }] : []),
-    ...nodeSkeletons,
+    // Regions sit behind everything they hold; frames come last, each one
+    // directly behind the members it owns.
+    ...regionSkeletons,
+    ...nodeSkeletons.filter((skeleton) => !framedNodeIds.has(String(skeleton.id))),
     ...edgeSkeletons,
     ...edgeLabelSkeletons,
+    ...framedGroups.flat(),
   ];
 
   return {
@@ -976,6 +1319,7 @@ function assemblePlan(
     elementIdByNode,
     diagramId,
     roles,
+    containers: containerEntries,
     theme: theme.name,
     explicitColors,
     layout: geometry.outcome,
