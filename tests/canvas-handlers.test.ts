@@ -60,6 +60,21 @@ import { nodeElementId } from "../src/renderer/diagram-spec";
 import { QUALITY_EVALUATION_LIMIT, assertDiagramQuality } from "../src/renderer/canvas/diagram-render";
 import { handBuiltPlan } from "./fixtures/diagram-gallery";
 
+/** The loose element shape these fakes pass around, spelled out. */
+type SceneRecord = Record<string, unknown> & {
+  id: string;
+  type?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name?: string;
+  children?: string[];
+  groupIds?: string[];
+  containerId?: string;
+  customData?: { wiley?: { key?: string; role?: string } };
+};
+
 function expectOnModelGrid(value: unknown) {
   expect(typeof value).toBe("number");
   expect((value as number) % MODEL_GRID_SIZE).toBe(0);
@@ -749,6 +764,94 @@ describe("diagram renderer", () => {
       "styleCoherence",
     ]);
     for (const findings of Object.values(result.quality)) expect(findings).toEqual([]);
+  });
+
+  it("commits regions behind their members and a frame in front of its children", async () => {
+    let elements: SceneRecord[] = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700, viewBackgroundColor: "#fff" }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: SceneRecord[] }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const result = await handleCanvasRequest(api, {
+      id: 70,
+      op: "layout-diagram",
+      params: {
+        theme: "ocean",
+        containers: [
+          { id: "tier", label: "Edge tier", role: "primary" },
+          { id: "board", label: "Sprint 14", render: "frame" },
+        ],
+        nodes: [
+          { id: "cdn", label: "CDN", container: "tier" },
+          { id: "waf", label: "WAF", container: "tier" },
+          { id: "todo", label: "To do", container: "board" },
+          { id: "doing", label: "Doing", container: "board" },
+        ],
+        edges: [{ from: "cdn", to: "waf" }, { from: "waf", to: "todo" }, { from: "todo", to: "doing" }],
+      },
+    }) as { diagramId: string; idMap: Record<string, string>; quality: Record<string, string[]> };
+
+    for (const findings of Object.values(result.quality)) expect(findings).toEqual([]);
+    const order = elements.map((element) => element.id);
+    const region = elements.find((element) => element.customData?.wiley?.key === "tier"
+      && element.customData?.wiley?.role === "container")!;
+    const frame = elements.find((element) => element.type === "frame")!;
+
+    // groupIds survive conversion untouched, and a member shares its region's.
+    expect(region.groupIds).toHaveLength(1);
+    expect(elements.find((element) => element.id === result.idMap.cdn)!.groupIds)
+      .toEqual(region.groupIds);
+    // The region is drawn before what it holds; the frame after.
+    expect(order.indexOf(region.id)).toBeLessThan(order.indexOf(result.idMap.cdn));
+    expect(order.indexOf(frame.id)).toBeGreaterThan(order.indexOf(result.idMap.doing));
+    // Nothing but the frame's own members and their bound labels comes
+    // between the first member and the frame that closes the array.
+    expect(order.at(-1)).toBe(frame.id);
+    const tail = elements.slice(order.indexOf(result.idMap.todo), -1);
+    for (const element of tail) {
+      const owner = element.containerId ?? element.id;
+      expect([result.idMap.todo, result.idMap.doing]).toContain(owner);
+    }
+    expect(frame.name).toBe("Sprint 14");
+    expect(frame.children).toEqual([result.idMap.todo, result.idMap.doing]);
+  });
+
+  it("keeps a frame off the falsy origin the converter would auto-fit away", async () => {
+    let elements: SceneRecord[] = [];
+    const api = {
+      getSceneElements: () => elements,
+      // No scroll and no existing content puts the diagram origin at (80, 80),
+      // then the frame's own left padding lands its box on zero.
+      getAppState: () => ({ scrollX: 40, scrollY: 40, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: SceneRecord[] }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    await handleCanvasRequest(api, {
+      id: 71,
+      op: "layout-diagram",
+      params: {
+        containers: [{ id: "f", label: "Frame", render: "frame" }],
+        nodes: [{ id: "only", label: "Only", container: "f" }],
+        edges: [],
+      },
+    });
+    const frame = elements.find((element) => element.type === "frame")!;
+    const member = elements.find((element) => element.customData?.wiley?.key === "only")!;
+    expect(frame.x).not.toBe(0);
+    expect(frame.y).not.toBe(0);
+    // Growing rather than moving keeps the member inside the frame.
+    expect(member.x).toBeGreaterThan(frame.x);
+    expect(member.x + member.width).toBeLessThan(frame.x + frame.width);
   });
 
   it("fails the call on a plan whose boxes overlap or whose arrows cut through them", () => {

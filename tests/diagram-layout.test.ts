@@ -83,6 +83,7 @@ describe("diagram layout quality", () => {
           role: role.role,
           theme: plan.theme,
           ...(role.key ? { key: role.key } : {}),
+          ...(role.container ? { container: role.container } : {}),
         },
       });
     }
