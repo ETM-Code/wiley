@@ -7,6 +7,9 @@ import {
   type CanvasRequest,
   type CanvasResponse,
   type RuntimeState,
+  type SecretName,
+  type SettingsPatch,
+  type SettingsView,
   type TranscriptDraft,
   type VoiceInjection
 } from "../shared/contracts";
@@ -27,6 +30,12 @@ const api: BoardApi = {
   getBoardSnapshot: () => ipcRenderer.invoke(IPC.getBoardSnapshot),
   activateCanvas: () => ipcRenderer.invoke(IPC.activateCanvas),
   getRuntimeConfig: () => ipcRenderer.invoke(IPC.runtimeConfig),
+  getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
+  updateSettings: (patch: SettingsPatch) => ipcRenderer.invoke(IPC.settingsUpdate, patch),
+  setSecret: (name: SecretName, value: string) => ipcRenderer.invoke(IPC.settingsSecretSet, name, value),
+  clearSecret: (name: SecretName) => ipcRenderer.invoke(IPC.settingsSecretClear, name),
+  probeWorkers: () => ipcRenderer.invoke(IPC.settingsProbe),
+  onSettingsChanged: (callback: (settings: SettingsView) => void) => subscribe(IPC.settingsChanged, callback),
   onVoiceMessage: (callback: (message: VoiceInjection) => void) => subscribe(IPC.voiceInject, callback),
   onCanvasRequest: (callback: (request: CanvasRequest) => void) => subscribe(IPC.canvasRequest, callback),
   respondCanvasRequest: (response: CanvasResponse) => ipcRenderer.send(IPC.canvasResponse, response),

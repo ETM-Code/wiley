@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, net, protocol, session } from "electron";
+import { app, BrowserWindow, net, protocol, safeStorage, session } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SqliteRuntimeLedger } from "./ledger";
@@ -12,6 +12,9 @@ import { registerIpc } from "./ipc";
 import { IPC } from "../shared/contracts";
 import { isTrustedOrigin } from "./trusted-origin";
 import { resolveSkillsDir } from "./skills";
+import { createSecretStore } from "./settings/secret-store";
+import { SettingsService } from "./settings/settings-service";
+import { SettingsStore } from "./settings/settings-store";
 
 let mainWindow: BrowserWindow | undefined;
 let pi: PiRuntime | undefined;
@@ -125,6 +128,8 @@ async function createWindow(): Promise<BrowserWindow> {
 async function bootstrap(): Promise<void> {
   installAppProtocol();
   installSecurityPolicy();
+  const configDir = process.env.WILEY_CONFIG_DIR?.trim() || app.getPath("userData");
+  const settingsStore = SettingsStore.open(configDir, createSecretStore({ dir: configDir, safeStorage }));
   ledger = new SqliteRuntimeLedger(
     process.env.BOARD_AI_DATA_DIR
       ? path.join(process.env.BOARD_AI_DATA_DIR, "runtime.sqlite")
@@ -142,11 +147,21 @@ async function bootstrap(): Promise<void> {
   canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
   const projectDir = process.env.BOARD_AI_PROJECT_DIR ?? process.cwd();
   const skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
-  pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir);
+  pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir, settingsStore);
   await pi.initialize();
-  const runtime = new RuntimeController(ledger, transcript, pi, canvasBridge, sendToRenderer);
+  const settings = new SettingsService({ store: settingsStore, modelRuntime: () => pi?.modelRuntime });
+  const runtime = new RuntimeController(ledger, transcript, pi, canvasBridge, sendToRenderer, settingsStore);
   await runtime.recoverInterruptedJobs();
-  disposeIpc = registerIpc({ runtime, transcript, canvas: canvasBridge, voice: voiceBridge, ledger, pi });
+  disposeIpc = registerIpc({
+    runtime,
+    transcript,
+    canvas: canvasBridge,
+    voice: voiceBridge,
+    ledger,
+    pi,
+    settings,
+    sendToRenderer,
+  });
   mainWindow = await createWindow();
   mainWindow.on("closed", () => {
     canvasBridge.failPending();

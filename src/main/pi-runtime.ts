@@ -24,6 +24,7 @@ import { redact } from "./pi/redact";
 import { createApprovalJudge, createGuardExtension } from "./pi/safety-extension";
 import { createRootSession, createSubagentSession, type PiSessionOptions } from "./pi/session-factory";
 import { createPiTools, type CanvasMutation, type PiToolHost } from "./pi/tools";
+import { type SettingsStore } from "./settings/settings-store";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
@@ -73,8 +74,14 @@ export class PiRuntime {
     private readonly canvas: CanvasBridge,
     private readonly voice: VoiceBridge,
     private readonly skillsDir?: string,
+    private readonly settings?: SettingsStore,
   ) {
     this.#diagramPreviews = new DiagramPreviewQueue(canvas);
+  }
+
+  /** Exposed so the settings surface can list the models this install can run. */
+  get modelRuntime(): ModelRuntime | undefined {
+    return this.#modelRuntime;
   }
 
   async initialize(): Promise<void> {

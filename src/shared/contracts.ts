@@ -1,5 +1,11 @@
 // Renderer-safe: never import node: modules here.
 
+import type { ModelOption } from "../main/settings/model-catalog";
+import type { OpenAiKeySource, SecretBackend, SecretName } from "../main/settings/secret-store";
+import type { SettingsPatch, WileySettings, WorkerKind } from "../main/settings/settings-schema";
+
+export type { ModelOption, OpenAiKeySource, SecretBackend, SecretName, SettingsPatch, WileySettings, WorkerKind };
+
 export const IPC = {
   agentToolCall: "agent:tool-call",
   agentEvents: "agent:events",
@@ -15,6 +21,12 @@ export const IPC = {
   activateCanvas: "board:activate",
   canvasRequest: "canvas:request",
   canvasResponse: "canvas:response",
+  settingsGet: "settings:get",
+  settingsUpdate: "settings:update",
+  settingsChanged: "settings:changed",
+  settingsSecretSet: "settings:secret-set",
+  settingsSecretClear: "settings:secret-clear",
+  settingsProbe: "settings:probe",
 } as const;
 
 export type TranscriptRole = "user" | "assistant" | "system";
@@ -83,9 +95,33 @@ export interface RuntimeState {
   agentRunning: boolean;
   activeJobs: JobSummary[];
   boardRevision: number;
-  voiceModel: "gpt-realtime-2.1";
-  agentModel: "gpt-5.6-luna";
-  reasoningEffort: "medium";
+  /** Live values from settings, not build-time constants. */
+  voiceModel: string;
+  agentModel: string;
+  reasoningEffort: string;
+  fastMode: boolean;
+}
+
+/** Whether a worker CLI can actually be launched on this machine. */
+export interface WorkerProbe {
+  available: boolean;
+  reason?: string;
+  version?: string;
+  path?: string;
+}
+
+export type WorkerProbes = Record<WorkerKind, WorkerProbe>;
+
+/**
+ * Everything the settings UI needs, and nothing it must not have: secret
+ * values never leave the host, only whether one exists and where it came from.
+ */
+export interface SettingsView extends WileySettings {
+  secrets: {
+    openaiApiKey: { present: boolean; source: OpenAiKeySource; backend: SecretBackend };
+  };
+  models: ModelOption[];
+  probes: WorkerProbes;
 }
 
 export interface BoardSnapshot {
@@ -170,6 +206,12 @@ export interface BoardApi {
    */
   activateCanvas(): Promise<{ ok: true }>;
   getRuntimeConfig(): Promise<RuntimeConfig>;
+  getSettings(): Promise<SettingsView>;
+  updateSettings(patch: SettingsPatch): Promise<SettingsView>;
+  setSecret(name: SecretName, value: string): Promise<SettingsView>;
+  clearSecret(name: SecretName): Promise<SettingsView>;
+  probeWorkers(): Promise<WorkerProbes>;
+  onSettingsChanged(callback: (settings: SettingsView) => void): () => void;
   onVoiceMessage(callback: (message: VoiceInjection) => void): () => void;
   onCanvasRequest(callback: (request: CanvasRequest) => void): () => void;
   respondCanvasRequest(response: CanvasResponse): void;

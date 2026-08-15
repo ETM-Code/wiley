@@ -3,6 +3,8 @@ import type { RuntimeLedger } from "./ledger";
 import { type PiRuntime } from "./pi-runtime";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
+import { effectiveThinkingLevel } from "./settings/settings-schema";
+import { type SettingsStore } from "./settings/settings-store";
 
 export class RuntimeController {
   #microphoneEnabled = false;
@@ -14,8 +16,12 @@ export class RuntimeController {
     private readonly pi: PiRuntime,
     private readonly canvas: CanvasBridge,
     private readonly send: (channel: string, payload: unknown) => void,
+    private readonly settings: SettingsStore,
   ) {
     this.pi.onEvent((event) => void this.#onAgentEvent(event));
+    // Status is what the voice model reads back to the user, so a settings
+    // change has to show up there immediately rather than at the next job.
+    this.settings.onChange(() => this.#broadcastState());
   }
 
   get sessionStartedAt(): string {
@@ -56,14 +62,16 @@ export class RuntimeController {
   }
 
   getState(): RuntimeState {
+    const settings = this.settings.get();
     return {
       microphoneEnabled: this.#microphoneEnabled,
       agentRunning: this.pi.isRunning,
       activeJobs: this.listActiveJobs(),
       boardRevision: this.canvas.getSnapshot().revision,
-      voiceModel: "gpt-realtime-2.1",
-      agentModel: "gpt-5.6-luna",
-      reasoningEffort: "medium",
+      voiceModel: settings.voice.model,
+      agentModel: settings.agent.model,
+      reasoningEffort: effectiveThinkingLevel(settings),
+      fastMode: settings.agent.fastMode,
     };
   }
 

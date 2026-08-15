@@ -4,8 +4,12 @@ import type {
   CanvasRequest,
   CanvasResponse,
   RuntimeConfig,
+  SecretName,
+  SettingsPatch,
+  SettingsView,
   TranscriptDraft,
   VoiceInjection,
+  WorkerProbes,
 } from "../shared/contracts";
 
 export type {
@@ -14,8 +18,12 @@ export type {
   CanvasRequest,
   CanvasResponse,
   RuntimeConfig,
+  SecretName,
+  SettingsPatch,
+  SettingsView,
   TranscriptDraft,
   VoiceInjection,
+  WorkerProbes,
 };
 
 export type AgentStatus = {
@@ -65,6 +73,12 @@ type PreloadApi = {
   onRuntimeState?: (listener: (status: RuntimeStateLike) => void) => Unsubscribe | void;
   submitBoardSnapshot?: (snapshot: BoardSnapshot) => Promise<unknown>;
   getRuntimeConfig?: () => Promise<Partial<RuntimeConfig>>;
+  getSettings?: () => Promise<SettingsView>;
+  updateSettings?: (patch: SettingsPatch) => Promise<SettingsView>;
+  setSecret?: (name: SecretName, value: string) => Promise<SettingsView>;
+  clearSecret?: (name: SecretName) => Promise<SettingsView>;
+  probeWorkers?: () => Promise<WorkerProbes>;
+  onSettingsChanged?: (listener: (settings: SettingsView) => void) => Unsubscribe | void;
 };
 
 type BrowserWindow = Window & {
@@ -129,6 +143,14 @@ function createBrowserApi(): PreloadApi {
     onAgentEvent: (listener) => subscribe("agent:events", listener),
     submitBoardSnapshot: (snapshot) => fetchJson("/api/board-snapshot", { method: "POST", body: JSON.stringify(snapshot) }),
     getRuntimeConfig: () => fetchJson<RuntimeConfig>("/api/runtime-config"),
+    getSettings: () => fetchJson<SettingsView>("/api/settings"),
+    updateSettings: (patch) => fetchJson<SettingsView>("/api/settings", { method: "POST", body: JSON.stringify(patch) }),
+    setSecret: (name, value) =>
+      fetchJson<SettingsView>("/api/settings/secret", { method: "POST", body: JSON.stringify({ name, value }) }),
+    clearSecret: (name) =>
+      fetchJson<SettingsView>("/api/settings/secret", { method: "POST", body: JSON.stringify({ name, clear: true }) }),
+    probeWorkers: () => fetchJson<WorkerProbes>("/api/settings/probe", { method: "POST", body: "{}" }),
+    onSettingsChanged: (listener) => subscribe("settings:changed", listener),
   };
 }
 
@@ -227,6 +249,36 @@ export const bridge = {
 
   async submitBoardSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot | undefined> {
     return await preload()?.submitBoardSnapshot?.(snapshot) as BoardSnapshot | undefined;
+  },
+
+  async getSettings(): Promise<SettingsView | undefined> {
+    return preload()?.getSettings?.();
+  },
+
+  async updateSettings(patch: SettingsPatch): Promise<SettingsView | undefined> {
+    const update = preload()?.updateSettings;
+    if (!update) throw new Error("Settings are unavailable: the host did not expose updateSettings");
+    return update(patch);
+  },
+
+  async setSecret(name: SecretName, value: string): Promise<SettingsView | undefined> {
+    const set = preload()?.setSecret;
+    if (!set) throw new Error("Settings are unavailable: the host did not expose setSecret");
+    return set(name, value);
+  },
+
+  async clearSecret(name: SecretName): Promise<SettingsView | undefined> {
+    const clear = preload()?.clearSecret;
+    if (!clear) throw new Error("Settings are unavailable: the host did not expose clearSecret");
+    return clear(name);
+  },
+
+  async probeWorkers(): Promise<WorkerProbes | undefined> {
+    return preload()?.probeWorkers?.();
+  },
+
+  onSettingsChanged(listener: (settings: SettingsView) => void): Unsubscribe {
+    return optionalSubscription(preload()?.onSettingsChanged?.(listener));
   },
 
   async isVoiceDisabled(): Promise<boolean> {

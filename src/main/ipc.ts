@@ -4,9 +4,11 @@ import {
   type BoardSnapshot,
   type CanvasResponse,
   type RuntimeConfig,
+  type SettingsPatch,
   type TranscriptRole,
   type VoiceToolName,
 } from "../shared/contracts";
+import { assertSecretName, type SettingsService } from "./settings/settings-service";
 import { mintRealtimeToken } from "./voice-token";
 import { type RuntimeController } from "./runtime-controller";
 import { type TranscriptStore } from "./transcript";
@@ -29,8 +31,10 @@ export function registerIpc(options: {
   voice: VoiceBridge;
   ledger: RuntimeLedger;
   pi: PiRuntime;
+  settings: SettingsService;
+  sendToRenderer: (channel: string, payload: unknown) => void;
 }): () => void {
-  const { runtime, transcript, canvas, voice, ledger, pi } = options;
+  const { runtime, transcript, canvas, voice, ledger, pi, settings, sendToRenderer } = options;
   const handled: string[] = [];
   const handle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => {
     ipcMain.handle(channel, async (event, ...args) => {
@@ -61,6 +65,27 @@ export function registerIpc(options: {
   handle(IPC.agentToolCall, (_event, name: VoiceToolName, args: Record<string, unknown> = {}) =>
     callVoiceTool({ runtime, canvas, voice, ledger, pi }, name, args));
 
+  handle(IPC.settingsGet, () => settings.view());
+  handle(IPC.settingsUpdate, (_event, patch: SettingsPatch) => {
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("Settings patch must be an object");
+    return settings.update(patch);
+  });
+  handle(IPC.settingsSecretSet, (_event, name: unknown, value: unknown) => {
+    if (typeof value !== "string" || !value.trim()) throw new Error("A secret value is required");
+    return settings.setSecret(assertSecretName(name), value);
+  });
+  handle(IPC.settingsSecretClear, (_event, name: unknown) => settings.clearSecret(assertSecretName(name)));
+  handle(IPC.settingsProbe, () => settings.probeWorkers());
+
+  // A change from any source (this window, a hand edit, a future CLI) reaches
+  // every renderer through the same channel the panel already listens on.
+  const unsubscribeSettings = settings.store.onChange(() => {
+    void settings.view().then(
+      (view) => sendToRenderer(IPC.settingsChanged, view),
+      (error: unknown) => console.error("Could not broadcast the settings change", error),
+    );
+  });
+
   const canvasListener = (_event: Electron.IpcMainEvent, response: CanvasResponse) => {
     canvas.acceptResponse(response);
   };
@@ -68,5 +93,6 @@ export function registerIpc(options: {
   return () => {
     for (const channel of handled) ipcMain.removeHandler(channel);
     ipcMain.removeListener(IPC.canvasResponse, canvasListener);
+    unsubscribeSettings();
   };
 }
