@@ -15,7 +15,8 @@ import {
   translatePlan,
   type LayoutParams,
 } from "../diagram-layout";
-import { deriveDiagramId, readDiagramStamp, titleElementId } from "../diagram-spec";
+import { readDiagramStamp } from "../../shared/diagram-stamp";
+import { deriveDiagramId, titleElementId } from "../diagram-spec";
 import { asRecord, gridResult, resolveDiagramOrigin } from "./geometry";
 import {
   diagramPreviewElementIds,

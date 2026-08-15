@@ -6,7 +6,7 @@ import { addShape, layoutDiagram } from "./canvas/diagram-render";
 import { exportScenePng } from "./canvas/export";
 import { applyPatch, connectElements } from "./canvas/patch";
 import { clearDiagramPreview } from "./canvas/preview-state";
-import { sceneSummary } from "./canvas/scene-summary";
+import { diagramIndex, sceneSummary } from "./canvas/scene-summary";
 import { addElements } from "./canvas/skeletons";
 
 export { MODEL_GRID_SIZE, snapModelCoordinate } from "./diagram-layout";
@@ -32,8 +32,10 @@ export async function handleCanvasRequest(
       return mutationResult(api, await addShape(api, request.params));
     case "get-scene-summary":
       return sceneSummary(api.getSceneElements());
-    case "get-scene-full":
-      return api.getSceneElements();
+    case "get-scene-full": {
+      const elements = api.getSceneElements();
+      return { elements, diagrams: diagramIndex(elements) };
+    }
     case "export-png":
       return exportScenePng(api);
     case "layout-diagram":

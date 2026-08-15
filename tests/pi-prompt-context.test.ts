@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { BoardSnapshot } from "../src/shared/contracts";
-import { buildBoardContext, buildSubagentMessage, buildTaskMessage } from "../src/main/pi/prompt-context";
+import {
+  boardDiagrams,
+  buildBoardContext,
+  buildSubagentMessage,
+  buildTaskMessage,
+  formatDiagramListing,
+} from "../src/main/pi/prompt-context";
 
 function board(elementCount: number): BoardSnapshot {
   return {
@@ -22,9 +28,14 @@ function board(elementCount: number): BoardSnapshot {
 }
 
 function section(message: string, tag: string): string {
-  const match = new RegExp(`<${tag}>\\n(.*)\\n</${tag}>`).exec(message);
+  const match = new RegExp(`<${tag}>\\n([\\s\\S]*)\\n</${tag}>`).exec(message);
   if (!match) throw new Error(`Message is missing the <${tag}> envelope`);
   return match[1];
+}
+
+/** The canvas envelope leads with the JSON context, then the diagram listing. */
+function canvasContext<T>(message: string): T {
+  return JSON.parse(section(message, "current_canvas_context").split("\n")[0]) as T;
 }
 
 describe("buildBoardContext", () => {
@@ -79,8 +90,7 @@ describe("buildTaskMessage", () => {
   });
 
   it("wraps the board context in a current_canvas_context envelope", () => {
-    const context = JSON.parse(section(message, "current_canvas_context")) as { elementCount: number };
-    expect(context.elementCount).toBe(2);
+    expect(canvasContext<{ elementCount: number }>(message).elementCount).toBe(2);
   });
 
   it("passes the truncation flag through to the canvas envelope", () => {
@@ -90,8 +100,63 @@ describe("buildTaskMessage", () => {
       transcriptEntries: [],
       board: board(101),
     });
-    const context = JSON.parse(section(big, "current_canvas_context")) as { truncated: boolean };
-    expect(context.truncated).toBe(true);
+    expect(canvasContext<{ truncated: boolean }>(big).truncated).toBe(true);
+  });
+});
+
+describe("board diagrams", () => {
+  const stamped: BoardSnapshot = {
+    revision: 3,
+    appState: {},
+    elements: [
+      { id: "human-box", type: "rectangle", x: 0, y: 0, width: 10, height: 10 },
+      {
+        id: "wd-flow-1-title", type: "text", x: 0, y: 0, width: 100, height: 40, text: "Login flow",
+        customData: { wiley: { diagram: "wd-flow-1", role: "title" } },
+      },
+      {
+        id: "wd-flow-1-n-start", type: "rectangle", x: 0, y: 60, width: 100, height: 40,
+        customData: { wiley: { diagram: "wd-flow-1", role: "node", key: "start" } },
+      },
+      {
+        id: "wd-flow-1-n-done", type: "rectangle", x: 200, y: 60, width: 100, height: 40,
+        customData: { wiley: { diagram: "wd-flow-1", role: "node", key: "done" } },
+      },
+      {
+        id: "wd-other-2-n-a", type: "ellipse", x: 0, y: 400, width: 80, height: 40,
+        customData: { wiley: { diagram: "wd-other-2", role: "node", key: "a" } },
+      },
+    ],
+  };
+
+  it("groups stamped elements by diagram and ignores hand-drawn ones", () => {
+    expect(boardDiagrams(stamped)).toEqual([
+      { id: "wd-flow-1", title: "Login flow", nodeKeys: ["start", "done"], elementCount: 3 },
+      { id: "wd-other-2", nodeKeys: ["a"], elementCount: 1 },
+    ]);
+  });
+
+  it("reports no diagrams for a board of hand-drawn elements", () => {
+    expect(boardDiagrams(board(3))).toEqual([]);
+    expect(formatDiagramListing([])).toBe("(none)");
+  });
+
+  it("lists one line per diagram with its title and node keys", () => {
+    expect(formatDiagramListing(boardDiagrams(stamped)).split("\n")).toEqual([
+      'wd-flow-1 "Login flow" nodes=[start, done] elements=3',
+      "wd-other-2 (untitled) nodes=[a] elements=1",
+    ]);
+  });
+
+  it("carries the listing inside the canvas envelope of a task message", () => {
+    const message = buildTaskMessage({
+      task: "extend it",
+      userWords: "extend it",
+      transcriptEntries: [],
+      board: stamped,
+    });
+    expect(section(message, "diagrams")).toContain("wd-flow-1");
+    expect(canvasContext<{ diagrams: unknown[] }>(message).diagrams).toHaveLength(2);
   });
 });
 
