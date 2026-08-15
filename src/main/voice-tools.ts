@@ -1,4 +1,4 @@
-import type { JobSummary, VoiceToolName } from "./contracts";
+import type { JobSummary, VoiceToolName } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import type { PiRuntime } from "./pi-runtime";
 import type { RuntimeController } from "./runtime-controller";

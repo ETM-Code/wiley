@@ -1,46 +1,34 @@
+// Renderer-safe: never import node: modules here.
+
 export const IPC = {
+  agentToolCall: "agent:tool-call",
+  agentEvents: "agent:events",
+  appendTranscript: "conversation:append-transcript",
+  getTranscript: "conversation:get-transcript",
   voiceToken: "voice:token",
-  voiceToolCall: "agent:tool-call",
-  voiceAppendTranscript: "conversation:append-transcript",
-  voiceMessage: "voice:inject",
+  voiceInject: "voice:inject",
   setMicrophoneEnabled: "voice:set-microphone-enabled",
+  runtimeGetState: "runtime:get-state",
+  runtimeState: "runtime:state",
+  listActiveJobs: "jobs:list-active",
+  submitBoardSnapshot: "board:submit-snapshot",
+  boardTransactions: "board:transaction",
   canvasRequest: "canvas:request",
   canvasResponse: "canvas:response",
-  submitBoardSnapshot: "board:submit-snapshot",
-  agentStatus: "runtime:get-state",
-  agentEvents: "agent:events",
-  runtimeState: "runtime:state"
 } as const;
 
-export type TranscriptRole = "user" | "assistant" | "system_event";
+export type TranscriptRole = "user" | "assistant" | "system";
 
 export interface TranscriptEntry {
-  id?: string;
-  sequence?: number;
-  at?: string;
+  id: string;
+  sequence: number;
+  at: string;
   role: TranscriptRole;
   text: string;
-  relatedJobIds?: string[];
 }
 
-export type JobState =
-  | "queued"
-  | "running"
-  | "interrupting"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export interface JobSummary {
-  id: string;
-  task: string;
-  userWords: string;
-  status: JobState;
-  createdAt: string;
-  updatedAt: string;
-  milestone?: string;
-}
+/** What a client submits; the ledger assigns id, sequence, and at. */
+export type TranscriptDraft = Pick<TranscriptEntry, "role" | "text">;
 
 export type AgentEventType =
   | "assistant_message"
@@ -67,33 +55,22 @@ export interface AgentEvent {
   payload: unknown;
 }
 
-export type CanvasOperation =
-  | "get-scene-summary"
-  | "get-scene-full"
-  | "export-png"
-  | "add-shape"
-  | "layout-diagram"
-  | "add-elements"
-  | "apply-patch";
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "interrupting"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
-export interface CanvasRequest {
-  id: number;
-  op: CanvasOperation;
-  params?: unknown;
-}
-
-export interface CanvasResponse {
-  id: number;
-  result?: unknown;
-  error?: string;
-}
-
-export interface VoiceMessage {
-  id?: string;
-  text: string;
-  interrupt?: boolean;
-  jobId?: string;
-  kind?: "progress" | "question" | "result" | "error";
+export interface JobSummary {
+  id: string;
+  task: string;
+  userWords: string;
+  status: JobStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface RuntimeState {
@@ -113,15 +90,80 @@ export interface BoardSnapshot {
   files?: Record<string, unknown>;
 }
 
+export interface CanvasRequest {
+  id: number;
+  op:
+    | "get-scene-summary"
+    | "get-scene-full"
+    | "export-png"
+    | "add-shape"
+    | "layout-diagram"
+    | "preview-diagram"
+    | "clear-diagram-preview"
+    | "add-elements"
+    | "connect-elements"
+    | "clear-scene"
+    | "apply-patch";
+  params?: unknown;
+}
+
+export interface CanvasResponse {
+  id: number;
+  result?: unknown;
+  error?: string;
+}
+
+export interface BoardTransaction {
+  id: string;
+  idempotencyKey: string;
+  agentId: string;
+  jobId: string;
+  baseRevision: number;
+  leaseIds?: string[];
+  summary: string;
+  operation: "add-shape" | "layout-diagram" | "add-elements" | "connect-elements" | "clear-scene" | "apply-patch";
+  params: unknown;
+}
+
+export interface BoardLease {
+  id: string;
+  agentId: string;
+  elementIds: string[];
+  expiresAt: number;
+}
+
+export type VoiceToolName =
+  | "send_task_to_agent"
+  | "answer_agent"
+  | "get_agent_status"
+  | "look_at_board"
+  | "abort_agent"
+  | "new_session";
+
+export interface VoiceInjection {
+  id: string;
+  text: string;
+  interrupt: boolean;
+  /** Context-only: added to the conversation without triggering speech. */
+  silent?: boolean;
+}
+
+export interface JsonlRecord {
+  kind: "transcript" | "agent_event" | "job" | "board_transaction" | "board_snapshot";
+  at: string;
+  data: unknown;
+}
+
+/** The surface the Electron preload exposes on window.api. */
 export interface BoardApi {
   getVoiceToken(): Promise<string | { value: string }>;
   agentToolCall(name: string, args: Record<string, unknown>): Promise<unknown>;
-  appendTranscript(entry: TranscriptEntry): Promise<void>;
+  appendTranscript(entry: TranscriptDraft): Promise<TranscriptEntry>;
   getAgentStatus(): Promise<RuntimeState>;
   setMicrophoneEnabled(enabled: boolean): Promise<RuntimeState>;
-  submitBoardSnapshot(snapshot: BoardSnapshot): Promise<unknown>;
+  submitBoardSnapshot(snapshot: BoardSnapshot): Promise<BoardSnapshot>;
   getRuntimeConfig(): Promise<{ voiceDisabled: boolean }>;
-  onVoiceMessage(callback: (message: VoiceMessage) => void): () => void;
+  onVoiceMessage(callback: (message: VoiceInjection) => void): () => void;
   onCanvasRequest(callback: (request: CanvasRequest) => void): () => void;
   respondCanvasRequest(response: CanvasResponse): void;
   onAgentEvent(callback: (event: AgentEvent) => void): () => void;

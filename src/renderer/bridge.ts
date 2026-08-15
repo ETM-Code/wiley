@@ -1,36 +1,12 @@
-export type TranscriptEntry = {
-  role: "user" | "assistant";
-  text: string;
-};
+import type {
+  BoardSnapshot,
+  CanvasRequest,
+  CanvasResponse,
+  TranscriptDraft,
+  VoiceInjection,
+} from "../shared/contracts";
 
-export type CanvasRequest = {
-  id: number;
-  op:
-    | "get-scene-summary"
-    | "get-scene-full"
-    | "export-png"
-    | "add-shape"
-    | "layout-diagram"
-    | "preview-diagram"
-    | "clear-diagram-preview"
-    | "add-elements"
-    | "connect-elements"
-    | "clear-scene"
-    | "apply-patch";
-  params?: unknown;
-};
-
-export type CanvasResponse = {
-  id: number;
-  result?: unknown;
-  error?: string;
-};
-
-export type VoiceInjection = {
-  text: string;
-  interrupt?: boolean;
-  silent?: boolean;
-};
+export type { BoardSnapshot, CanvasRequest, CanvasResponse, TranscriptDraft, VoiceInjection };
 
 export type AgentStatus = {
   agentRunning: boolean;
@@ -54,13 +30,6 @@ type RuntimeStateLike = Partial<AgentStatus> & {
   }>;
 };
 
-export type BoardSnapshot = {
-  revision: number;
-  elements: Array<Record<string, unknown>>;
-  appState: Record<string, unknown>;
-  files?: Record<string, unknown>;
-};
-
 type Unsubscribe = () => void;
 
 type BrowserEvent = { sequence?: number; channel?: string; payload?: unknown };
@@ -73,7 +42,7 @@ type BrowserEventPage = { events?: BrowserEvent[]; cursor?: number };
 type PreloadApi = {
   getVoiceToken?: () => Promise<string | { value: string }>;
   agentToolCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
-  appendTranscript?: (entry: TranscriptEntry) => Promise<void> | void;
+  appendTranscript?: (entry: TranscriptDraft) => Promise<void> | void;
   onVoiceMessage?: (listener: (message: VoiceInjection) => void) => Unsubscribe | void;
   onCanvasRequest?: (listener: (request: CanvasRequest) => void) => Unsubscribe | void;
   respondCanvasRequest?: (response: CanvasResponse) => Promise<void> | void;
@@ -202,7 +171,7 @@ export const bridge = {
     return call(name, args);
   },
 
-  appendTranscript(entry: TranscriptEntry): void {
+  appendTranscript(entry: TranscriptDraft): void {
     ignoreRejected(preload()?.appendTranscript?.(entry));
   },
 

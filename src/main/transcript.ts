@@ -1,5 +1,5 @@
 import type { RuntimeLedger } from "./ledger";
-import type { TranscriptEntry, TranscriptRole } from "./contracts";
+import type { TranscriptEntry, TranscriptRole } from "../shared/contracts";
 
 export const MAX_TRANSCRIPT_CHARS = 750_000;
 

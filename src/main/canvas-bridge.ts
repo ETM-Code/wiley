@@ -1,4 +1,4 @@
-import type { BoardSnapshot, BoardTransaction, CanvasRequest, CanvasResponse } from "./contracts";
+import type { BoardSnapshot, BoardTransaction, CanvasRequest, CanvasResponse } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 
 interface PendingRequest {

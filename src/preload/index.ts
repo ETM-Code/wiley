@@ -7,8 +7,8 @@ import {
   type CanvasRequest,
   type CanvasResponse,
   type RuntimeState,
-  type TranscriptEntry,
-  type VoiceMessage
+  type TranscriptDraft,
+  type VoiceInjection
 } from "../shared/contracts";
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
@@ -19,13 +19,13 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
 
 const api: BoardApi = {
   getVoiceToken: () => ipcRenderer.invoke(IPC.voiceToken),
-  agentToolCall: (name, args) => ipcRenderer.invoke(IPC.voiceToolCall, name, args),
-  appendTranscript: (entry: TranscriptEntry) => ipcRenderer.invoke(IPC.voiceAppendTranscript, entry),
-  getAgentStatus: () => ipcRenderer.invoke(IPC.agentStatus),
+  agentToolCall: (name, args) => ipcRenderer.invoke(IPC.agentToolCall, name, args),
+  appendTranscript: (entry: TranscriptDraft) => ipcRenderer.invoke(IPC.appendTranscript, entry),
+  getAgentStatus: () => ipcRenderer.invoke(IPC.runtimeGetState),
   setMicrophoneEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.setMicrophoneEnabled, enabled),
   submitBoardSnapshot: (snapshot: BoardSnapshot) => ipcRenderer.invoke(IPC.submitBoardSnapshot, snapshot),
   getRuntimeConfig: async () => ({ voiceDisabled: process.env.VOICE_DISABLED === "1" }),
-  onVoiceMessage: (callback: (message: VoiceMessage) => void) => subscribe(IPC.voiceMessage, callback),
+  onVoiceMessage: (callback: (message: VoiceInjection) => void) => subscribe(IPC.voiceInject, callback),
   onCanvasRequest: (callback: (request: CanvasRequest) => void) => subscribe(IPC.canvasRequest, callback),
   respondCanvasRequest: (response: CanvasResponse) => ipcRenderer.send(IPC.canvasResponse, response),
   onAgentEvent: (callback: (event: AgentEvent) => void) => subscribe(IPC.agentEvents, callback),
