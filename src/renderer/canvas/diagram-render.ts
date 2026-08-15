@@ -13,8 +13,10 @@ import {
   snapModelCoordinate,
   snapModelSize,
   translatePlan,
+  type DiagramPlan,
   type LayoutParams,
 } from "../diagram-layout";
+import { evaluateDiagramPlan, type DiagramQualityReport } from "../diagram-quality";
 import { readDiagramStamp } from "../../shared/diagram-stamp";
 import { deriveDiagramId, titleElementId } from "../diagram-spec";
 import { asRecord, gridResult, resolveDiagramOrigin } from "./geometry";
@@ -79,6 +81,32 @@ export async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
   };
 }
 
+/**
+ * Above this the checks cost more than they are worth: they are quadratic in
+ * element count and the agent is not going to redraw a 200-element diagram
+ * over a crowded port anyway.
+ */
+export const QUALITY_EVALUATION_LIMIT = 120;
+
+/**
+ * The last gate before a diagram reaches the board.
+ *
+ * Everything in the report is worth telling the agent about, but only two
+ * findings mean the picture is actually wrong: boxes on top of each other and
+ * an arrow driven through a box it does not belong to. Both survive the
+ * repair pass only when something upstream is broken, so they fail the call
+ * rather than shipping a diagram the user has to squint at.
+ */
+export function assertDiagramQuality(plan: DiagramPlan): DiagramQualityReport | undefined {
+  if (plan.skeletons.length > QUALITY_EVALUATION_LIMIT) return undefined;
+  const quality = evaluateDiagramPlan(plan);
+  const defects = [...quality.nodeOverlaps, ...quality.edgesThroughNodes];
+  if (defects.length > 0) {
+    throw new Error(`Diagram quality check failed: ${defects.slice(0, 3).join("; ")}`);
+  }
+  return quality;
+}
+
 /** Monotonic even when two diagrams are requested within the same millisecond. */
 let lastDiagramSeed = 0;
 
@@ -114,6 +142,9 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     withoutDiagramPreviewElements([...api.getSceneElements()]),
   );
   translatePlan(plan, origin.x, origin.y);
+  // Previews are redrawn on every JSON delta and are throwaway by design, so
+  // they never pay for the checks.
+  const quality = preview ? undefined : assertDiagramQuality(plan);
   const title = params.title?.trim();
 
   // Derived ids are only safe while nothing else owns them. The converter
@@ -224,6 +255,8 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   const result = {
     count: created.length,
     diagramId,
+    layout: plan.layout,
+    ...(quality ? { quality } : {}),
     idMap: Object.fromEntries(params.nodes.map(
       (node) => [node.id, plan.elementIdByNode.get(node.id)],
     )),
