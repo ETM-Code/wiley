@@ -33,7 +33,9 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-export type GraphShape = "rectangle" | "diamond" | "ellipse";
+export type GraphShape = "rectangle" | "diamond" | "ellipse" | "text";
+
+export const GRAPH_SHAPES: readonly GraphShape[] = ["rectangle", "diamond", "ellipse", "text"];
 export type GraphNode = {
   id: string;
   label: string;
@@ -239,11 +241,30 @@ function shapeFactor(shape: GraphShape): number {
   return 1;
 }
 
+/**
+ * A text node is its own text: no border, no padding, no bound label. It is
+ * laid out from the exact measured block so neighbours keep their distance
+ * from the glyphs rather than from an invented box.
+ */
+export function textNodeLines(node: GraphNode): string[] {
+  return wrapLabel(node.label, NODE_FONT_SIZE, NODE_TEXT_WRAP_WIDTH);
+}
+
+function textNodeDimensions(node: GraphNode): { width: number; height: number } {
+  const lines = textNodeLines(node);
+  const width = lines.reduce((max, line) => Math.max(max, measureText(line, NODE_FONT_SIZE).width), 1);
+  return {
+    width: Math.ceil(width),
+    height: Math.ceil(lines.length * NODE_FONT_SIZE * LINE_HEIGHT_RATIO),
+  };
+}
+
 export function nodeDimensions(
   node: GraphNode,
   portDemand = 0,
   direction: "RIGHT" | "DOWN" = "RIGHT",
 ): { width: number; height: number } {
+  if (nodeToType(node) === "text") return textNodeDimensions(node);
   const factor = shapeFactor(nodeToType(node));
   const lines = wrapLabel(node.label, NODE_FONT_SIZE, NODE_TEXT_WRAP_WIDTH / factor);
   const textWidth = lines.reduce((max, line) => Math.max(max, measureText(line, NODE_FONT_SIZE).width), 1);
@@ -283,7 +304,7 @@ function validateGraph(params: LayoutParams): void {
     if (!node?.id || !node.label || nodeIds.has(node.id)) {
       throw new Error("Diagram nodes require unique ids and non-empty labels");
     }
-    if (node.shape && !["rectangle", "diamond", "ellipse"].includes(node.shape)) {
+    if (node.shape && !(GRAPH_SHAPES as readonly string[]).includes(node.shape)) {
       throw new Error(`Diagram node ${node.id} has an unsupported shape`);
     }
     requireMember(node.role, NODE_ROLES, `node ${node.id} role`);
@@ -406,12 +427,33 @@ export async function planDiagramLayout(
       strokeColor: node.strokeColor,
     });
     roles.set(id, { role: "node", key: node.id });
+    const x = snapModelCoordinate(origin.x + position.x);
+    const y = snapModelCoordinate(origin.y + position.y);
+    if (type === "text") {
+      return {
+        id,
+        type,
+        ...stamp("node", node.id),
+        x,
+        y,
+        width: size.width,
+        height: size.height,
+        text: textNodeLines(node).join("\n"),
+        fontSize: NODE_FONT_SIZE,
+        fontFamily: 5,
+        textAlign: "left",
+        verticalAlign: "top",
+        opacity: style.opacity,
+        strokeColor: style.strokeColor,
+        backgroundColor: node.backgroundColor ?? "transparent",
+      };
+    }
     return {
       id,
       type,
       ...stamp("node", node.id),
-      x: snapModelCoordinate(origin.x + position.x),
-      y: snapModelCoordinate(origin.y + position.y),
+      x,
+      y,
       width: size.width,
       height: size.height,
       strokeColor: style.strokeColor,
