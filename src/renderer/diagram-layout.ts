@@ -80,6 +80,10 @@ const NODE_MIN_WIDTH = 160;
 const NODE_MAX_WIDTH = 440;
 const NODE_MIN_HEIGHT = 80;
 const NODE_TEXT_WRAP_WIDTH = 280;
+// Emoji, pictographs, and the symbol blocks above it render as a square tile
+// roughly 1.2x the font size wide, nothing like an average Latin glyph.
+export const WIDE_GLYPH_MIN_CODE_POINT = 0x1f000;
+export const WIDE_GLYPH_ADVANCE_RATIO = 1.2;
 // Ports separated by more than one grid cell can never snap onto each other.
 const PORT_SPACING = 28;
 
@@ -146,7 +150,23 @@ export function measureText(
     const width = context.measureText(text).width;
     if (Number.isFinite(width) && width > 0) return { width, height };
   }
-  return { width: Math.max(1, text.length) * fontSize * FALLBACK_CHAR_WIDTH_RATIO, height };
+  return { width: Math.max(fontSize * FALLBACK_CHAR_WIDTH_RATIO, estimateWidth(text, fontSize)), height };
+}
+
+/**
+ * Average-glyph estimate for environments with neither a real measurer nor a
+ * canvas. Emoji are the one case where the average is badly wrong, so they
+ * get their own square-tile advance.
+ */
+function estimateWidth(text: string, fontSize: number): number {
+  let width = 0;
+  for (const character of Array.from(text)) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    width += codePoint >= WIDE_GLYPH_MIN_CODE_POINT
+      ? fontSize * WIDE_GLYPH_ADVANCE_RATIO
+      : fontSize * FALLBACK_CHAR_WIDTH_RATIO;
+  }
+  return width;
 }
 
 export function wrapLabel(

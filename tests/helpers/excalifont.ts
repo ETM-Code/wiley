@@ -5,7 +5,11 @@ import type { Font } from "fontkit";
 
 const fontkit = (fontkitModule as { default?: typeof fontkitModule }).default ?? fontkitModule;
 
-import { setDiagramTextMeasurer } from "../../src/renderer/diagram-layout";
+import {
+  WIDE_GLYPH_ADVANCE_RATIO,
+  WIDE_GLYPH_MIN_CODE_POINT,
+  setDiagramTextMeasurer,
+} from "../../src/renderer/diagram-layout";
 
 let faces: Font[] | null = null;
 
@@ -33,7 +37,16 @@ export function installExcalifontMeasurer(): void {
     for (const character of Array.from(text)) {
       const codePoint = character.codePointAt(0);
       if (codePoint === undefined) continue;
-      const face = fonts.find((candidate) => candidate.hasGlyphForCodePoint(codePoint)) ?? fonts[0];
+      const face = fonts.find((candidate) => candidate.hasGlyphForCodePoint(codePoint));
+      if (!face) {
+        // Excalifont ships no emoji glyphs; the browser falls through to the
+        // platform emoji font, which draws a square tile. Measuring these
+        // against Excalifont's notdef metrics under-reports them badly.
+        width += codePoint >= WIDE_GLYPH_MIN_CODE_POINT
+          ? fontSize * WIDE_GLYPH_ADVANCE_RATIO
+          : (fonts[0].layout(character).advanceWidth / fonts[0].unitsPerEm) * fontSize;
+        continue;
+      }
       width += (face.layout(character).advanceWidth / face.unitsPerEm) * fontSize;
     }
     return width > 0 ? width : null;

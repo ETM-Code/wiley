@@ -130,6 +130,28 @@ describe("diagram layout quality", () => {
     expect(wide).toBeGreaterThan(narrow);
   });
 
+  it("gives emoji a square tile advance in both measurement fallbacks", () => {
+    const rocket = measureText("🚀", 20).width;
+    // The fontkit measurer has no Excalifont glyph for an emoji and must not
+    // fall back to the notdef advance of the first subset.
+    expect(rocket).toBeCloseTo(24, 6);
+    expect(measureText("🚀🚀", 20).width).toBeCloseTo(48, 6);
+
+    uninstallExcalifontMeasurer();
+    try {
+      // The naive estimate has to agree; a canvas-less environment otherwise
+      // sizes an emoji like an average letter.
+      expect(measureText("🚀", 20).width).toBeCloseTo(24, 6);
+      expect(measureText("aa", 20).width).toBeCloseTo(24.8, 6);
+    } finally {
+      installExcalifontMeasurer();
+    }
+  });
+
+  it("sizes an emoji label wider than the same label without it", () => {
+    expect(measureText("🚀 Ship", 20).width).toBeGreaterThan(measureText("Ship", 20).width + 20);
+  });
+
   it("snaps node geometry to the hidden model grid", async () => {
     const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
     for (const skeleton of plan.skeletons) {
