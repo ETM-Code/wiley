@@ -48,6 +48,30 @@ export function toolText(value: unknown) {
   return { content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value) }], details: {} };
 }
 
+/**
+ * The full quality report is eight arrays of element-id pairs: useful to
+ * carry, useless to read. The agent gets one line saying whether the drawing
+ * came out clean and, if not, exactly which checks it tripped.
+ */
+export function summarizeDiagramQuality(quality: unknown): string | undefined {
+  if (!quality || typeof quality !== "object") return undefined;
+  const checks = Object.entries(quality as Record<string, unknown>)
+    .filter(([, findings]) => Array.isArray(findings));
+  if (checks.length === 0) return undefined;
+  const tripped = checks
+    .filter(([, findings]) => (findings as unknown[]).length > 0)
+    .map(([name, findings]) => `${(findings as unknown[]).length} ${name}`);
+  return tripped.length === 0 ? `clean on ${checks.length} checks` : tripped.join(", ");
+}
+
+/** draw_diagram's result, with the report collapsed to its one-line summary. */
+export function diagramToolText(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return toolText(value);
+  const { quality, ...rest } = value as Record<string, unknown>;
+  const summary = summarizeDiagramQuality(quality);
+  return toolText(summary === undefined ? rest : { ...rest, quality: summary });
+}
+
 function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
   return [
     defineTool({
@@ -162,7 +186,9 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
           layerSpacing: Type.Optional(Type.Number()),
         }, { additionalProperties: false })),
       }, { additionalProperties: false }),
-      execute: async (_id, params, signal) => toolText(await host.mutateCanvas(agentId, "layout-diagram", params, signal)),
+      execute: async (_id, params, signal) => diagramToolText(
+        await host.mutateCanvas(agentId, "layout-diagram", params, signal),
+      ),
     }),
     defineTool({
       name: "draw_on_canvas",

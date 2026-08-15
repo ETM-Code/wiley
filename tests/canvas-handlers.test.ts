@@ -57,6 +57,8 @@ import {
   withoutDiagramPreviewElements,
 } from "../src/renderer/canvas-handlers";
 import { nodeElementId } from "../src/renderer/diagram-spec";
+import { QUALITY_EVALUATION_LIMIT, assertDiagramQuality } from "../src/renderer/canvas/diagram-render";
+import { handBuiltPlan } from "./fixtures/diagram-gallery";
 
 function expectOnModelGrid(value: unknown) {
   expect(typeof value).toBe("number");
@@ -703,6 +705,95 @@ describe("diagram renderer", () => {
     expect(patched.index).toBe("a1");
   });
 
+  it("attaches a quality report and the layout outcome to a committed diagram", async () => {
+    let elements: Array<Record<string, unknown>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const result = await handleCanvasRequest(api, {
+      id: 60,
+      op: "layout-diagram",
+      params: {
+        theme: "ocean",
+        nodes: [
+          { id: "a", label: "Collect", role: "primary" },
+          { id: "b", label: "Verify", shape: "diamond", role: "neutral" },
+          { id: "c", label: "Store", role: "neutral" },
+        ],
+        edges: [
+          { from: "a", to: "b", label: "batch" },
+          { from: "b", to: "c", label: "ok" },
+        ],
+      },
+    }) as { quality: Record<string, string[]>; layout: Record<string, string> };
+
+    expect(result.layout).toEqual({ requested: "layered", used: "layered" });
+    expect(Object.keys(result.quality).sort()).toEqual([
+      "crowdedPorts",
+      "edgesThroughNodes",
+      "labelCollisions",
+      "nodeOverlaps",
+      "offGrid",
+      "overlappingParallelSegments",
+      "sharedPorts",
+      "styleCoherence",
+    ]);
+    for (const findings of Object.values(result.quality)) expect(findings).toEqual([]);
+  });
+
+  it("fails the call on a plan whose boxes overlap or whose arrows cut through them", () => {
+    const overlapping = handBuiltPlan([
+      {
+        role: "node",
+        key: "a",
+        skeleton: { id: "a", type: "rectangle", x: 0, y: 0, width: 160, height: 80 },
+      },
+      {
+        role: "node",
+        key: "b",
+        skeleton: { id: "b", type: "rectangle", x: 40, y: 20, width: 160, height: 80 },
+      },
+    ]);
+    expect(() => assertDiagramQuality(overlapping)).toThrow(/quality check failed/i);
+
+    const pierced = handBuiltPlan([
+      { role: "node", key: "a", skeleton: { id: "a", type: "rectangle", x: 0, y: 0, width: 160, height: 80 } },
+      { role: "node", key: "b", skeleton: { id: "b", type: "rectangle", x: 800, y: 0, width: 160, height: 80 } },
+      { role: "node", key: "c", skeleton: { id: "c", type: "rectangle", x: 400, y: 0, width: 160, height: 80 } },
+      {
+        role: "edge",
+        key: "a__b",
+        skeleton: {
+          id: "wire",
+          type: "arrow",
+          x: 160,
+          y: 40,
+          points: [[0, 0], [640, 0]],
+          start: { id: "a" },
+          end: { id: "b" },
+        },
+      },
+    ]);
+    expect(() => assertDiagramQuality(pierced)).toThrow(/wire x c/);
+  });
+
+  it("skips evaluation entirely above the element budget", () => {
+    const huge = handBuiltPlan(Array.from({ length: QUALITY_EVALUATION_LIMIT + 1 }, (_, index) => ({
+      role: "node" as const,
+      key: `n${index}`,
+      // Deliberately stacked: nothing is checked, so nothing is reported.
+      skeleton: { id: `n${index}`, type: "rectangle", x: 0, y: 0, width: 160, height: 80 },
+    })));
+    expect(assertDiagramQuality(huge)).toBeUndefined();
+  });
+
   it("reports drawn diagrams in the scene summary", async () => {
     let elements: Array<Record<string, any>> = [
       { id: "human-box", type: "rectangle", x: 0, y: 0, width: 40, height: 40, version: 1 },
@@ -797,5 +888,32 @@ describe("diagram renderer", () => {
       params: { __previewVersion: 303 },
     });
     expect(isDiagramPreviewActive()).toBe(false);
+  });
+
+  it("never evaluates a streaming preview", async () => {
+    let elements: Array<Record<string, unknown>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const preview = await handleCanvasRequest(api, {
+      id: 61,
+      op: "preview-diagram",
+      params: {
+        // Preview arbitration is module state shared with the tests above.
+        __previewVersion: 9_001,
+        nodes: [{ id: "a", label: "One" }, { id: "b", label: "Two" }],
+        edges: [{ from: "a", to: "b" }],
+      },
+    }) as Record<string, unknown>;
+    expect(preview.preview).toBe(true);
+    expect(preview.quality).toBeUndefined();
+    await handleCanvasRequest(api, { id: 62, op: "clear-diagram-preview", params: { __previewVersion: 9_002 } });
   });
 });
