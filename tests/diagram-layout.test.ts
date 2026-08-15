@@ -28,6 +28,7 @@ describe("diagram layout quality", () => {
     expect(report.edgesThroughNodes).toEqual([]);
     expect(report.sharedPorts).toEqual([]);
     expect(report.overlappingParallelSegments).toEqual([]);
+    expect(report.crowdedPorts).toEqual([]);
     expect(report.offGrid).toEqual([]);
     expect(report.styleCoherence).toEqual([]);
   });
