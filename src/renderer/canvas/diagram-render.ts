@@ -17,7 +17,12 @@ import {
   type DiagramPlan,
   type LayoutParams,
 } from "../diagram-layout";
-import { evaluateDiagramPlan, type DiagramQualityReport } from "../diagram-quality";
+import {
+  evaluateConvertedScene,
+  evaluateDiagramPlan,
+  mergeQualityReports,
+  type DiagramQualityReport,
+} from "../diagram-quality";
 import { readDiagramStamp } from "../../shared/diagram-stamp";
 import { deriveDiagramId, titleElementId } from "../diagram-spec";
 import { asRecord, gridResult, resolveDiagramOrigin } from "./geometry";
@@ -257,6 +262,14 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
       ...(label ? [label] : []),
     ];
   });
+  // The converter re-measured every bound label and rebuilt every arrow, so
+  // the checks run once more over what is actually going on the board.
+  const rendered = quality && created.length <= QUALITY_EVALUATION_LIMIT
+    ? mergeQualityReports(
+        quality,
+        evaluateConvertedScene(created as unknown as Parameters<typeof evaluateConvertedScene>[0], plan),
+      )
+    : quality;
   const titleElement = title ? convertedById.get(titleElementId(diagramId)) : undefined;
   const titleTexts = titleElement ? [titleElement] : [];
   // Regions are the stage the rest of the drawing lands on, so they arrive
@@ -273,7 +286,7 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     count: created.length,
     diagramId,
     layout: plan.layout,
-    ...(quality ? { quality } : {}),
+    ...(rendered ? { quality: rendered } : {}),
     idMap: Object.fromEntries(params.nodes.map(
       (node) => [node.id, plan.elementIdByNode.get(node.id)],
     )),
