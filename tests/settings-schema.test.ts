@@ -75,11 +75,18 @@ describe("normalizeSettings", () => {
       .toEqual(["Bash(rm *)"]);
   });
 
-  it("always allows the models the runtime is configured to use", () => {
+  it("keeps the allowlist exactly as the user wrote it", () => {
     const settings = normalizeSettings({
-      agent: { model: "custom-root", subagentModel: "custom-sub", approvalModel: "custom-judge", allowedModels: [] },
+      agent: { model: "custom-root", subagentModel: "custom-sub", allowedModels: ["custom-sub", " custom-sub "] },
     });
-    expect(settings.agent.allowedModels).toEqual(["custom-root", "custom-judge", "custom-sub"]);
+    expect(settings.agent.allowedModels).toEqual(["custom-sub"]);
+  });
+
+  it("restores the default allowlist rather than blocking every spawn", () => {
+    expect(normalizeSettings({ agent: { allowedModels: [] } }).agent.allowedModels)
+      .toEqual(DEFAULT_SETTINGS.agent.allowedModels);
+    expect(normalizeSettings({ agent: { allowedModels: [1, null] } }).agent.allowedModels)
+      .toEqual(DEFAULT_SETTINGS.agent.allowedModels);
   });
 
   it("leaves optional worker fields out rather than writing empty strings", () => {

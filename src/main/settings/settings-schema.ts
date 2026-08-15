@@ -214,6 +214,12 @@ function strings(value: unknown, fallback: string[]): string[] {
   return [...new Set(cleaned)];
 }
 
+/** An empty list would block every spawn, which is never what a user meant. */
+function nonEmptyStrings(value: unknown, fallback: string[]): string[] {
+  const cleaned = strings(value, fallback);
+  return cleaned.length ? cleaned : [...fallback];
+}
+
 function optionalStrings(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return strings(value, []);
@@ -245,12 +251,9 @@ function normalizeAgent(raw: unknown): AgentSettings {
   const model = str(source.model, DEFAULT_SETTINGS.agent.model);
   const approvalModel = str(source.approvalModel, DEFAULT_SETTINGS.agent.approvalModel);
   const subagentModel = optionalStr(source.subagentModel);
-  const allowedModels = strings(source.allowedModels, DEFAULT_SETTINGS.agent.allowedModels);
-  // A model you cannot spawn on is a footgun, not a policy, so the models the
-  // runtime is configured to use are always allowed.
-  for (const required of [model, approvalModel, subagentModel]) {
-    if (required && !allowedModels.includes(required)) allowedModels.push(required);
-  }
+  // Left exactly as the user wrote it: the allowlist is the answer to "what
+  // may Wiley spawn work on", and quietly widening it would defeat the point.
+  const allowedModels = nonEmptyStrings(source.allowedModels, DEFAULT_SETTINGS.agent.allowedModels);
   const agent: AgentSettings = {
     provider: str(source.provider, DEFAULT_SETTINGS.agent.provider),
     model,
