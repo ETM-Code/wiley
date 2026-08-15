@@ -1,6 +1,8 @@
 import ELK from "elkjs/lib/elk.bundled";
 import type { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 
+import type { DiagramElementRole } from "../shared/diagram-stamp";
+
 import {
   deriveDiagramId,
   edgeElementId,
@@ -37,7 +39,7 @@ export type LayoutParams = {
   layout?: DiagramLayoutOptions;
 };
 
-export type DiagramElementRole = "node" | "nodeLabel" | "edge" | "edgeLabel" | "title";
+export type { DiagramElementRole } from "../shared/diagram-stamp";
 
 /**
  * What an emitted element is, semantically. Everything downstream (quality

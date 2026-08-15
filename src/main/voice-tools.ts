@@ -72,10 +72,15 @@ export async function callVoiceTool(
     case "get_agent_status":
       return agentStatusReport(deps);
     case "look_at_board": {
-      const elements = await deps.canvas.request<Array<{ type?: string; text?: string }>>("get-scene-summary");
+      const scene = await deps.canvas.request<{
+        elements: Array<{ type?: string; text?: string }>;
+        diagrams: Array<{ title?: string }>;
+      }>("get-scene-summary");
+      const elements = scene?.elements ?? [];
       return {
         elements: elements.length,
         texts: elements.filter((element) => element.text).map((element) => element.text),
+        diagrams: (scene?.diagrams ?? []).map((diagram) => diagram.title).filter(Boolean),
       };
     }
     case "abort_agent":

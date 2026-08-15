@@ -656,6 +656,54 @@ describe("diagram renderer", () => {
     expect(isDiagramPreviewActive()).toBe(false);
   });
 
+  it("reports drawn diagrams in the scene summary", async () => {
+    let elements: Array<Record<string, any>> = [
+      { id: "human-box", type: "rectangle", x: 0, y: 0, width: 40, height: 40, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700, viewBackgroundColor: "#fff" }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const drawn = await handleCanvasRequest(api, {
+      id: 50,
+      op: "layout-diagram",
+      params: {
+        title: "Signup flow",
+        nodes: [{ id: "start", label: "Start" }, { id: "done", label: "Done" }],
+        edges: [{ from: "start", to: "done" }],
+      },
+    }) as { diagramId: string };
+
+    const summary = await handleCanvasRequest(api, { id: 51, op: "get-scene-summary", params: {} }) as {
+      elements: Array<{ id: string; diagram?: { id: string; key?: string; role: string } }>;
+      diagrams: Array<{ id: string; title?: string; nodeKeys: string[]; elementCount: number; bounds: { w: number } }>;
+    };
+
+    expect(summary.diagrams).toHaveLength(1);
+    expect(summary.diagrams[0]).toMatchObject({
+      id: drawn.diagramId,
+      title: "Signup flow",
+      nodeKeys: ["start", "done"],
+    });
+    expect(summary.diagrams[0].bounds.w).toBeGreaterThan(0);
+    expect(summary.elements.find((element) => element.id === "human-box")?.diagram).toBeUndefined();
+    const node = summary.elements.find((element) => element.diagram?.key === "start")!;
+    expect(node.diagram).toEqual({ id: drawn.diagramId, key: "start", role: "node" });
+
+    const full = await handleCanvasRequest(api, { id: 52, op: "get-scene-full", params: {} }) as {
+      elements: unknown[];
+      diagrams: unknown[];
+    };
+    expect(full.elements.length).toBe(elements.length);
+    expect(full.diagrams).toHaveLength(1);
+  });
+
   it("refuses to draw when a derived id is already taken by something else", async () => {
     let elements: Array<Record<string, any>> = [];
     const api = {
