@@ -9,14 +9,21 @@ import { VoiceBridge } from "./voice-bridge";
 import { PiRuntime } from "./pi-runtime";
 import { RuntimeController } from "./runtime-controller";
 import { registerIpc } from "./ipc";
+import { IPC } from "../shared/contracts";
+import { isTrustedOrigin } from "./trusted-origin";
 
 let mainWindow: BrowserWindow | undefined;
 let pi: PiRuntime | undefined;
 let ledger: SqliteRuntimeLedger | undefined;
+let canvas: CanvasBridge | undefined;
+let voice: VoiceBridge | undefined;
 let disposeIpc: (() => void) | undefined;
 
-function sendToRenderer(channel: string, payload: unknown): void {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+/** Reports delivery so callers with no live window fail fast instead of waiting for a timeout. */
+function sendToRenderer(channel: string, payload: unknown): boolean {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.webContents.send(channel, payload);
+  return true;
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -31,10 +38,6 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
-
-function isTrustedOrigin(url: string): boolean {
-  return url.startsWith("wiley://app/") || /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\//.test(url);
-}
 
 function installAppProtocol(): void {
   const rendererRoot = path.resolve(__dirname, "../renderer");
@@ -128,21 +131,23 @@ async function bootstrap(): Promise<void> {
   );
   await ledger.initialize();
   const transcript = new TranscriptStore(ledger);
-  const canvas = new CanvasBridge(
+  const canvasBridge = new CanvasBridge(
     ledger,
-    (request) => sendToRenderer("canvas:request", request),
-    (transaction) => sendToRenderer("board:transaction", transaction),
+    (request) => sendToRenderer(IPC.canvasRequest, request),
+    (transaction) => sendToRenderer(IPC.boardTransactions, transaction),
   );
-  const voice = new VoiceBridge((message) => sendToRenderer("voice:inject", message));
-  canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
-  pi = new PiRuntime(process.env.BOARD_AI_PROJECT_DIR ?? process.cwd(), ledger, transcript, canvas, voice);
+  const voiceBridge = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
+  canvas = canvasBridge;
+  voice = voiceBridge;
+  canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
+  pi = new PiRuntime(process.env.BOARD_AI_PROJECT_DIR ?? process.cwd(), ledger, transcript, canvasBridge, voiceBridge);
   await pi.initialize();
-  const runtime = new RuntimeController(ledger, transcript, pi, canvas, sendToRenderer);
+  const runtime = new RuntimeController(ledger, transcript, pi, canvasBridge, sendToRenderer);
   await runtime.recoverInterruptedJobs();
-  disposeIpc = registerIpc({ runtime, transcript, canvas, voice, ledger, pi });
+  disposeIpc = registerIpc({ runtime, transcript, canvas: canvasBridge, voice: voiceBridge, ledger, pi });
   mainWindow = await createWindow();
   mainWindow.on("closed", () => {
-    canvas.failPending();
+    canvasBridge.failPending();
     mainWindow = undefined;
   });
 }
@@ -166,6 +171,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   disposeIpc?.();
+  voice?.close();
+  canvas?.failPending("Application is closing");
   void pi?.dispose();
   ledger?.close();
 });
