@@ -1,4 +1,5 @@
 import {
+  DIAGRAM_CONTAINER_RENDERS,
   DIAGRAM_EDGE_ARROWS,
   DIAGRAM_EDGE_LINE_STYLES,
   DIAGRAM_EDGE_WEIGHTS,
@@ -18,6 +19,7 @@ const EDGE_STYLES = new Set<string>(DIAGRAM_EDGE_LINE_STYLES);
 const EDGE_WEIGHTS = new Set<string>(DIAGRAM_EDGE_WEIGHTS);
 const EDGE_ARROWS = new Set<string>(DIAGRAM_EDGE_ARROWS);
 const THEMES = new Set<string>(DIAGRAM_THEME_NAMES);
+const CONTAINER_RENDERS = new Set<string>(DIAGRAM_CONTAINER_RENDERS);
 
 function record(value: unknown): JsonObject {
   return value && typeof value === "object" ? value as JsonObject : {};
@@ -39,6 +41,73 @@ function optional(key: string, value: string | undefined): JsonObject {
 }
 
 /**
+ * The containers safe to draw at this point in the stream: complete, rooted in
+ * a complete parent, still waiting on none of their members, and holding at
+ * least one node that has arrived. A container waiting on anything below it
+ * takes its ancestors down with it, so a half-populated region never flashes
+ * up and then re-flows.
+ */
+function stableContainers(
+  value: unknown,
+  pending: ReadonlySet<string>,
+  claimed: ReadonlySet<string>,
+): JsonObject[] {
+  const parsed: JsonObject[] = [];
+  const seen = new Set<string>();
+  for (const candidate of (Array.isArray(value) ? value : []).slice(0, 50)) {
+    const container = record(candidate);
+    const id = text(container.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    parsed.push({
+      id,
+      ...(typeof container.label === "string" ? { label: container.label } : {}),
+      ...optional("parent", text(container.parent)),
+      ...optional("role", member(container.role, NODE_ROLES)),
+      ...optional("render", member(container.render, CONTAINER_RENDERS)),
+    });
+  }
+  const byId = new Map(parsed.map((container) => [String(container.id), container]));
+  const parentOf = (id: string) => {
+    const parent = byId.get(id)?.parent;
+    return typeof parent === "string" && byId.has(parent) && parent !== id ? parent : undefined;
+  };
+  // A pending member blocks its own container and every ancestor of it. A
+  // container naming a parent that has not streamed in yet blocks itself.
+  const unrooted = [...byId.values()]
+    .filter((container) => typeof container.parent === "string" && !byId.has(container.parent))
+    .map((container) => String(container.id));
+  const blocked = new Set<string>();
+  for (const id of [...pending, ...unrooted]) {
+    let cursor: string | undefined = id;
+    const guard = new Set<string>();
+    while (cursor && !guard.has(cursor)) {
+      guard.add(cursor);
+      blocked.add(cursor);
+      cursor = parentOf(cursor);
+    }
+  }
+  // Occupancy flows the other way: a populated child keeps its ancestors alive.
+  const occupied = new Set<string>();
+  for (const id of claimed) {
+    let cursor: string | undefined = id;
+    const guard = new Set<string>();
+    while (cursor && !guard.has(cursor)) {
+      guard.add(cursor);
+      occupied.add(cursor);
+      cursor = parentOf(cursor);
+    }
+  }
+  const visible = (id: string): boolean => {
+    if (blocked.has(id) || !occupied.has(id)) return false;
+    const parent = byId.get(id)?.parent;
+    if (typeof parent !== "string") return true;
+    return byId.has(parent) && parent !== id && visible(parent);
+  };
+  return parsed.filter((container) => visible(String(container.id)));
+}
+
+/**
  * Converts repaired, incomplete tool arguments into the largest safe diagram
  * prefix the renderer can show. Invalid/incomplete nodes and dangling edges
  * wait for a later delta instead of failing the final tool call.
@@ -52,12 +121,21 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
 
   const ids = new Set<string>();
   const nodes: JsonObject[] = [];
+  // A container is only safe to draw once every node that claims it has
+  // arrived: half a region is worse than no region at all.
+  const pendingContainers = new Set<string>();
+  const claimedContainers = new Set<string>();
   for (const candidate of source.nodes.slice(0, 100)) {
     const node = record(candidate);
     const id = text(node.id);
     const label = text(node.label);
-    if (!id || !label || ids.has(id)) continue;
+    const container = text(node.container);
+    if (!id || !label || ids.has(id)) {
+      if (container) pendingContainers.add(container);
+      continue;
+    }
     ids.add(id);
+    if (container) claimedContainers.add(container);
     nodes.push({
       id,
       label,
@@ -67,9 +145,18 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
       ...(typeof node.backgroundColor === "string" ? { backgroundColor: node.backgroundColor } : {}),
       ...(typeof node.strokeColor === "string" ? { strokeColor: node.strokeColor } : {}),
       ...(typeof node.rounded === "boolean" ? { rounded: node.rounded } : {}),
+      ...optional("container", container),
     });
   }
   if (nodes.length === 0) return undefined;
+
+  const containers = stableContainers(source.containers, pendingContainers, claimedContainers);
+  const visibleContainers = new Set(containers.map((container) => String(container.id)));
+  for (const node of nodes) {
+    if (typeof node.container === "string" && !visibleContainers.has(node.container)) {
+      delete node.container;
+    }
+  }
 
   const edges = (Array.isArray(source.edges) ? source.edges : [])
     .slice(0, 200)
@@ -106,6 +193,7 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
   return {
     nodes,
     edges,
+    ...(containers.length ? { containers } : {}),
     ...(typeof source.title === "string" ? { title: source.title } : {}),
     ...optional("theme", member(source.theme, THEMES)),
     ...(typeof source.anchor === "string" ? { anchor: source.anchor } : {}),

@@ -355,6 +355,38 @@ describe("diagram layout quality", () => {
     )).rejects.toThrow(/colour/);
   });
 
+  it("rejects container declarations Excalidraw or the layout cannot honour", async () => {
+    const nodes = [{ id: "a", label: "A" }, { id: "b", label: "B" }];
+    const attempt = (containers: unknown, extra: Partial<LayoutParams> = {}) => planDiagramLayout(
+      { nodes, edges: [], containers, ...extra } as LayoutParams,
+      ORIGIN,
+      DIAGRAM_ID,
+    );
+
+    await expect(attempt([{ id: "x" }, { id: "x" }])).rejects.toThrow(/declared twice/);
+    await expect(attempt([{ id: "a" }])).rejects.toThrow(/collides with a node id/);
+    await expect(attempt([{ id: "x", parent: "ghost" }])).rejects.toThrow(/unknown parent/);
+    await expect(attempt([
+      { id: "one" },
+      { id: "two", parent: "one" },
+      { id: "three", parent: "two" },
+    ])).rejects.toThrow(/nests deeper than 2/);
+    await expect(attempt([
+      { id: "outer" },
+      { id: "inner", parent: "outer", render: "frame" },
+    ])).rejects.toThrow(/frame inside another container/);
+    await expect(attempt([
+      { id: "outer", render: "frame" },
+      { id: "inner", parent: "outer" },
+    ])).rejects.toThrow(/frame while holding another container/);
+    await expect(attempt([{ id: "x", render: "panel" }])).rejects.toThrow(/render/);
+    await expect(attempt([{ id: "x", role: "chartreuse" }])).rejects.toThrow(/role/);
+    await expect(attempt(
+      [{ id: "x" }],
+      { nodes: [{ id: "a", label: "A", container: "ghost" }] },
+    )).rejects.toThrow(/unknown container/);
+  });
+
   it("emits a text node as a standalone text element with no box or bound label", async () => {
     const plan = await planDiagramLayout({
       theme: "grape",
