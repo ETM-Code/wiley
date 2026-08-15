@@ -1,10 +1,17 @@
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
-import { IPC, type BoardSnapshot, type RuntimeConfig, type TranscriptRole, type VoiceToolName } from "../shared/contracts";
+import {
+  IPC,
+  type BoardSnapshot,
+  type CanvasResponse,
+  type RuntimeConfig,
+  type TranscriptRole,
+  type VoiceToolName,
+} from "../shared/contracts";
 import { mintRealtimeToken } from "./voice-token";
-import { RuntimeController } from "./runtime-controller";
-import { TranscriptStore } from "./transcript";
-import { CanvasBridge } from "./canvas-bridge";
-import { VoiceBridge } from "./voice-bridge";
+import { type RuntimeController } from "./runtime-controller";
+import { type TranscriptStore } from "./transcript";
+import { type CanvasBridge } from "./canvas-bridge";
+import { type VoiceBridge } from "./voice-bridge";
 import { callVoiceTool } from "./voice-tools";
 import { isTrustedOrigin } from "./trusted-origin";
 import type { RuntimeLedger } from "./ledger";
@@ -50,7 +57,7 @@ export function registerIpc(options: {
   handle(IPC.agentToolCall, (_event, name: VoiceToolName, args: Record<string, unknown> = {}) =>
     callVoiceTool({ runtime, canvas, voice, ledger, pi }, name, args));
 
-  const canvasListener = (_event: Electron.IpcMainEvent, response: import("../shared/contracts").CanvasResponse) => {
+  const canvasListener = (_event: Electron.IpcMainEvent, response: CanvasResponse) => {
     canvas.acceptResponse(response);
   };
   ipcMain.on(IPC.canvasResponse, canvasListener);

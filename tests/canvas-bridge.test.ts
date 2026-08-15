@@ -91,8 +91,7 @@ describe("canvas browser transport", () => {
 
   it("persists the renderer result of an agent transaction and hides the transport snapshot", async () => {
     const ledger = ledgerStub();
-    let bridge: CanvasBridge;
-    bridge = new CanvasBridge(
+    const bridge: CanvasBridge = new CanvasBridge(
       ledger,
       (request) => {
         queueMicrotask(() => bridge.acceptResponse({

@@ -1,8 +1,8 @@
 import { IPC, type AgentEvent, type JobSummary, type RuntimeState } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
-import { PiRuntime } from "./pi-runtime";
-import { TranscriptStore } from "./transcript";
-import { CanvasBridge } from "./canvas-bridge";
+import { type PiRuntime } from "./pi-runtime";
+import { type TranscriptStore } from "./transcript";
+import { type CanvasBridge } from "./canvas-bridge";
 
 export class RuntimeController {
   #microphoneEnabled = false;
