@@ -363,9 +363,9 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           <>
             <p className="settings-hint">
               {keyState.source === "env"
-                ? "OPENAI_API_KEY from your environment is in use and overrides anything saved here."
-                : keyState.present
-                  ? `A key is saved (${keyState.backend === "safeStorage" ? "encrypted by macOS" : "local file"}).`
+                ? `OPENAI_API_KEY from your environment is in use and overrides anything saved here${keyState.stored ? ", including the key you saved" : ""}.`
+                : keyState.stored
+                  ? `A key is saved (${keyState.backend === "safeStorage" ? "encrypted by the system keychain" : "local file"}).`
                   : "No key is saved yet."}
             </p>
             <label className="settings-field">
@@ -373,7 +373,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               <input
                 type="password"
                 value={secretInput}
-                placeholder={keyState.present ? "••••••••  (saved)" : "sk-…"}
+                placeholder={keyState.stored ? "••••••••  (saved)" : "sk-…"}
                 autoComplete="off"
                 onChange={(event) => setSecretInput(event.target.value)}
               />
@@ -394,7 +394,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 className="status-button"
-                disabled={busy || !keyState.present}
+                disabled={busy || !keyState.stored}
                 onClick={() => void run(() => bridge.clearSecret("openaiApiKey"), "API key cleared")}
               >
                 Clear key

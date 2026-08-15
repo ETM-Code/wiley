@@ -28,18 +28,20 @@ describe("SettingsService.view", () => {
     store.secrets.set("openaiApiKey", "sk-super-secret");
     const view = await settings.view();
     expect(JSON.stringify(view)).not.toContain("sk-super-secret");
-    expect(view.secrets.openaiApiKey).toEqual({ present: true, source: "store", backend: "file" });
+    expect(view.secrets.openaiApiKey).toEqual({ present: true, source: "store", stored: true, backend: "file" });
   });
 
   it("reports the env as the live source when it is set", async () => {
     const { service: settings, store } = service({ env: { OPENAI_API_KEY: "sk-env" } });
     store.secrets.set("openaiApiKey", "sk-stored");
-    expect((await settings.view()).secrets.openaiApiKey.source).toBe("env");
+    const view = await settings.view();
+    expect(view.secrets.openaiApiKey.source).toBe("env");
+    expect(view.secrets.openaiApiKey.stored).toBe(true);
   });
 
   it("reports no key when nothing is configured", async () => {
     const view = await service().service.view();
-    expect(view.secrets.openaiApiKey).toEqual({ present: false, source: "none", backend: "file" });
+    expect(view.secrets.openaiApiKey).toEqual({ present: false, source: "none", stored: false, backend: "file" });
   });
 
   it("carries the settings, the model list, and the probes", async () => {
