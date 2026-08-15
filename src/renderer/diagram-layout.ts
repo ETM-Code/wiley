@@ -56,8 +56,22 @@ export type GraphEdge = {
   color?: string;
   arrow?: EdgeArrow;
 };
+export type DiagramDirection = "RIGHT" | "DOWN" | "LEFT" | "UP";
+
+export const DIAGRAM_DIRECTIONS: readonly DiagramDirection[] = ["RIGHT", "DOWN", "LEFT", "UP"];
+
+/**
+ * Layers advance along one axis, so connectors always attach to the two
+ * sides square to it: the vertical sides for RIGHT and LEFT, the horizontal
+ * sides for DOWN and UP. Ports therefore spread along a node's height in the
+ * first pair and along its width in the second.
+ */
+export function portsSpreadAlongWidth(direction: DiagramDirection): boolean {
+  return direction === "DOWN" || direction === "UP";
+}
+
 export type DiagramLayoutOptions = {
-  direction?: "RIGHT" | "DOWN";
+  direction?: DiagramDirection;
   nodeSpacing?: number;
   layerSpacing?: number;
 };
@@ -262,25 +276,25 @@ function textNodeDimensions(node: GraphNode): { width: number; height: number } 
 export function nodeDimensions(
   node: GraphNode,
   portDemand = 0,
-  direction: "RIGHT" | "DOWN" = "RIGHT",
+  direction: DiagramDirection = "RIGHT",
 ): { width: number; height: number } {
   if (nodeToType(node) === "text") return textNodeDimensions(node);
   const factor = shapeFactor(nodeToType(node));
   const lines = wrapLabel(node.label, NODE_FONT_SIZE, NODE_TEXT_WRAP_WIDTH / factor);
   const textWidth = lines.reduce((max, line) => Math.max(max, measureText(line, NODE_FONT_SIZE).width), 1);
   const textHeight = lines.length * NODE_FONT_SIZE * LINE_HEIGHT_RATIO;
-  // Ports land on the side facing the previous layer: vertical sides in a
-  // RIGHT layout, horizontal sides in a DOWN layout. That side needs room
-  // for every connector to stay more than one grid cell apart.
+  // The connector side needs room for every port to stay more than one grid
+  // cell from its neighbour.
   const portSide = (portDemand + 1) * PORT_SPACING;
+  const alongWidth = portsSpreadAlongWidth(direction);
   const width = Math.max(
     Math.min(NODE_MAX_WIDTH, Math.max(NODE_MIN_WIDTH, textWidth * factor + NODE_PADDING_X)),
-    direction === "DOWN" ? portSide : 0,
+    alongWidth ? portSide : 0,
   );
   const height = Math.max(
     NODE_MIN_HEIGHT,
     textHeight * factor + NODE_PADDING_Y,
-    direction === "RIGHT" ? portSide : 0,
+    alongWidth ? 0 : portSide,
   );
   return { width: snapUpSize(width), height: snapUpSize(height) };
 }
@@ -311,6 +325,7 @@ function validateGraph(params: LayoutParams): void {
     requireMember(node.emphasis, NODE_EMPHASES, `node ${node.id} emphasis`);
     nodeIds.add(node.id);
   }
+  requireMember(params.layout?.direction, DIAGRAM_DIRECTIONS, "layout direction");
   for (const edge of params.edges ?? []) {
     if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
       throw new Error(`Diagram edge references an unknown node: ${edge.from} -> ${edge.to}`);
@@ -323,6 +338,27 @@ function validateGraph(params: LayoutParams): void {
       throw new Error(`Diagram ${where} colour must be a hex value or a role name`);
     }
   }
+}
+
+type Point = { x: number; y: number };
+type Size = { width: number; height: number };
+
+function exitPoint(position: Point, size: Size, direction: DiagramDirection): Point {
+  const center = { x: position.x + size.width / 2, y: position.y + size.height / 2 };
+  if (direction === "RIGHT") return { x: position.x + size.width, y: center.y };
+  if (direction === "LEFT") return { x: position.x, y: center.y };
+  if (direction === "DOWN") return { x: center.x, y: position.y + size.height };
+  return { x: center.x, y: position.y };
+}
+
+function entryPoint(position: Point, size: Size, direction: DiagramDirection): Point {
+  const opposite: Record<DiagramDirection, DiagramDirection> = {
+    RIGHT: "LEFT",
+    LEFT: "RIGHT",
+    DOWN: "UP",
+    UP: "DOWN",
+  };
+  return exitPoint(position, size, opposite[direction]);
 }
 
 function dedupePoints(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
@@ -475,13 +511,11 @@ export async function planDiagramLayout(
     const toPosition = positions.get(edge.to) ?? { x: 0, y: 0 };
     const fromSize = sizes.get(edge.from) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
     const toSize = sizes.get(edge.to) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
-    // ELK routes to distributed border points; fall back to side midpoints
-    // only if a section is missing entirely.
-    const fallbackStart = {
-      x: fromPosition.x + fromSize.width,
-      y: fromPosition.y + fromSize.height / 2,
-    };
-    const fallbackEnd = { x: toPosition.x, y: toPosition.y + toSize.height / 2 };
+    // ELK routes to distributed border points; fall back to the midpoints of
+    // the two sides this direction actually connects, only if a section is
+    // missing entirely.
+    const fallbackStart = exitPoint(fromPosition, fromSize, direction);
+    const fallbackEnd = entryPoint(toPosition, toSize, direction);
     // Routes stay unsnapped: ELK separates parallel runs by as little as
     // 16 px, and snapping those channels onto the 20 px grid is exactly what
     // merges arrows into one overlapping line.
