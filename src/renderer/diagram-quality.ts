@@ -8,10 +8,20 @@ export interface DiagramQualityReport {
   labelCollisions: string[];
   edgesThroughNodes: string[];
   sharedPorts: string[];
+  crowdedPorts: string[];
   overlappingParallelSegments: string[];
   offGrid: string[];
   styleCoherence: string[];
 }
+
+/** Two runs closer in angle than this read as the same line. */
+const PARALLEL_ANGLE_DEGREES = 5;
+/** How near two parallel runs have to be before they visually merge. */
+const PARALLEL_SEPARATION = 3;
+/** Shorter shared runs than this are a crossing, not a doubled line. */
+const MIN_PARALLEL_OVERLAP = 10;
+/** Two ports nearer than this on one node read as a single attachment. */
+const MIN_PORT_SEPARATION = 14;
 
 /** WCAG large-text minimum: below this a label stops being legible on its fill. */
 const MIN_LABEL_CONTRAST = 3;
@@ -45,20 +55,154 @@ function segmentIntersectsBox(segment: Segment, box: Box, shrink: number): boole
   return minX < right && maxX > left && minY < bottom && maxY > top;
 }
 
-function arrowSegments(arrow: JsonObject): Segment[] {
+type Point = { x: number; y: number };
+type Triangle = [Point, Point, Point];
+
+export function absoluteArrowPoints(arrow: JsonObject): Point[] {
   const originX = finiteNumber(arrow.x);
   const originY = finiteNumber(arrow.y);
   const points = (Array.isArray(arrow.points) ? arrow.points : []) as Array<[number, number]>;
+  return points.map((point) => ({
+    x: originX + finiteNumber(point[0]),
+    y: originY + finiteNumber(point[1]),
+  }));
+}
+
+function arrowSegments(arrow: JsonObject): Segment[] {
+  const points = absoluteArrowPoints(arrow);
   const segments: Segment[] = [];
   for (let index = 1; index < points.length; index++) {
     segments.push({
-      x1: originX + points[index - 1][0],
-      y1: originY + points[index - 1][1],
-      x2: originX + points[index][0],
-      y2: originY + points[index][1],
+      x1: points[index - 1].x,
+      y1: points[index - 1].y,
+      x2: points[index].x,
+      y2: points[index].y,
     });
   }
   return segments;
+}
+
+function midpoint(a: Point, b: Point): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+export type ArrowGeometry = {
+  /** The parts drawn as straight lines. */
+  segments: Segment[];
+  /** Conservative hulls containing whatever the rounded corners sweep. */
+  corners: Triangle[];
+};
+
+/**
+ * What an arrow actually covers on the canvas.
+ *
+ * A rounded arrow does not pass through its bendpoints: each interior corner
+ * is replaced by a curve that cuts inside, staying within the triangle
+ * spanned by the two neighbouring segment midpoints and the corner itself.
+ * That triangle is the conservative hull. Testing the raw polyline instead
+ * misses anything sitting in the pocket the curve sweeps through.
+ */
+export function arrowGeometry(arrow: JsonObject): ArrowGeometry {
+  const points = absoluteArrowPoints(arrow);
+  if (points.length < 2) return { segments: [], corners: [] };
+  const rounded = Boolean(arrow.roundness);
+  if (!rounded || points.length === 2) return { segments: arrowSegments(arrow), corners: [] };
+  const last = points.length - 1;
+  const corners: Triangle[] = [];
+  for (let index = 1; index < last; index++) {
+    corners.push([
+      midpoint(points[index - 1], points[index]),
+      points[index],
+      midpoint(points[index], points[index + 1]),
+    ]);
+  }
+  const head = midpoint(points[0], points[1]);
+  const tail = midpoint(points[last - 1], points[last]);
+  return {
+    segments: [
+      { x1: points[0].x, y1: points[0].y, x2: head.x, y2: head.y },
+      { x1: tail.x, y1: tail.y, x2: points[last].x, y2: points[last].y },
+    ],
+    corners,
+  };
+}
+
+/** Separating-axis test between a triangle and an axis-aligned box. */
+function triangleIntersectsBox(triangle: Triangle, box: Box, shrink: number): boolean {
+  const left = box.x + shrink;
+  const right = box.x + box.width - shrink;
+  const top = box.y + shrink;
+  const bottom = box.y + box.height - shrink;
+  if (left >= right || top >= bottom) return false;
+  const rect: Point[] = [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ];
+  const axes: Point[] = [{ x: 1, y: 0 }, { x: 0, y: 1 }];
+  for (let index = 0; index < 3; index++) {
+    const from = triangle[index];
+    const to = triangle[(index + 1) % 3];
+    axes.push({ x: -(to.y - from.y), y: to.x - from.x });
+  }
+  for (const axis of axes) {
+    const length = Math.hypot(axis.x, axis.y);
+    if (length < 1e-9) continue;
+    const project = (points: Point[]) => {
+      const values = points.map((point) => (point.x * axis.x + point.y * axis.y) / length);
+      return { min: Math.min(...values), max: Math.max(...values) };
+    };
+    const a = project(triangle);
+    const b = project(rect);
+    if (a.max <= b.min || b.max <= a.min) return false;
+  }
+  return true;
+}
+
+function geometryIntersectsBox(geometry: ArrowGeometry, box: Box, shrink: number): boolean {
+  return geometry.segments.some((segment) => segmentIntersectsBox(segment, box, shrink))
+    || geometry.corners.some((corner) => triangleIntersectsBox(corner, box, shrink));
+}
+
+/**
+ * Whether two runs are close enough to parallel, close enough together, and
+ * overlapping for long enough that they draw as one thick line. Works at any
+ * angle, so diagonal routes from the non-layered algorithms are held to the
+ * same standard as orthogonal ones.
+ */
+export function segmentsVisuallyMerge(a: Segment, b: Segment): boolean {
+  const ax = a.x2 - a.x1;
+  const ay = a.y2 - a.y1;
+  const bx = b.x2 - b.x1;
+  const by = b.y2 - b.y1;
+  const aLength = Math.hypot(ax, ay);
+  const bLength = Math.hypot(bx, by);
+  if (aLength < 1e-6 || bLength < 1e-6) return false;
+  const cosine = (ax * bx + ay * by) / (aLength * bLength);
+  const degrees = (Math.acos(Math.min(1, Math.max(-1, cosine))) * 180) / Math.PI;
+  if (degrees >= PARALLEL_ANGLE_DEGREES && degrees <= 180 - PARALLEL_ANGLE_DEGREES) return false;
+
+  const ux = ax / aLength;
+  const uy = ay / aLength;
+  const project = (point: Point) => (point.x - a.x1) * ux + (point.y - a.y1) * uy;
+  const offset = (point: Point) => (point.x - a.x1) * -uy + (point.y - a.y1) * ux;
+  const first = { x: b.x1, y: b.y1 };
+  const second = { x: b.x2, y: b.y2 };
+  const t1 = project(first);
+  const t2 = project(second);
+  const start = Math.max(0, Math.min(t1, t2));
+  const end = Math.min(aLength, Math.max(t1, t2));
+  if (end - start <= MIN_PARALLEL_OVERLAP) return false;
+
+  // Measure separation in the middle of the shared run: at a near-parallel
+  // angle the ends can drift apart while the visible overlap sits on top of
+  // the other line.
+  const centre = (start + end) / 2;
+  const span = t2 - t1;
+  const ratio = Math.abs(span) < 1e-6 ? 0 : Math.min(1, Math.max(0, (centre - t1) / span));
+  const distance = Math.abs(offset(first) + ratio * (offset(second) - offset(first)));
+  return distance < PARALLEL_SEPARATION;
 }
 
 function labelStroke(skeleton: JsonObject): string | undefined {
@@ -124,6 +268,7 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     labelCollisions: [],
     edgesThroughNodes: [],
     sharedPorts: [],
+    crowdedPorts: [],
     overlappingParallelSegments: [],
     offGrid: [],
     styleCoherence: [],
@@ -164,60 +309,53 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     }
   }
 
-  const portsByNode = new Map<string, Map<string, string>>();
+  const portsByNode = new Map<string, Array<{ owner: string; point: Point }>>();
   for (const arrow of arrows) {
-    const segments = arrowSegments(arrow);
+    const geometry = arrowGeometry(arrow);
     const startNode = String((arrow.start as { id?: string } | undefined)?.id ?? "");
     const endNode = String((arrow.end as { id?: string } | undefined)?.id ?? "");
     for (const node of nodes) {
       if (node.id === startNode || node.id === endNode) continue;
-      if (segments.some((segment) => segmentIntersectsBox(segment, node, 4))) {
+      if (geometryIntersectsBox(geometry, node, 4)) {
         report.edgesThroughNodes.push(`${String(arrow.id)} x ${node.id}`);
       }
     }
-    const points = (Array.isArray(arrow.points) ? arrow.points : []) as Array<[number, number]>;
+    const points = absoluteArrowPoints(arrow);
     if (points.length >= 2) {
-      const endpoints: Array<[string, [number, number]]> = [
+      const endpoints: Array<[string, Point]> = [
         [startNode, points[0]],
         [endNode, points[points.length - 1]],
       ];
       for (const [nodeId, point] of endpoints) {
         if (!nodeId) continue;
-        const absolute = `${finiteNumber(arrow.x) + point[0]},${finiteNumber(arrow.y) + point[1]}`;
-        const ports = portsByNode.get(nodeId) ?? new Map<string, string>();
-        const owner = ports.get(absolute);
-        if (owner && owner !== String(arrow.id)) {
-          report.sharedPorts.push(`${nodeId} @ ${absolute} (${owner}, ${String(arrow.id)})`);
+        const ports = portsByNode.get(nodeId) ?? [];
+        for (const existing of ports) {
+          if (existing.owner === String(arrow.id) && existing.point.x === point.x && existing.point.y === point.y) {
+            continue;
+          }
+          const gap = Math.max(Math.abs(existing.point.x - point.x), Math.abs(existing.point.y - point.y));
+          if (gap === 0) {
+            report.sharedPorts.push(
+              `${nodeId} @ ${point.x},${point.y} (${existing.owner}, ${String(arrow.id)})`,
+            );
+          } else if (gap < MIN_PORT_SEPARATION) {
+            report.crowdedPorts.push(
+              `${nodeId} @ ${gap.toFixed(1)}px (${existing.owner}, ${String(arrow.id)})`,
+            );
+          }
         }
-        ports.set(absolute, String(arrow.id));
+        ports.push({ owner: String(arrow.id), point });
         portsByNode.set(nodeId, ports);
       }
     }
   }
 
+  const runs = arrows.map((arrow) => arrowSegments(arrow));
   for (let a = 0; a < arrows.length; a++) {
     for (let b = a + 1; b < arrows.length; b++) {
-      for (const first of arrowSegments(arrows[a])) {
-        for (const second of arrowSegments(arrows[b])) {
-          const firstVertical = Math.abs(first.x1 - first.x2) < 1;
-          const secondVertical = Math.abs(second.x1 - second.x2) < 1;
-          if (firstVertical !== secondVertical) continue;
-          if (firstVertical) {
-            if (Math.abs(first.x1 - second.x1) >= 2) continue;
-            const overlap = Math.min(Math.max(first.y1, first.y2), Math.max(second.y1, second.y2))
-              - Math.max(Math.min(first.y1, first.y2), Math.min(second.y1, second.y2));
-            if (overlap > 10) {
-              report.overlappingParallelSegments.push(`${String(arrows[a].id)} x ${String(arrows[b].id)}`);
-            }
-          } else {
-            if (Math.abs(first.y1 - second.y1) >= 2) continue;
-            const overlap = Math.min(Math.max(first.x1, first.x2), Math.max(second.x1, second.x2))
-              - Math.max(Math.min(first.x1, first.x2), Math.min(second.x1, second.x2));
-            if (overlap > 10) {
-              report.overlappingParallelSegments.push(`${String(arrows[a].id)} x ${String(arrows[b].id)}`);
-            }
-          }
-        }
+      const merged = runs[a].some((first) => runs[b].some((second) => segmentsVisuallyMerge(first, second)));
+      if (merged) {
+        report.overlappingParallelSegments.push(`${String(arrows[a].id)} x ${String(arrows[b].id)}`);
       }
     }
   }
