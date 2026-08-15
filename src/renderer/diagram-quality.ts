@@ -1,5 +1,16 @@
 import { MODEL_GRID_SIZE, finiteNumber, type DiagramPlan } from "./diagram-layout";
+import {
+  absoluteArrowPoints,
+  arrowGeometry,
+  geometryIntersectsBox,
+  pointsToSegments,
+  type Box,
+  type Point,
+  type Segment,
+} from "./diagram-routes";
 import { contrastRatio, resolveTheme, themeColors } from "./diagram-theme";
+
+export { absoluteArrowPoints, arrowGeometry } from "./diagram-routes";
 
 type JsonObject = Record<string, unknown>;
 
@@ -30,9 +41,6 @@ const MAX_DISTINCT_FILLS = 6;
 const FILLS_PER_NODE = 3;
 const MAX_DISTINCT_NODE_STROKE_WIDTHS = 2;
 
-type Box = { id: string; x: number; y: number; width: number; height: number };
-type Segment = { x1: number; y1: number; x2: number; y2: number };
-
 function boxesOverlap(a: Box, b: Box, margin = 0): boolean {
   return a.x < b.x + b.width + margin
     && b.x < a.x + a.width + margin
@@ -40,129 +48,8 @@ function boxesOverlap(a: Box, b: Box, margin = 0): boolean {
     && b.y < a.y + a.height + margin;
 }
 
-function segmentIntersectsBox(segment: Segment, box: Box, shrink: number): boolean {
-  const left = box.x + shrink;
-  const right = box.x + box.width - shrink;
-  const top = box.y + shrink;
-  const bottom = box.y + box.height - shrink;
-  if (left >= right || top >= bottom) return false;
-  // Orthogonal segments cover the layout output; a conservative bbox check
-  // covers any residual diagonal.
-  const minX = Math.min(segment.x1, segment.x2);
-  const maxX = Math.max(segment.x1, segment.x2);
-  const minY = Math.min(segment.y1, segment.y2);
-  const maxY = Math.max(segment.y1, segment.y2);
-  return minX < right && maxX > left && minY < bottom && maxY > top;
-}
-
-type Point = { x: number; y: number };
-type Triangle = [Point, Point, Point];
-
-export function absoluteArrowPoints(arrow: JsonObject): Point[] {
-  const originX = finiteNumber(arrow.x);
-  const originY = finiteNumber(arrow.y);
-  const points = (Array.isArray(arrow.points) ? arrow.points : []) as Array<[number, number]>;
-  return points.map((point) => ({
-    x: originX + finiteNumber(point[0]),
-    y: originY + finiteNumber(point[1]),
-  }));
-}
-
 function arrowSegments(arrow: JsonObject): Segment[] {
-  const points = absoluteArrowPoints(arrow);
-  const segments: Segment[] = [];
-  for (let index = 1; index < points.length; index++) {
-    segments.push({
-      x1: points[index - 1].x,
-      y1: points[index - 1].y,
-      x2: points[index].x,
-      y2: points[index].y,
-    });
-  }
-  return segments;
-}
-
-function midpoint(a: Point, b: Point): Point {
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-}
-
-export type ArrowGeometry = {
-  /** The parts drawn as straight lines. */
-  segments: Segment[];
-  /** Conservative hulls containing whatever the rounded corners sweep. */
-  corners: Triangle[];
-};
-
-/**
- * What an arrow actually covers on the canvas.
- *
- * A rounded arrow does not pass through its bendpoints: each interior corner
- * is replaced by a curve that cuts inside, staying within the triangle
- * spanned by the two neighbouring segment midpoints and the corner itself.
- * That triangle is the conservative hull. Testing the raw polyline instead
- * misses anything sitting in the pocket the curve sweeps through.
- */
-export function arrowGeometry(arrow: JsonObject): ArrowGeometry {
-  const points = absoluteArrowPoints(arrow);
-  if (points.length < 2) return { segments: [], corners: [] };
-  const rounded = Boolean(arrow.roundness);
-  if (!rounded || points.length === 2) return { segments: arrowSegments(arrow), corners: [] };
-  const last = points.length - 1;
-  const corners: Triangle[] = [];
-  for (let index = 1; index < last; index++) {
-    corners.push([
-      midpoint(points[index - 1], points[index]),
-      points[index],
-      midpoint(points[index], points[index + 1]),
-    ]);
-  }
-  const head = midpoint(points[0], points[1]);
-  const tail = midpoint(points[last - 1], points[last]);
-  return {
-    segments: [
-      { x1: points[0].x, y1: points[0].y, x2: head.x, y2: head.y },
-      { x1: tail.x, y1: tail.y, x2: points[last].x, y2: points[last].y },
-    ],
-    corners,
-  };
-}
-
-/** Separating-axis test between a triangle and an axis-aligned box. */
-function triangleIntersectsBox(triangle: Triangle, box: Box, shrink: number): boolean {
-  const left = box.x + shrink;
-  const right = box.x + box.width - shrink;
-  const top = box.y + shrink;
-  const bottom = box.y + box.height - shrink;
-  if (left >= right || top >= bottom) return false;
-  const rect: Point[] = [
-    { x: left, y: top },
-    { x: right, y: top },
-    { x: right, y: bottom },
-    { x: left, y: bottom },
-  ];
-  const axes: Point[] = [{ x: 1, y: 0 }, { x: 0, y: 1 }];
-  for (let index = 0; index < 3; index++) {
-    const from = triangle[index];
-    const to = triangle[(index + 1) % 3];
-    axes.push({ x: -(to.y - from.y), y: to.x - from.x });
-  }
-  for (const axis of axes) {
-    const length = Math.hypot(axis.x, axis.y);
-    if (length < 1e-9) continue;
-    const project = (points: Point[]) => {
-      const values = points.map((point) => (point.x * axis.x + point.y * axis.y) / length);
-      return { min: Math.min(...values), max: Math.max(...values) };
-    };
-    const a = project(triangle);
-    const b = project(rect);
-    if (a.max <= b.min || b.max <= a.min) return false;
-  }
-  return true;
-}
-
-function geometryIntersectsBox(geometry: ArrowGeometry, box: Box, shrink: number): boolean {
-  return geometry.segments.some((segment) => segmentIntersectsBox(segment, box, shrink))
-    || geometry.corners.some((corner) => triangleIntersectsBox(corner, box, shrink));
+  return pointsToSegments(absoluteArrowPoints(arrow));
 }
 
 /**
