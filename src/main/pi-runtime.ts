@@ -21,13 +21,18 @@ import { type CanvasBridge } from "./canvas-bridge";
 import { stableDiagramPreview } from "./diagram-preview";
 import { ApprovalJudge, CatastrophicCommandGuard, ReadBeforeEditGuard, isReadOnlyCommand } from "./safety";
 import { type VoiceBridge } from "./voice-bridge";
+import {
+  DEFAULT_APPROVAL_MODEL,
+  JUDGED_TOOLS,
+  MAX_ACTIVE_SUBAGENTS,
+  PI_MODEL,
+  PI_PROVIDER,
+  PI_THINKING_LEVEL,
+} from "./pi/constants";
+import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./pi/image";
+import { lastAssistantText } from "./pi/messages";
 
-export const PI_PROVIDER = "openai" as const;
-export const PI_MODEL = "gpt-5.6-luna" as const;
-export const PI_THINKING_LEVEL = "medium" as const;
-export const DEFAULT_APPROVAL_MODEL = "gpt-5.4-mini" as const;
-const MAX_ACTIVE_SUBAGENTS = 4;
-const JUDGED_TOOLS = new Set(["bash", "edit", "write"]);
+export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
 type SubStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -44,60 +49,6 @@ interface Subagent {
 interface WarmSubagent {
   id: string;
   session: AgentSession;
-}
-
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-};
-
-function sniffImageSize(data: Buffer, mime: string): { width: number; height: number } | undefined {
-  try {
-    if (mime === "image/png" && data.length >= 24) {
-      return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
-    }
-    if (mime === "image/gif" && data.length >= 10) {
-      return { width: data.readUInt16LE(6), height: data.readUInt16LE(8) };
-    }
-    if (mime === "image/jpeg") {
-      let offset = 2;
-      while (offset + 9 < data.length) {
-        if (data[offset] !== 0xff) break;
-        const marker = data[offset + 1];
-        const size = data.readUInt16BE(offset + 2);
-        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-          return { width: data.readUInt16BE(offset + 7), height: data.readUInt16BE(offset + 5) };
-        }
-        offset += 2 + size;
-      }
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-function lastAssistantText(messages: readonly unknown[]): string {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index] as { role?: string; content?: unknown };
-    if (message.role !== "assistant") continue;
-    if (typeof message.content === "string") return message.content;
-    if (Array.isArray(message.content)) {
-      const text = message.content
-        .filter((part): part is { type: "text"; text: string } =>
-          Boolean(part && typeof part === "object" && (part as { type?: string }).type === "text"),
-        )
-        .map((part) => part.text)
-        .join("\n")
-        .trim();
-      if (text) return text;
-    }
-  }
-  return "Work finished.";
 }
 
 /**
