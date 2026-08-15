@@ -820,13 +820,15 @@ describe("diagram renderer", () => {
 
     const summary = await handleCanvasRequest(api, { id: 51, op: "get-scene-summary", params: {} }) as {
       elements: Array<{ id: string; diagram?: { id: string; key?: string; role: string } }>;
-      diagrams: Array<{ id: string; title?: string; nodeKeys: string[]; elementCount: number; bounds: { w: number } }>;
+      diagrams: Array<{ id: string; title?: string; theme?: string; nodeKeys: string[]; elementCount: number; bounds: { w: number } }>;
     };
 
     expect(summary.diagrams).toHaveLength(1);
     expect(summary.diagrams[0]).toMatchObject({
       id: drawn.diagramId,
       title: "Signup flow",
+      // A follow-up call can extend this diagram in the palette it already uses.
+      theme: "slate",
       nodeKeys: ["start", "done"],
     });
     expect(summary.diagrams[0].bounds.w).toBeGreaterThan(0);
