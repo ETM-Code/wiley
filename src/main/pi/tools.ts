@@ -3,6 +3,15 @@ import { readFile } from "node:fs/promises";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import {
+  DIAGRAM_EDGE_ARROWS,
+  DIAGRAM_EDGE_LINE_STYLES,
+  DIAGRAM_EDGE_WEIGHTS,
+  DIAGRAM_NODE_EMPHASES,
+  DIAGRAM_NODE_ROLES,
+  DIAGRAM_THEME_NAMES,
+} from "../../shared/diagram-stamp";
+
 import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./image";
 
 export type CanvasMutation =
@@ -100,9 +109,10 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
     defineTool({
       name: "draw_diagram",
       label: "Draw Diagram",
-      description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Layout, grid snapping, viewport fitting, and perimeter bindings are automatic. To add the diagram beside existing content, pass anchor (an existing element id, or omit to use the whole scene) with anchorDirection right, left, above, or below. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection. It also returns diagramId, the stable name of the diagram you just drew, plus idMap from your node ids to element ids; the canvas context lists the diagrams already on the board under the same ids, so refer to one by its diagramId instead of redrawing it.",
+      description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Colour by meaning, not by hex: pick one theme for the whole diagram (slate is neutral, ocean blue, forest green, sunset warm, grape violet, mono grayscale) and give each node a role (primary, success, warning, danger, accent, muted, neutral) plus optional emphasis (strong to foreground it, quiet to recede it). Edges take style solid/dashed/dotted, weight normal/strong/quiet, arrow none/end/both, and color as a role name. Keep the palette tight: roughly one distinct colour per three nodes reads as a designed diagram, more reads as noise. Only set backgroundColor or strokeColor when the user names a specific colour. Layout, grid snapping, viewport fitting, and perimeter bindings are automatic. To add the diagram beside existing content, pass anchor (an existing element id, or omit to use the whole scene) with anchorDirection right, left, above, or below. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection. It also returns diagramId, the stable name of the diagram you just drew, plus idMap from your node ids to element ids; the canvas context lists the diagrams already on the board under the same ids, so refer to one by its diagramId instead of redrawing it.",
       parameters: Type.Object({
         title: Type.Optional(Type.String()),
+        theme: Type.Optional(Type.Union(DIAGRAM_THEME_NAMES.map((name) => Type.Literal(name)))),
         nodes: Type.Array(Type.Object({
           id: Type.String(),
           label: Type.String(),
@@ -111,6 +121,8 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
             Type.Literal("diamond"),
             Type.Literal("ellipse"),
           ])),
+          role: Type.Optional(Type.Union(DIAGRAM_NODE_ROLES.map((role) => Type.Literal(role)))),
+          emphasis: Type.Optional(Type.Union(DIAGRAM_NODE_EMPHASES.map((value) => Type.Literal(value)))),
           backgroundColor: Type.Optional(Type.String()),
           strokeColor: Type.Optional(Type.String()),
           rounded: Type.Optional(Type.Boolean()),
@@ -119,6 +131,10 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
           from: Type.String(),
           to: Type.String(),
           label: Type.Optional(Type.String()),
+          style: Type.Optional(Type.Union(DIAGRAM_EDGE_LINE_STYLES.map((value) => Type.Literal(value)))),
+          weight: Type.Optional(Type.Union(DIAGRAM_EDGE_WEIGHTS.map((value) => Type.Literal(value)))),
+          color: Type.Optional(Type.String()),
+          arrow: Type.Optional(Type.Union(DIAGRAM_EDGE_ARROWS.map((value) => Type.Literal(value)))),
         }, { additionalProperties: false })),
         anchor: Type.Optional(Type.String()),
         anchorDirection: Type.Optional(Type.Union([

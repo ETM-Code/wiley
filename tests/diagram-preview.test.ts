@@ -27,6 +27,39 @@ describe("streaming diagram arguments", () => {
     });
   });
 
+  it("carries theme, role, emphasis, and edge styling through to the preview", () => {
+    expect(stableDiagramPreview({
+      theme: "ocean",
+      nodes: [
+        { id: "a", label: "Ingest", role: "primary", emphasis: "strong" },
+        { id: "b", label: "Store", role: "muted", emphasis: "quiet" },
+      ],
+      edges: [
+        { from: "a", to: "b", style: "dashed", weight: "strong", color: "danger", arrow: "both" },
+      ],
+    })).toEqual({
+      theme: "ocean",
+      nodes: [
+        { id: "a", label: "Ingest", role: "primary", emphasis: "strong" },
+        { id: "b", label: "Store", role: "muted", emphasis: "quiet" },
+      ],
+      edges: [
+        { from: "a", to: "b", style: "dashed", weight: "strong", color: "danger", arrow: "both" },
+      ],
+    });
+  });
+
+  it("drops half-streamed enum tokens rather than guessing", () => {
+    expect(stableDiagramPreview({
+      theme: "oce",
+      nodes: [{ id: "a", label: "Ingest", role: "prim", emphasis: "stro" }],
+      edges: [{ from: "a", to: "a", style: "das", weight: "quie", arrow: "bot" }],
+    })).toEqual({
+      nodes: [{ id: "a", label: "Ingest" }],
+      edges: [{ from: "a", to: "a" }],
+    });
+  });
+
   it("waits until at least one complete node exists", () => {
     expect(stableDiagramPreview({ nodes: [{ id: "partial" }] })).toBeUndefined();
     expect(stableDiagramPreview({})).toBeUndefined();

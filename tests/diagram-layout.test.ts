@@ -6,8 +6,10 @@ import {
   nodeDimensions,
   planDiagramLayout,
   wrapLabel,
+  type LayoutParams,
 } from "../src/renderer/diagram-layout";
 import { evaluateDiagramPlan } from "../src/renderer/diagram-quality";
+import { THEMES } from "../src/renderer/diagram-theme";
 import { installExcalifontMeasurer, uninstallExcalifontMeasurer } from "./helpers/excalifont";
 import { planningDiagram, stressGraphs } from "./fixtures/diagram-gallery";
 
@@ -71,7 +73,12 @@ describe("diagram layout quality", () => {
       const role = plan.roles.get(String(skeleton.id))!;
       expect(String(skeleton.id).startsWith(`${DIAGRAM_ID}-`)).toBe(true);
       expect(skeleton.customData).toEqual({
-        wiley: { diagram: DIAGRAM_ID, role: role.role, ...(role.key ? { key: role.key } : {}) },
+        wiley: {
+          diagram: DIAGRAM_ID,
+          role: role.role,
+          theme: plan.theme,
+          ...(role.key ? { key: role.key } : {}),
+        },
       });
     }
   });
@@ -128,6 +135,90 @@ describe("diagram layout quality", () => {
     // The fallback estimate is width-per-character; the real font is not.
     expect(wide).not.toBeCloseTo(narrow, 5);
     expect(wide).toBeGreaterThan(narrow);
+  });
+
+  it("styles nodes, edges, and the title from the requested theme", async () => {
+    const plan = await planDiagramLayout({
+      title: "Pipeline",
+      theme: "ocean",
+      nodes: [
+        { id: "a", label: "Ingest", role: "primary" },
+        { id: "b", label: "Archive", role: "muted", emphasis: "quiet" },
+        { id: "c", label: "Alert", role: "danger", emphasis: "strong" },
+      ],
+      edges: [
+        { from: "a", to: "b" },
+        { from: "a", to: "c", label: "on failure", style: "dashed", weight: "strong", color: "danger", arrow: "both" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const theme = THEMES.ocean;
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const node = (id: string) => byId.get(plan.elementIdByNode.get(id)!)!;
+
+    expect(node("a")).toMatchObject({
+      backgroundColor: theme.entries.primary.fill,
+      strokeColor: theme.entries.primary.stroke,
+      strokeWidth: 1,
+      opacity: 100,
+      fillStyle: "solid",
+      label: { text: "Ingest", strokeColor: "#1e1e1e" },
+    });
+    expect(node("b")).toMatchObject({ backgroundColor: theme.entries.muted.soft, opacity: 70 });
+    expect(node("c")).toMatchObject({ backgroundColor: theme.entries.danger.fill, strokeWidth: 2 });
+
+    const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
+    expect(arrows[0]).toMatchObject({
+      strokeColor: theme.edgeColor,
+      strokeStyle: "solid",
+      startArrowhead: null,
+      endArrowhead: "arrow",
+    });
+    expect(arrows[1]).toMatchObject({
+      strokeColor: theme.entries.danger.stroke,
+      strokeStyle: "dashed",
+      strokeWidth: 2,
+      startArrowhead: "arrow",
+      endArrowhead: "arrow",
+    });
+    const title = plan.skeletons.find((skeleton) => plan.roles.get(String(skeleton.id))?.role === "title")!;
+    expect(title.strokeColor).toBe(theme.titleColor);
+    expect(plan.theme).toBe("ocean");
+    expect([...plan.explicitColors]).toEqual([]);
+  });
+
+  it("keeps explicit colours and records them as deliberate", async () => {
+    const plan = await planDiagramLayout({
+      theme: "forest",
+      nodes: [
+        { id: "a", label: "Custom", role: "primary", backgroundColor: "#123456", strokeColor: "#654321" },
+        { id: "b", label: "Themed", role: "primary" },
+      ],
+      edges: [{ from: "a", to: "b", color: "#abcdef" }],
+    }, ORIGIN, DIAGRAM_ID);
+    const node = plan.skeletons.find((skeleton) => skeleton.id === plan.elementIdByNode.get("a"))!;
+    expect(node).toMatchObject({ backgroundColor: "#123456", strokeColor: "#654321" });
+    // Dark override flips the bound label to paper so it stays readable.
+    expect(node.label).toEqual({ text: "Custom", strokeColor: "#ffffff" });
+    expect([...plan.explicitColors].sort()).toEqual(["#123456", "#654321", "#abcdef"]);
+  });
+
+  it("rejects role, emphasis, and edge styling values outside the vocabulary", async () => {
+    const base = { nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }], edges: [] } as LayoutParams;
+    await expect(planDiagramLayout(
+      { ...base, nodes: [{ id: "a", label: "A", role: "chartreuse" as never }] },
+      ORIGIN,
+      DIAGRAM_ID,
+    )).rejects.toThrow(/role/);
+    await expect(planDiagramLayout(
+      { ...base, edges: [{ from: "a", to: "b", weight: "heavy" as never }] },
+      ORIGIN,
+      DIAGRAM_ID,
+    )).rejects.toThrow(/weight/);
+    await expect(planDiagramLayout(
+      { ...base, edges: [{ from: "a", to: "b", color: "puce" }] },
+      ORIGIN,
+      DIAGRAM_ID,
+    )).rejects.toThrow(/colour/);
   });
 
   it("gives emoji a square tile advance in both measurement fallbacks", () => {

@@ -7,6 +7,21 @@
  * diagram sits inside the editor's native palette instead of beside it.
  */
 
+import {
+  DIAGRAM_EDGE_ARROWS,
+  DIAGRAM_EDGE_LINE_STYLES,
+  DIAGRAM_EDGE_WEIGHTS,
+  DIAGRAM_NODE_EMPHASES,
+  DIAGRAM_NODE_ROLES,
+  DIAGRAM_THEME_NAMES,
+  type DiagramEdgeArrow,
+  type DiagramEdgeLineStyle,
+  type DiagramEdgeWeight,
+  type DiagramNodeEmphasis,
+  type DiagramNodeRole,
+  type DiagramThemeName,
+} from "../shared/diagram-stamp";
+
 export type HueName =
   | "gray"
   | "graphite"
@@ -73,24 +88,9 @@ export const HUE_PROVENANCE: Record<HueName, PaletteProvenance> = {
   orange: { hue: "orange", fill: 2, soft: 0, stroke: 8 },
 };
 
-export type NodeRole =
-  | "primary"
-  | "success"
-  | "warning"
-  | "danger"
-  | "accent"
-  | "muted"
-  | "neutral";
+export type NodeRole = DiagramNodeRole;
 
-export const NODE_ROLES: readonly NodeRole[] = [
-  "primary",
-  "success",
-  "warning",
-  "danger",
-  "accent",
-  "muted",
-  "neutral",
-];
+export const NODE_ROLES = DIAGRAM_NODE_ROLES;
 
 /** Unfilled, dark-bordered: the look a diagram has when nothing is themed. */
 export const NEUTRAL_ENTRY: PaletteEntry = {
@@ -114,9 +114,9 @@ export const PALETTE: Record<NodeRole, PaletteEntry> = {
   neutral: NEUTRAL_ENTRY,
 };
 
-export type ThemeName = "slate" | "ocean" | "forest" | "sunset" | "grape" | "mono";
+export type ThemeName = DiagramThemeName;
 
-export const THEME_NAMES: readonly ThemeName[] = ["slate", "ocean", "forest", "sunset", "grape", "mono"];
+export const THEME_NAMES = DIAGRAM_THEME_NAMES;
 
 export const DEFAULT_THEME: ThemeName = "slate";
 
@@ -312,9 +312,13 @@ export function readableInk(theme: DiagramTheme, background: string): string {
     : theme.paperColor;
 }
 
-export type NodeEmphasis = "normal" | "strong" | "quiet";
+export type NodeEmphasis = DiagramNodeEmphasis;
 
-export const NODE_EMPHASES: readonly NodeEmphasis[] = ["normal", "strong", "quiet"];
+export const NODE_EMPHASES = DIAGRAM_NODE_EMPHASES;
+
+export function isNodeEmphasis(value: unknown): value is NodeEmphasis {
+  return typeof value === "string" && (NODE_EMPHASES as readonly string[]).includes(value);
+}
 
 export type NodeStyleOverrides = { backgroundColor?: string; strokeColor?: string };
 
@@ -352,13 +356,25 @@ export function resolveContainerTint(theme: DiagramTheme, role: NodeRole | undef
   return theme.entries[role ?? theme.defaultRole].soft;
 }
 
-export type EdgeLineStyle = "solid" | "dashed" | "dotted";
-export type EdgeWeight = "normal" | "strong" | "quiet";
-export type EdgeArrow = "none" | "end" | "both";
+export type EdgeLineStyle = DiagramEdgeLineStyle;
+export type EdgeWeight = DiagramEdgeWeight;
+export type EdgeArrow = DiagramEdgeArrow;
 
-export const EDGE_LINE_STYLES: readonly EdgeLineStyle[] = ["solid", "dashed", "dotted"];
-export const EDGE_WEIGHTS: readonly EdgeWeight[] = ["normal", "strong", "quiet"];
-export const EDGE_ARROWS: readonly EdgeArrow[] = ["none", "end", "both"];
+export const EDGE_LINE_STYLES = DIAGRAM_EDGE_LINE_STYLES;
+export const EDGE_WEIGHTS = DIAGRAM_EDGE_WEIGHTS;
+export const EDGE_ARROWS = DIAGRAM_EDGE_ARROWS;
+
+export function isEdgeLineStyle(value: unknown): value is EdgeLineStyle {
+  return typeof value === "string" && (EDGE_LINE_STYLES as readonly string[]).includes(value);
+}
+
+export function isEdgeWeight(value: unknown): value is EdgeWeight {
+  return typeof value === "string" && (EDGE_WEIGHTS as readonly string[]).includes(value);
+}
+
+export function isEdgeArrow(value: unknown): value is EdgeArrow {
+  return typeof value === "string" && (EDGE_ARROWS as readonly string[]).includes(value);
+}
 
 export type EdgeStyleInput = {
   style?: EdgeLineStyle;

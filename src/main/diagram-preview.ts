@@ -1,7 +1,22 @@
+import {
+  DIAGRAM_EDGE_ARROWS,
+  DIAGRAM_EDGE_LINE_STYLES,
+  DIAGRAM_EDGE_WEIGHTS,
+  DIAGRAM_NODE_EMPHASES,
+  DIAGRAM_NODE_ROLES,
+  DIAGRAM_THEME_NAMES,
+} from "../shared/diagram-stamp";
+
 type JsonObject = Record<string, unknown>;
 
 const SHAPES = new Set(["rectangle", "diamond", "ellipse"]);
 const DIRECTIONS = new Set(["RIGHT", "DOWN"]);
+const NODE_ROLES = new Set<string>(DIAGRAM_NODE_ROLES);
+const NODE_EMPHASES = new Set<string>(DIAGRAM_NODE_EMPHASES);
+const EDGE_STYLES = new Set<string>(DIAGRAM_EDGE_LINE_STYLES);
+const EDGE_WEIGHTS = new Set<string>(DIAGRAM_EDGE_WEIGHTS);
+const EDGE_ARROWS = new Set<string>(DIAGRAM_EDGE_ARROWS);
+const THEMES = new Set<string>(DIAGRAM_THEME_NAMES);
 
 function record(value: unknown): JsonObject {
   return value && typeof value === "object" ? value as JsonObject : {};
@@ -13,10 +28,22 @@ function text(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+/** Only complete enum members survive; a half-streamed token waits. */
+function member(value: unknown, allowed: Set<string>): string | undefined {
+  return typeof value === "string" && allowed.has(value) ? value : undefined;
+}
+
+function optional(key: string, value: string | undefined): JsonObject {
+  return value === undefined ? {} : { [key]: value };
+}
+
 /**
  * Converts repaired, incomplete tool arguments into the largest safe diagram
  * prefix the renderer can show. Invalid/incomplete nodes and dangling edges
  * wait for a later delta instead of failing the final tool call.
+ *
+ * Every field draw_diagram accepts has to appear here: the preview queue
+ * dedupes on this object, so a field it drops never reaches a live preview.
  */
 export function stableDiagramPreview(value: unknown): JsonObject | undefined {
   const source = record(value);
@@ -33,7 +60,9 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
     nodes.push({
       id,
       label,
-      ...(typeof node.shape === "string" && SHAPES.has(node.shape) ? { shape: node.shape } : {}),
+      ...optional("shape", member(node.shape, SHAPES)),
+      ...optional("role", member(node.role, NODE_ROLES)),
+      ...optional("emphasis", member(node.emphasis, NODE_EMPHASES)),
       ...(typeof node.backgroundColor === "string" ? { backgroundColor: node.backgroundColor } : {}),
       ...(typeof node.strokeColor === "string" ? { strokeColor: node.strokeColor } : {}),
       ...(typeof node.rounded === "boolean" ? { rounded: node.rounded } : {}),
@@ -52,6 +81,10 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
         from,
         to,
         ...(typeof edge.label === "string" ? { label: edge.label } : {}),
+        ...optional("style", member(edge.style, EDGE_STYLES)),
+        ...optional("weight", member(edge.weight, EDGE_WEIGHTS)),
+        ...optional("arrow", member(edge.arrow, EDGE_ARROWS)),
+        ...(typeof edge.color === "string" ? { color: edge.color } : {}),
       }];
     });
 
@@ -72,6 +105,7 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
     nodes,
     edges,
     ...(typeof source.title === "string" ? { title: source.title } : {}),
+    ...optional("theme", member(source.theme, THEMES)),
     ...(typeof source.anchor === "string" ? { anchor: source.anchor } : {}),
     ...(Object.keys(layout).length ? { layout } : {}),
   };
