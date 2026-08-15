@@ -31,6 +31,8 @@ import {
 } from "./pi/constants";
 import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./pi/image";
 import { lastAssistantText } from "./pi/messages";
+import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
+import { redact } from "./pi/redact";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
@@ -167,35 +169,12 @@ export class PiRuntime {
     this.voice.beginWork();
     this.#currentJobId = job.id;
     const delta = this.transcript.prepareDelta();
-    const board = this.canvas.getSnapshot();
-    const boardContext = {
-      revision: board.revision,
-      elementCount: board.elements.length,
-      viewport: board.appState,
-      elements: board.elements.slice(0, 100).map((element) => ({
-        id: element.id,
-        type: element.type,
-        x: element.x,
-        y: element.y,
-        width: element.width,
-        height: element.height,
-        text: element.text,
-      })),
-      truncated: board.elements.length > 100,
-    };
-    const message = [
-      job.task,
-      "",
-      `User's words, verbatim: ${JSON.stringify(job.userWords)}`,
-      "",
-      "<voice_conversation_context>",
-      JSON.stringify(delta.entries),
-      "</voice_conversation_context>",
-      "",
-      "<current_canvas_context>",
-      JSON.stringify(boardContext),
-      "</current_canvas_context>",
-    ].join("\n");
+    const message = buildTaskMessage({
+      task: job.task,
+      userWords: job.userWords,
+      transcriptEntries: delta.entries,
+      board: this.canvas.getSnapshot(),
+    });
     await this.#injectMain(session, "[new user message]", message, options.queue ?? false);
     this.transcript.commitDelivered(delta.cursor);
   }
@@ -642,17 +621,11 @@ export class PiRuntime {
       type: "error",
       payload: { error: `Could not prewarm replacement worker: ${String(error)}` },
     }));
-    const message = [
-      sub.task,
-      "",
-      "<voice_conversation_context>",
-      JSON.stringify(this.transcript.contextForNewAgent()),
-      "</voice_conversation_context>",
-      "",
-      "<peer_agent_events>",
-      JSON.stringify(this.ledger.getAgentEvents(this.#eventBaseline)),
-      "</peer_agent_events>",
-    ].join("\n");
+    const message = buildSubagentMessage({
+      task: sub.task,
+      transcriptContext: this.transcript.contextForNewAgent(),
+      peerEvents: this.ledger.getAgentEvents(this.#eventBaseline),
+    });
     this.#startSubRun(sub, message);
   }
 
@@ -756,17 +729,17 @@ export class PiRuntime {
           this.#clearDiagramPreview();
         }
       } else if (value.type === "tool_execution_start") {
-        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_started", payload: this.#redact({ toolName: value.toolName, input: value.args ?? value.input }) });
+        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_started", payload: redact({ toolName: value.toolName, input: value.args ?? value.input }) });
       } else if (value.type === "tool_execution_end") {
         if (agentId === "root" && value.toolName === "draw_diagram") {
           if (value.isError) this.#clearDiagramPreview();
           else this.#resetDiagramPreviewQueue();
         }
-        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_completed", payload: this.#redact({ toolName: value.toolName, isError: value.isError, result: value.result }) });
+        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_completed", payload: redact({ toolName: value.toolName, isError: value.isError, result: value.result }) });
       } else if (value.type === "tool_execution_update") {
-        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_progress", payload: this.#redact(value) });
+        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "tool_progress", payload: redact(value) });
       } else if (value.type === "message_end") {
-        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "assistant_message", payload: this.#redact(value.message) });
+        void this.#emit({ jobId: jobId(), agentId, parentAgentId, type: "assistant_message", payload: redact(value.message) });
       }
     });
   }
@@ -859,18 +832,6 @@ export class PiRuntime {
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
-  #redact(value: unknown): unknown {
-    const text = JSON.stringify(value, (key, item) =>
-      /(?:api[_-]?key|authorization|token|secret|password|cookie)/i.test(key) ? "[REDACTED]" : item,
-    ) ?? String(value);
-    if (text.length > 100_000) return `${text.slice(0, 100_000)}…[truncated]`;
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      return text;
-    }
-  }
-
   #requireMain(): AgentSession {
     if (!this.#main) throw new Error("Pi runtime is not initialized");
     return this.#main;
@@ -935,7 +896,7 @@ export class PiRuntime {
             .map((entry) => entry.text);
           const verdict = await this.#approvalJudge.review({
             tool: event.toolName,
-            input: this.#redact(event.input),
+            input: redact(event.input),
             cwd: context.cwd,
             recentUserRequests,
           }, context.signal);
