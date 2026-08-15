@@ -153,10 +153,11 @@ export function subagentModelFor(settings: AgentSettings | WileySettings): strin
 
 export type SettingsPatch = DeepPartial<WileySettings>;
 
+/** `null` is meaningful here: it clears a field back to its default. */
 export type DeepPartial<T> = T extends Array<infer U>
   ? U[]
   : T extends object
-    ? { [K in keyof T]?: DeepPartial<T[K]> }
+    ? { [K in keyof T]?: DeepPartial<T[K]> | null }
     : T;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
