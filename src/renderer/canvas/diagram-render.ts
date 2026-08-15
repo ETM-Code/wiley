@@ -7,6 +7,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import {
   finiteNumber as finite,
+  guardFrameAutoFit,
   nodeToType,
   planBounds,
   planDiagramLayout,
@@ -149,6 +150,7 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     withoutDiagramPreviewElements([...api.getSceneElements()]),
   );
   translatePlan(plan, origin.x, origin.y);
+  guardFrameAutoFit(plan);
   // Previews are redrawn on every JSON delta and are throwaway by design, so
   // they never pay for the checks.
   const quality = preview ? undefined : assertDiagramQuality(plan);
@@ -257,7 +259,15 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   });
   const titleElement = title ? convertedById.get(titleElementId(diagramId)) : undefined;
   const titleTexts = titleElement ? [titleElement] : [];
-  const groupedIds = new Set([...nodeGroups, ...edgeGroups, titleTexts].flat().map((element) => element.id));
+  // Regions are the stage the rest of the drawing lands on, so they arrive
+  // with the title rather than at the end.
+  const regionElements = created.filter((element) => {
+    const role = plan.roles.get(element.id)?.role;
+    return role === "container" || role === "containerLabel";
+  });
+  const groupedIds = new Set(
+    [...nodeGroups, ...edgeGroups, titleTexts, regionElements].flat().map((element) => element.id),
+  );
   const leftovers = created.filter((element) => !groupedIds.has(element.id));
   const result = {
     count: created.length,
@@ -331,7 +341,7 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
 
   // Keep each step above the normal human visual threshold while bounding the
   // total animation time for both small and large diagrams.
-  streamed.push(...titleTexts);
+  streamed.push(...titleTexts, ...regionElements);
   const nodeDelay = Math.max(70, Math.min(160, Math.round(1_200 / Math.max(1, nodeGroups.length))));
   for (let index = 0; index < nodeGroups.length; index++) {
     if (!shouldStreamCanvas()) return applyFinalScene();
@@ -357,11 +367,13 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   }
 
   streamed.push(...leftovers);
+  // The committed scene takes the plan's own order back: a frame has to sit
+  // directly behind the members it owns, which the reveal cadence does not.
   api.updateScene({
-    elements: [...baseScene(), ...streamed],
+    elements: [...baseScene(), ...created],
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,
   });
-  reportCanvasStreamProgress(streamed.length, created.length);
+  reportCanvasStreamProgress(created.length, created.length);
 
   return result;
 }

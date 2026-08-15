@@ -1362,6 +1362,26 @@ export function planBounds(plan: DiagramPlan): PlanBounds {
   return bounds;
 }
 
+/**
+ * The skeleton converter reads a frame's geometry as `frame.x || minX`, so a
+ * coordinate of exactly zero silently hands the frame back to auto-fit around
+ * its children. Growing the box by one grid cell instead of moving it keeps
+ * every member where the layout put it.
+ */
+export function guardFrameAutoFit(plan: DiagramPlan): void {
+  for (const skeleton of plan.skeletons) {
+    if (skeleton.type !== "frame") continue;
+    if (skeleton.x === 0) {
+      skeleton.x = -MODEL_GRID_SIZE;
+      skeleton.width = finiteNumber(skeleton.width) + MODEL_GRID_SIZE;
+    }
+    if (skeleton.y === 0) {
+      skeleton.y = -MODEL_GRID_SIZE;
+      skeleton.height = finiteNumber(skeleton.height) + MODEL_GRID_SIZE;
+    }
+  }
+}
+
 /** Shifts a plan wholesale; arrow points are relative and move with x/y. */
 export function translatePlan(plan: DiagramPlan, dx: number, dy: number): void {
   for (const skeleton of plan.skeletons) {

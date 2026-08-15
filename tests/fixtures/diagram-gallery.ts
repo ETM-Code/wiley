@@ -587,6 +587,100 @@ export const stressGraphs: DiagramFixture[] = [
     },
   },
   {
+    name: "two tiers with a cross edge",
+    params: {
+      title: "Request path",
+      theme: "ocean",
+      containers: [
+        { id: "edge", label: "Edge tier", role: "primary" },
+        { id: "core", label: "Core services", role: "accent" },
+      ],
+      nodes: [
+        { id: "client", label: "Browser" },
+        { id: "cdn", label: "CDN", container: "edge" },
+        { id: "waf", label: "WAF", container: "edge" },
+        { id: "api", label: "API gateway", container: "core" },
+        { id: "db", label: "Database", shape: "ellipse", container: "core" },
+      ],
+      edges: [
+        { from: "client", to: "cdn", label: "GET" },
+        { from: "cdn", to: "waf", label: "filter" },
+        { from: "waf", to: "api", label: "proxy" },
+        { from: "api", to: "db", label: "query" },
+      ],
+    },
+  },
+  {
+    name: "nested regions two deep",
+    params: {
+      title: "Deployment",
+      theme: "forest",
+      containers: [
+        { id: "cloud", label: "Cloud account", role: "muted" },
+        { id: "vpc", label: "Private network", parent: "cloud", role: "primary" },
+      ],
+      nodes: [
+        { id: "user", label: "Operator" },
+        { id: "dns", label: "DNS zone", container: "cloud" },
+        { id: "app", label: "App server", container: "vpc" },
+        { id: "cache", label: "Cache", container: "vpc" },
+        { id: "store", label: "Object store", container: "cloud" },
+      ],
+      edges: [
+        { from: "user", to: "dns", label: "resolve" },
+        { from: "dns", to: "app", label: "route" },
+        { from: "app", to: "cache", label: "read" },
+        { from: "app", to: "store", label: "write" },
+      ],
+    },
+  },
+  {
+    name: "fan-in into one region",
+    params: {
+      theme: "sunset",
+      layout: { direction: "DOWN" },
+      containers: [{ id: "pipeline", label: "Ingest pipeline", role: "primary" }],
+      nodes: [
+        ...Array.from({ length: 6 }, (_, index) => ({
+          id: `feed-${index}`,
+          label: `Feed ${index + 1}`,
+        })),
+        { id: "collector", label: "Collector", container: "pipeline" },
+        { id: "normalize", label: "Normalize", container: "pipeline" },
+        { id: "warehouse", label: "Warehouse", shape: "ellipse" },
+      ],
+      edges: [
+        ...Array.from({ length: 6 }, (_, index) => ({
+          from: `feed-${index}`,
+          to: "collector",
+          ...(index % 2 === 0 ? { label: "push" } : {}),
+        })),
+        { from: "collector", to: "normalize", label: "batch" },
+        { from: "normalize", to: "warehouse", label: "load" },
+      ],
+    },
+  },
+  {
+    name: "frame around a board column",
+    params: {
+      theme: "grape",
+      containers: [{ id: "sprint", label: "Sprint 14", render: "frame" }],
+      nodes: [
+        { id: "backlog", label: "Backlog", role: "muted" },
+        { id: "todo", label: "To do", container: "sprint" },
+        { id: "doing", label: "In progress", container: "sprint" },
+        { id: "done", label: "Done", shape: "ellipse", container: "sprint" },
+        { id: "release", label: "Release notes", role: "muted" },
+      ],
+      edges: [
+        { from: "backlog", to: "todo", label: "pull" },
+        { from: "todo", to: "doing" },
+        { from: "doing", to: "done", label: "ship" },
+        { from: "done", to: "release" },
+      ],
+    },
+  },
+  {
     name: "cycle with parallel edges",
     params: {
       nodes: [

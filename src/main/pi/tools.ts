@@ -4,6 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import {
+  DIAGRAM_CONTAINER_RENDERS,
   DIAGRAM_EDGE_ARROWS,
   DIAGRAM_EDGE_LINE_STYLES,
   DIAGRAM_EDGE_WEIGHTS,
@@ -133,7 +134,7 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
     defineTool({
       name: "draw_diagram",
       label: "Draw Diagram",
-      description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Colour by meaning, not by hex: pick one theme for the whole diagram (slate is neutral, ocean blue, forest green, sunset warm, grape violet, mono grayscale) and give each node a role (primary, success, warning, danger, accent, muted, neutral) plus optional emphasis (strong to foreground it, quiet to recede it). Edges take style solid/dashed/dotted, weight normal/strong/quiet, arrow none/end/both, and color as a role name. Keep the palette tight: roughly one distinct colour per three nodes reads as a designed diagram, more reads as noise. Only set backgroundColor or strokeColor when the user names a specific colour. Shape text draws a bare caption with no box, for annotations and legends inside the graph. Pick layout.algorithm for the shape of the graph: layered (default) for flows and processes, tree for hierarchies and org charts, radial for a hub with spokes, force or stress for meshes and networks with no direction. layout.direction (RIGHT, DOWN, LEFT, UP) applies to layered and tree only and is reported back as ignored otherwise; the result also reports which algorithm was actually used, since an algorithm that cannot handle a given graph falls back to layered. Layout, grid snapping, viewport fitting, and perimeter bindings are automatic. To add the diagram beside existing content, pass anchor (an existing element id, or omit to use the whole scene) with anchorDirection right, left, above, or below. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection. It also returns diagramId, the stable name of the diagram you just drew, plus idMap from your node ids to element ids; the canvas context lists the diagrams already on the board under the same ids, so refer to one by its diagramId instead of redrawing it.",
+      description: "Draw one complete, validated graph in a single call, including its title, node shapes, colors, rounded action boxes, edges, and layout direction. Supply semantic nodes and edges, never coordinates. Colour by meaning, not by hex: pick one theme for the whole diagram (slate is neutral, ocean blue, forest green, sunset warm, grape violet, mono grayscale) and give each node a role (primary, success, warning, danger, accent, muted, neutral) plus optional emphasis (strong to foreground it, quiet to recede it). Edges take style solid/dashed/dotted, weight normal/strong/quiet, arrow none/end/both, and color as a role name. Keep the palette tight: roughly one distinct colour per three nodes reads as a designed diagram, more reads as noise. Only set backgroundColor or strokeColor when the user names a specific colour. Shape text draws a bare caption with no box, for annotations and legends inside the graph. Group nodes into labelled regions with containers: declare each region once with an id and label, give it a role for its tint, and put a node inside it with container. A region may name a parent region, two levels deep at most, and the layout keeps its members together and its label in the band above them. Set render frame for a real Excalidraw frame instead of a tinted box; a frame is top level only and cannot hold another region. Containers force the layered algorithm, which is reported back. Pick layout.algorithm for the shape of the graph: layered (default) for flows and processes, tree for hierarchies and org charts, radial for a hub with spokes, force or stress for meshes and networks with no direction. layout.direction (RIGHT, DOWN, LEFT, UP) applies to layered and tree only and is reported back as ignored otherwise; the result also reports which algorithm was actually used, since an algorithm that cannot handle a given graph falls back to layered. Layout, grid snapping, viewport fitting, and perimeter bindings are automatic. To add the diagram beside existing content, pass anchor (an existing element id, or omit to use the whole scene) with anchorDirection right, left, above, or below. The result validates rendered shapes and styles, so do not call get_canvas afterward unless this tool reports an error or the user explicitly asks for visual inspection. It also returns diagramId, the stable name of the diagram you just drew, plus idMap from your node ids to element ids; the canvas context lists the diagrams already on the board under the same ids, so refer to one by its diagramId instead of redrawing it.",
       parameters: Type.Object({
         title: Type.Optional(Type.String()),
         theme: Type.Optional(Type.Union(DIAGRAM_THEME_NAMES.map((name) => Type.Literal(name)))),
@@ -151,7 +152,17 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
           backgroundColor: Type.Optional(Type.String()),
           strokeColor: Type.Optional(Type.String()),
           rounded: Type.Optional(Type.Boolean()),
+          container: Type.Optional(Type.String()),
         }, { additionalProperties: false })),
+        containers: Type.Optional(Type.Array(Type.Object({
+          id: Type.String(),
+          label: Type.Optional(Type.String()),
+          parent: Type.Optional(Type.String()),
+          role: Type.Optional(Type.Union(DIAGRAM_NODE_ROLES.map((role) => Type.Literal(role)))),
+          render: Type.Optional(Type.Union(
+            DIAGRAM_CONTAINER_RENDERS.map((value) => Type.Literal(value)),
+          )),
+        }, { additionalProperties: false }))),
         edges: Type.Array(Type.Object({
           from: Type.String(),
           to: Type.String(),
