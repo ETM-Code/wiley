@@ -34,13 +34,11 @@ export class TranscriptStore {
     return this.ledger.getTranscript(Math.max(sequence, this.#sessionBaseline));
   }
 
-  /** Returns each entry at most once to the persistent main Pi session. */
-  takeDelta(maxChars = MAX_TRANSCRIPT_CHARS): TranscriptEntry[] {
-    const prepared = this.prepareDelta(maxChars);
-    this.commitDelivered(prepared.cursor);
-    return prepared.entries;
-  }
-
+  /**
+   * Undelivered entries plus the cursor to commit once the prompt is
+   * accepted, so the persistent main Pi session sees each entry at most once
+   * and a failed handoff does not lose it.
+   */
   prepareDelta(maxChars = MAX_TRANSCRIPT_CHARS): { entries: TranscriptEntry[]; cursor: number } {
     let entries = this.ledger.getTranscript(this.#deliveryCursor);
     const cursor = entries.at(-1)?.sequence ?? this.#deliveryCursor;
