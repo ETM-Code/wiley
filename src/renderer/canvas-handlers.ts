@@ -19,13 +19,25 @@ import {
   translatePlan,
   wrapLabel,
   type LayoutParams,
-  type PlanBounds,
 } from "./diagram-layout";
+import {
+  asRecord,
+  directionalOrigin,
+  elementsBounds,
+  finiteGeometry,
+  gridResult,
+  perimeterPoint,
+  resolveDiagramOrigin,
+  snapModelGeometry,
+} from "./canvas/geometry";
+import {
+  pauseForStreaming,
+  reportCanvasStreamProgress,
+  shouldStreamCanvas,
+} from "./canvas/streaming";
+import type { JsonObject, SceneElement } from "./canvas/types";
 
 export { MODEL_GRID_SIZE, snapModelCoordinate } from "./diagram-layout";
-
-type JsonObject = Record<string, unknown>;
-type SceneElement = ReturnType<ExcalidrawImperativeAPI["getSceneElements"]>[number];
 
 type AddParams = {
   elements: JsonObject[];
@@ -58,35 +70,6 @@ export function withoutDiagramPreviewElements<T extends { id?: unknown }>(elemen
   return elements.filter((element) => typeof element.id !== "string" || !diagramPreviewElementIds.has(element.id));
 }
 
-function shouldStreamCanvas(): boolean {
-  if (typeof document === "undefined") return true;
-  return document.visibilityState === "visible" && document.hasFocus();
-}
-
-function pauseForStreaming(milliseconds: number): Promise<void> {
-  if (!shouldStreamCanvas()) return Promise.resolve();
-  return new Promise((resolve) => globalThis.setTimeout(() => {
-    if (typeof globalThis.requestAnimationFrame === "function") {
-      globalThis.requestAnimationFrame(() => resolve());
-      return;
-    }
-    resolve();
-  }, milliseconds));
-}
-
-function reportCanvasStreamProgress(visibleElements: number, totalElements: number): void {
-  if (typeof document === "undefined") return;
-  document.documentElement.dataset.wileyCanvasStream = `${visibleElements}/${totalElements}`;
-  const entry = `${Math.round(performance.now())}:${visibleElements}/${totalElements}`;
-  const previous = visibleElements === 0
-    ? []
-    : (document.documentElement.dataset.wileyCanvasStreamTrace ?? "").split("|").filter(Boolean);
-  document.documentElement.dataset.wileyCanvasStreamTrace = [...previous, entry].slice(-128).join("|");
-  document.dispatchEvent(new CustomEvent("wiley:canvas-stream-progress", {
-    detail: { visibleElements, totalElements },
-  }));
-}
-
 function reportDiagramPreviewProgress(nodes: number, edges: number, version: number): void {
   if (typeof document === "undefined") return;
   document.documentElement.dataset.wileyDiagramPreview = `${nodes}/${edges}`;
@@ -96,28 +79,6 @@ function reportDiagramPreviewProgress(nodes: number, edges: number, version: num
   document.dispatchEvent(new CustomEvent("wiley:diagram-preview-progress", {
     detail: { nodes, edges, version },
   }));
-}
-
-function asRecord(value: unknown): JsonObject {
-  return value && typeof value === "object" ? (value as JsonObject) : {};
-}
-
-function snapModelGeometry(props: JsonObject): JsonObject {
-  const snapped = { ...props };
-  if ("x" in snapped) snapped.x = snapModelCoordinate(snapped.x);
-  if ("y" in snapped) snapped.y = snapModelCoordinate(snapped.y);
-  if ("width" in snapped) snapped.width = snapModelSize(snapped.width, MODEL_GRID_SIZE);
-  if ("height" in snapped) snapped.height = snapModelSize(snapped.height, MODEL_GRID_SIZE);
-  if (Array.isArray(snapped.points)) {
-    snapped.points = snapped.points.map((point) => Array.isArray(point)
-      ? [snapModelCoordinate(point[0]), snapModelCoordinate(point[1])]
-      : point);
-  }
-  return snapped;
-}
-
-function gridResult() {
-  return { gridSize: MODEL_GRID_SIZE, snapped: true };
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {
@@ -165,82 +126,6 @@ function sceneSummary(elements: readonly SceneElement[]) {
       connects,
     };
   });
-}
-
-type PlaceDirection = "right" | "left" | "above" | "below";
-const PLACE_GAP = 120;
-
-function finiteGeometry(elements: readonly SceneElement[]): SceneElement[] {
-  return elements.filter(
-    (element) => Number.isFinite(element.x) && Number.isFinite(element.y)
-      && Number.isFinite(element.width) && Number.isFinite(element.height),
-  );
-}
-
-function elementsBounds(elements: readonly SceneElement[]): PlanBounds | null {
-  if (elements.length === 0) return null;
-  return {
-    minX: Math.min(...elements.map((element) => element.x)),
-    minY: Math.min(...elements.map((element) => element.y)),
-    maxX: Math.max(...elements.map((element) => element.x + element.width)),
-    maxY: Math.max(...elements.map((element) => element.y + element.height)),
-  };
-}
-
-/**
- * Places new content beside the anchor element (or the whole existing scene)
- * in the requested direction, offset so its own bounds clear the reference.
- */
-function directionalOrigin(
-  reference: PlanBounds,
-  content: PlanBounds,
-  direction: PlaceDirection,
-  gap = PLACE_GAP,
-): { x: number; y: number } {
-  switch (direction) {
-    case "left":
-      return {
-        x: snapModelCoordinate(reference.minX - gap - content.maxX),
-        y: snapModelCoordinate(reference.minY - content.minY),
-      };
-    case "above":
-      return {
-        x: snapModelCoordinate(reference.minX - content.minX),
-        y: snapModelCoordinate(reference.minY - gap - content.maxY),
-      };
-    case "below":
-      return {
-        x: snapModelCoordinate(reference.minX - content.minX),
-        y: snapModelCoordinate(reference.maxY + gap - content.minY),
-      };
-    default:
-      return {
-        x: snapModelCoordinate(reference.maxX + gap - content.minX),
-        y: snapModelCoordinate(reference.minY - content.minY),
-      };
-  }
-}
-
-function resolveDiagramOrigin(
-  api: ExcalidrawImperativeAPI,
-  anchor: string | undefined,
-  direction: PlaceDirection,
-  content: PlanBounds,
-  sourceElements: readonly SceneElement[],
-): { x: number; y: number } {
-  const elements = finiteGeometry(sourceElements);
-  const anchored = anchor ? elements.find((element) => element.id === anchor) : undefined;
-  const reference = anchored
-    ? elementsBounds([anchored])
-    : elementsBounds(elements);
-  if (!reference) {
-    const state = api.getAppState();
-    return {
-      x: snapModelCoordinate(Math.max(80, -finite(state.scrollX) + 120)),
-      y: snapModelCoordinate(Math.max(80, -finite(state.scrollY) + 120)),
-    };
-  }
-  return directionalOrigin(reference, content, direction);
 }
 
 async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
@@ -654,21 +539,6 @@ function remeasuredTextBox(element: PatchableElement, text: string, fontSize: nu
 type ConnectParams = {
   connections: Array<{ from: string; to: string; label?: string; bidirectional?: boolean }>;
 };
-
-function perimeterPoint(
-  box: { x: number; y: number; width: number; height: number },
-  towards: { x: number; y: number },
-): { x: number; y: number } {
-  const centerX = box.x + box.width / 2;
-  const centerY = box.y + box.height / 2;
-  const dx = towards.x - centerX;
-  const dy = towards.y - centerY;
-  if (dx === 0 && dy === 0) return { x: centerX, y: centerY };
-  const scaleX = dx !== 0 ? box.width / 2 / Math.abs(dx) : Number.POSITIVE_INFINITY;
-  const scaleY = dy !== 0 ? box.height / 2 / Math.abs(dy) : Number.POSITIVE_INFINITY;
-  const scale = Math.min(scaleX, scaleY);
-  return { x: centerX + dx * scale, y: centerY + dy * scale };
-}
 
 /**
  * Connects existing elements (including human-drawn ones) with bound arrows.
