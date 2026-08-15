@@ -192,6 +192,53 @@ export function geometryIntersectsBox(
     || geometry.corners.some((corner) => triangleIntersectsBox(corner, box, shrink));
 }
 
+/** Two runs closer in angle than this read as the same line. */
+export const PARALLEL_ANGLE_DEGREES = 5;
+/** How near two parallel runs have to be before they visually merge. */
+export const PARALLEL_SEPARATION = 3;
+/** Shorter shared runs than this are a crossing, not a doubled line. */
+export const MIN_PARALLEL_OVERLAP = 10;
+
+/**
+ * Whether two runs are close enough to parallel, close enough together, and
+ * overlapping for long enough that they draw as one thick line. Works at any
+ * angle, so diagonal routes from the non-layered algorithms are held to the
+ * same standard as orthogonal ones.
+ */
+export function segmentsVisuallyMerge(a: Segment, b: Segment): boolean {
+  const ax = a.x2 - a.x1;
+  const ay = a.y2 - a.y1;
+  const bx = b.x2 - b.x1;
+  const by = b.y2 - b.y1;
+  const aLength = Math.hypot(ax, ay);
+  const bLength = Math.hypot(bx, by);
+  if (aLength < 1e-6 || bLength < 1e-6) return false;
+  const cosine = (ax * bx + ay * by) / (aLength * bLength);
+  const degrees = (Math.acos(Math.min(1, Math.max(-1, cosine))) * 180) / Math.PI;
+  if (degrees >= PARALLEL_ANGLE_DEGREES && degrees <= 180 - PARALLEL_ANGLE_DEGREES) return false;
+
+  const ux = ax / aLength;
+  const uy = ay / aLength;
+  const project = (point: Point) => (point.x - a.x1) * ux + (point.y - a.y1) * uy;
+  const offset = (point: Point) => (point.x - a.x1) * -uy + (point.y - a.y1) * ux;
+  const first = { x: b.x1, y: b.y1 };
+  const second = { x: b.x2, y: b.y2 };
+  const t1 = project(first);
+  const t2 = project(second);
+  const start = Math.max(0, Math.min(t1, t2));
+  const end = Math.min(aLength, Math.max(t1, t2));
+  if (end - start <= MIN_PARALLEL_OVERLAP) return false;
+
+  // Measure separation in the middle of the shared run: at a near-parallel
+  // angle the ends can drift apart while the visible overlap sits on top of
+  // the other line.
+  const centre = (start + end) / 2;
+  const span = t2 - t1;
+  const ratio = Math.abs(span) < 1e-6 ? 0 : Math.min(1, Math.max(0, (centre - t1) / span));
+  const distance = Math.abs(offset(first) + ratio * (offset(second) - offset(first)));
+  return distance < PARALLEL_SEPARATION;
+}
+
 export function countBlockers(
   points: readonly Point[],
   rounded: boolean,
@@ -399,6 +446,83 @@ export function orthogonalRoute(from: Point, to: Point, blockers: readonly Box[]
 // ---------------------------------------------------------------------------
 // The pipeline
 // ---------------------------------------------------------------------------
+
+/**
+ * The two defects the repair loop can actually act on: a route crossing a
+ * node it does not belong to, and two routes drawing as one line. Everything
+ * else in the quality report is a layout problem, not a routing one.
+ */
+export function routeDefects(
+  nodes: ReadonlyMap<string, Box>,
+  routes: readonly PlannedRoute[],
+  attachments: ReadonlyMap<string, { from: string; to: string }>,
+): Set<string> {
+  const guilty = new Set<string>();
+  for (const route of routes) {
+    const ends = attachments.get(route.id);
+    const geometry = routeGeometry(route.points, route.rounded);
+    for (const box of nodes.values()) {
+      if (box.id === ends?.from || box.id === ends?.to) continue;
+      if (geometryIntersectsBox(geometry, box)) guilty.add(route.id);
+    }
+  }
+  for (let a = 0; a < routes.length; a++) {
+    for (let b = a + 1; b < routes.length; b++) {
+      const first = pointsToSegments(routes[a].points);
+      const second = pointsToSegments(routes[b].points);
+      if (first.some((one) => second.some((other) => segmentsVisuallyMerge(one, other)))) {
+        guilty.add(routes[a].id);
+        guilty.add(routes[b].id);
+      }
+    }
+  }
+  return guilty;
+}
+
+/**
+ * Where an edge label goes when the layout engine refuses to say. ELK's
+ * mrtree and radial algorithms return every edge label at the origin, so the
+ * label has to be placed against the route we ended up drawing.
+ *
+ * Candidates ring the route's midpoint in a fixed order, near before far, and
+ * the first one clear of every obstacle wins. If nothing is clear the first
+ * candidate is used, because a label slightly over a line still beats a label
+ * stacked on the origin.
+ */
+export function placeEdgeLabel(
+  points: readonly Point[],
+  size: { width: number; height: number },
+  obstacles: readonly Box[],
+): Point {
+  const anchor = points.length === 0
+    ? { x: 0, y: 0 }
+    : points.length % 2 === 1
+      ? points[(points.length - 1) / 2]
+      : midpoint(points[points.length / 2 - 1], points[points.length / 2]);
+  const gap = 8;
+  const offsets: Point[] = [];
+  for (const scale of [1, 2]) {
+    offsets.push(
+      { x: 0, y: -(size.height / 2 + gap) * scale },
+      { x: 0, y: (size.height / 2 + gap) * scale },
+      { x: (size.width / 2 + gap) * scale, y: 0 },
+      { x: -(size.width / 2 + gap) * scale, y: 0 },
+    );
+  }
+  const candidates = offsets.map((offset) => ({
+    x: anchor.x + offset.x - size.width / 2,
+    y: anchor.y + offset.y - size.height / 2,
+  }));
+  for (const candidate of candidates) {
+    const box: Box = { id: "label", ...candidate, width: size.width, height: size.height };
+    const clear = obstacles.every((other) => !(box.x < other.x + other.width
+      && other.x < box.x + box.width
+      && box.y < other.y + other.height
+      && other.y < box.y + box.height));
+    if (clear) return candidate;
+  }
+  return candidates[0];
+}
 
 export type RouteRequest = {
   id: string;

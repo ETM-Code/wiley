@@ -49,11 +49,23 @@ describe("streaming diagram arguments", () => {
     });
   });
 
+  it("carries the layout algorithm and the new directions", () => {
+    expect(stableDiagramPreview({
+      nodes: [{ id: "a", label: "Root", shape: "text" }],
+      layout: { algorithm: "tree", direction: "UP" },
+    })).toEqual({
+      nodes: [{ id: "a", label: "Root", shape: "text" }],
+      edges: [],
+      layout: { algorithm: "tree", direction: "UP" },
+    });
+  });
+
   it("drops half-streamed enum tokens rather than guessing", () => {
     expect(stableDiagramPreview({
       theme: "oce",
-      nodes: [{ id: "a", label: "Ingest", role: "prim", emphasis: "stro" }],
+      nodes: [{ id: "a", label: "Ingest", role: "prim", emphasis: "stro", shape: "te" }],
       edges: [{ from: "a", to: "a", style: "das", weight: "quie", arrow: "bot" }],
+      layout: { algorithm: "rad" },
     })).toEqual({
       nodes: [{ id: "a", label: "Ingest" }],
       edges: [{ from: "a", to: "a" }],

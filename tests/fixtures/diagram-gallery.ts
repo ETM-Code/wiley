@@ -43,6 +43,7 @@ export function handBuiltPlan(
     roles,
     theme: options.theme ?? "slate",
     explicitColors: new Set(options.explicitColors ?? []),
+    layout: { requested: "layered", used: "layered" },
   };
 }
 
@@ -257,6 +258,124 @@ export const stressGraphs: DiagramFixture[] = [
         })),
         { from: "ledger", to: "verify", label: "edit + test" },
         { from: "verify", to: "ledger", label: "pass" },
+      ],
+    },
+  },
+  {
+    name: "org chart (tree)",
+    params: {
+      title: "Engineering org",
+      theme: "ocean",
+      layout: { algorithm: "tree", direction: "DOWN" },
+      nodes: [
+        { id: "cto", label: "CTO", role: "primary", emphasis: "strong" },
+        { id: "platform", label: "Platform lead", role: "primary" },
+        { id: "product", label: "Product lead", role: "primary" },
+        { id: "data", label: "Data lead", role: "primary" },
+        ...Array.from({ length: 6 }, (_, index) => ({
+          id: `eng-${index}`,
+          label: `Engineer ${index + 1}`,
+          role: "neutral" as const,
+        })),
+      ],
+      edges: [
+        { from: "cto", to: "platform" },
+        { from: "cto", to: "product" },
+        { from: "cto", to: "data" },
+        { from: "platform", to: "eng-0" },
+        { from: "platform", to: "eng-1" },
+        { from: "product", to: "eng-2" },
+        { from: "product", to: "eng-3" },
+        { from: "data", to: "eng-4" },
+        { from: "data", to: "eng-5" },
+      ],
+    },
+  },
+  {
+    name: "mind map (tree)",
+    params: {
+      theme: "grape",
+      layout: { algorithm: "tree", direction: "RIGHT" },
+      nodes: [
+        { id: "topic", label: "Launch plan", shape: "ellipse", role: "primary", emphasis: "strong" },
+        { id: "marketing", label: "Marketing", role: "accent" },
+        { id: "pricing", label: "Pricing", role: "accent" },
+        { id: "support", label: "Support", role: "accent" },
+        { id: "blog", label: "Blog post", role: "neutral" },
+        { id: "video", label: "Demo video", role: "neutral" },
+        { id: "tiers", label: "Tiers", role: "neutral" },
+        { id: "runbook", label: "Runbook", role: "neutral" },
+      ],
+      edges: [
+        { from: "topic", to: "marketing", label: "own" },
+        { from: "topic", to: "pricing" },
+        { from: "topic", to: "support" },
+        { from: "marketing", to: "blog" },
+        { from: "marketing", to: "video" },
+        { from: "pricing", to: "tiers" },
+        { from: "support", to: "runbook", label: "draft" },
+      ],
+    },
+  },
+  {
+    name: "star topology (radial)",
+    params: {
+      title: "Rack network",
+      layout: { algorithm: "radial" },
+      nodes: [
+        { id: "hub", label: "Core switch", shape: "ellipse", role: "primary" },
+        ...Array.from({ length: 7 }, (_, index) => ({ id: `host-${index}`, label: `Host ${index + 1}` })),
+      ],
+      edges: Array.from({ length: 7 }, (_, index) => ({
+        from: "hub",
+        to: `host-${index}`,
+        ...(index % 3 === 0 ? { label: "10G" } : {}),
+      })),
+    },
+  },
+  {
+    name: "peer mesh (force)",
+    params: {
+      theme: "forest",
+      layout: { algorithm: "force" },
+      nodes: Array.from({ length: 6 }, (_, index) => ({
+        id: `peer-${index}`,
+        label: `Peer ${index + 1}`,
+        role: "primary" as const,
+      })),
+      edges: [
+        { from: "peer-0", to: "peer-1" },
+        { from: "peer-1", to: "peer-2" },
+        { from: "peer-2", to: "peer-3" },
+        { from: "peer-3", to: "peer-4" },
+        { from: "peer-4", to: "peer-5" },
+        { from: "peer-5", to: "peer-0" },
+        { from: "peer-0", to: "peer-3", style: "dashed" },
+        { from: "peer-1", to: "peer-4", style: "dashed" },
+      ],
+    },
+  },
+  {
+    name: "service constellation (stress)",
+    params: {
+      layout: { algorithm: "stress" },
+      nodes: [
+        { id: "gateway", label: "Gateway" },
+        { id: "auth", label: "Auth" },
+        { id: "orders", label: "Orders" },
+        { id: "payments", label: "Payments" },
+        { id: "search", label: "Search" },
+        { id: "ledger", label: "Ledger" },
+        { id: "email", label: "Email" },
+      ],
+      edges: [
+        { from: "gateway", to: "auth", label: "verify" },
+        { from: "gateway", to: "orders" },
+        { from: "gateway", to: "search" },
+        { from: "orders", to: "payments", label: "charge" },
+        { from: "payments", to: "ledger" },
+        { from: "orders", to: "email" },
+        { from: "auth", to: "ledger" },
       ],
     },
   },

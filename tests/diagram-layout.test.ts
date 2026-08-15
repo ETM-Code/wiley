@@ -85,6 +85,18 @@ describe("diagram layout quality", () => {
     }
   });
 
+  it.each(stressGraphs)("honours the requested layout algorithm for $name", async ({ params }) => {
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    const requested = params.layout?.algorithm ?? "layered";
+    expect(plan.layout).toMatchObject({ requested, used: requested });
+    expect(plan.layout.reason).toBeUndefined();
+  });
+
+  it("exercises every layout algorithm across the gallery", () => {
+    const used = new Set(stressGraphs.map(({ params }) => params.layout?.algorithm ?? "layered"));
+    expect([...used].sort()).toEqual(["force", "layered", "radial", "stress", "tree"]);
+  });
+
   it("exercises more than one theme across the gallery", () => {
     const themed = new Set(stressGraphs.map(({ params }) => params.theme).filter(Boolean));
     expect(themed.size).toBeGreaterThanOrEqual(3);
@@ -148,6 +160,85 @@ describe("diagram layout quality", () => {
     const up = await chain("UP");
     expect(at(up, "b").y).toBeLessThan(at(up, "a").y);
     expect(at(up, "b").x).toBe(at(up, "a").x);
+  });
+
+  it.each(["force", "stress", "radial", "tree"] as const)(
+    "places %s identically on every run",
+    async (algorithm) => {
+      const params: LayoutParams = {
+        layout: { algorithm },
+        nodes: Array.from({ length: 7 }, (_, index) => ({ id: `n${index}`, label: `Node ${index + 1}` })),
+        edges: [
+          { from: "n0", to: "n1", label: "a" },
+          { from: "n0", to: "n2" },
+          { from: "n1", to: "n3", label: "b" },
+          { from: "n1", to: "n4" },
+          { from: "n2", to: "n5" },
+          { from: "n2", to: "n6", label: "c" },
+        ],
+      };
+      const first = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+      const second = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+      expect(second.skeletons).toEqual(first.skeletons);
+      expect(second.layout).toEqual(first.layout);
+    },
+  );
+
+  it("reports the direction an undirected algorithm ignored", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "force", direction: "UP" },
+      nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+      edges: [{ from: "a", to: "b" }],
+    }, ORIGIN, DIAGRAM_ID);
+    expect(plan.layout).toEqual({ requested: "force", used: "force", ignoredDirection: "UP" });
+  });
+
+  it("falls back to layered and says why when an algorithm refuses the graph", async () => {
+    // radial only accepts a tree; a cycle is not one.
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "radial" },
+      nodes: Array.from({ length: 4 }, (_, index) => ({ id: `n${index}`, label: `Node ${index}` })),
+      edges: [
+        { from: "n0", to: "n1" },
+        { from: "n1", to: "n2" },
+        { from: "n2", to: "n3" },
+        { from: "n3", to: "n0" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    expect(plan.layout.requested).toBe("radial");
+    expect(plan.layout.used).toBe("layered");
+    expect(plan.layout.reason).toMatch(/radial/);
+    expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
+  });
+
+  it("bends a repaired route and marks it round so the hull check applies", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "stress" },
+      nodes: Array.from({ length: 8 }, (_, index) => ({ id: `n${index}`, label: `Node ${index + 1}` })),
+      edges: [
+        { from: "n0", to: "n4" },
+        { from: "n1", to: "n5" },
+        { from: "n2", to: "n6" },
+        { from: "n3", to: "n7" },
+        { from: "n0", to: "n7" },
+        { from: "n1", to: "n6" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
+    for (const arrow of arrows) {
+      const points = arrow.points as number[][];
+      // Every bent route carries roundness; every straight one does not.
+      expect(Boolean(arrow.roundness)).toBe(points.length > 2);
+    }
+    expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
+  });
+
+  it("rejects an algorithm outside the supported set", async () => {
+    await expect(planDiagramLayout({
+      layout: { algorithm: "spectral" as never },
+      nodes: [{ id: "a", label: "A" }],
+      edges: [],
+    }, ORIGIN, DIAGRAM_ID)).rejects.toThrow(/algorithm/);
   });
 
   it("rejects a direction outside the supported set", async () => {

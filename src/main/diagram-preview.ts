@@ -11,6 +11,7 @@ type JsonObject = Record<string, unknown>;
 
 const SHAPES = new Set(["rectangle", "diamond", "ellipse", "text"]);
 const DIRECTIONS = new Set(["RIGHT", "DOWN", "LEFT", "UP"]);
+const ALGORITHMS = new Set(["layered", "tree", "radial", "force", "stress"]);
 const NODE_ROLES = new Set<string>(DIAGRAM_NODE_ROLES);
 const NODE_EMPHASES = new Set<string>(DIAGRAM_NODE_EMPHASES);
 const EDGE_STYLES = new Set<string>(DIAGRAM_EDGE_LINE_STYLES);
@@ -90,6 +91,7 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
 
   const layoutSource = record(source.layout);
   const layout = {
+    ...optional("algorithm", member(layoutSource.algorithm, ALGORITHMS)),
     ...(typeof layoutSource.direction === "string" && DIRECTIONS.has(layoutSource.direction)
       ? { direction: layoutSource.direction }
       : {}),

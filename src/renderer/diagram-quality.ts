@@ -4,13 +4,14 @@ import {
   arrowGeometry,
   geometryIntersectsBox,
   pointsToSegments,
+  segmentsVisuallyMerge,
   type Box,
   type Point,
   type Segment,
 } from "./diagram-routes";
 import { contrastRatio, resolveTheme, themeColors } from "./diagram-theme";
 
-export { absoluteArrowPoints, arrowGeometry } from "./diagram-routes";
+export { absoluteArrowPoints, arrowGeometry, segmentsVisuallyMerge } from "./diagram-routes";
 
 type JsonObject = Record<string, unknown>;
 
@@ -25,12 +26,6 @@ export interface DiagramQualityReport {
   styleCoherence: string[];
 }
 
-/** Two runs closer in angle than this read as the same line. */
-const PARALLEL_ANGLE_DEGREES = 5;
-/** How near two parallel runs have to be before they visually merge. */
-const PARALLEL_SEPARATION = 3;
-/** Shorter shared runs than this are a crossing, not a doubled line. */
-const MIN_PARALLEL_OVERLAP = 10;
 /** Two ports nearer than this on one node read as a single attachment. */
 const MIN_PORT_SEPARATION = 14;
 
@@ -50,46 +45,6 @@ function boxesOverlap(a: Box, b: Box, margin = 0): boolean {
 
 function arrowSegments(arrow: JsonObject): Segment[] {
   return pointsToSegments(absoluteArrowPoints(arrow));
-}
-
-/**
- * Whether two runs are close enough to parallel, close enough together, and
- * overlapping for long enough that they draw as one thick line. Works at any
- * angle, so diagonal routes from the non-layered algorithms are held to the
- * same standard as orthogonal ones.
- */
-export function segmentsVisuallyMerge(a: Segment, b: Segment): boolean {
-  const ax = a.x2 - a.x1;
-  const ay = a.y2 - a.y1;
-  const bx = b.x2 - b.x1;
-  const by = b.y2 - b.y1;
-  const aLength = Math.hypot(ax, ay);
-  const bLength = Math.hypot(bx, by);
-  if (aLength < 1e-6 || bLength < 1e-6) return false;
-  const cosine = (ax * bx + ay * by) / (aLength * bLength);
-  const degrees = (Math.acos(Math.min(1, Math.max(-1, cosine))) * 180) / Math.PI;
-  if (degrees >= PARALLEL_ANGLE_DEGREES && degrees <= 180 - PARALLEL_ANGLE_DEGREES) return false;
-
-  const ux = ax / aLength;
-  const uy = ay / aLength;
-  const project = (point: Point) => (point.x - a.x1) * ux + (point.y - a.y1) * uy;
-  const offset = (point: Point) => (point.x - a.x1) * -uy + (point.y - a.y1) * ux;
-  const first = { x: b.x1, y: b.y1 };
-  const second = { x: b.x2, y: b.y2 };
-  const t1 = project(first);
-  const t2 = project(second);
-  const start = Math.max(0, Math.min(t1, t2));
-  const end = Math.min(aLength, Math.max(t1, t2));
-  if (end - start <= MIN_PARALLEL_OVERLAP) return false;
-
-  // Measure separation in the middle of the shared run: at a near-parallel
-  // angle the ends can drift apart while the visible overlap sits on top of
-  // the other line.
-  const centre = (start + end) / 2;
-  const span = t2 - t1;
-  const ratio = Math.abs(span) < 1e-6 ? 0 : Math.min(1, Math.max(0, (centre - t1) / span));
-  const distance = Math.abs(offset(first) + ratio * (offset(second) - offset(first)));
-  return distance < PARALLEL_SEPARATION;
 }
 
 function labelStroke(skeleton: JsonObject): string | undefined {
