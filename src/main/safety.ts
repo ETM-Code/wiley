@@ -5,7 +5,6 @@ import path from "node:path";
 export interface GuardDecision {
   allow: boolean;
   reason?: string;
-  requiresExplicitConfirmation?: boolean;
 }
 
 const DESTRUCTIVE_VERBS = /\b(?:rm|rmdir|unlink|shred|truncate|mkfs(?:\.[a-z0-9]+)?|diskutil|dd|chmod|chown|find)\b/i;
@@ -56,7 +55,6 @@ export class CatastrophicCommandGuard {
       if (!this.#sameOrAncestor(target, this.#projectRoot) && RECURSIVE_OR_FORCE.test(normalized)) {
         return {
           allow: false,
-          requiresExplicitConfirmation: true,
           reason: `Recursive destructive operation is outside the project: ${target}`,
         };
       }
@@ -104,7 +102,7 @@ export class CatastrophicCommandGuard {
   }
 
   #blocked(reason: string): GuardDecision {
-    return { allow: false, requiresExplicitConfirmation: false, reason };
+    return { allow: false, reason };
   }
 }
 
