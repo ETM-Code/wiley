@@ -16,6 +16,7 @@ import {
 import { SqliteRuntimeLedger } from "../main/ledger";
 import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";
+import { resolveSkillsDir } from "../main/skills";
 import { TranscriptStore } from "../main/transcript";
 import { VoiceBridge } from "../main/voice-bridge";
 import { callVoiceTool } from "../main/voice-tools";
@@ -149,7 +150,7 @@ const canvas = new CanvasBridge(
 );
 const voice = new VoiceBridge((message) => hub.publish(IPC.voiceInject, message));
 canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
-const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice);
+const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice, resolveSkillsDir({ isPackaged: false, appRoot: projectDir }));
 await pi.initialize();
 const runtime = new RuntimeController(ledger, transcript, pi, canvas, (channel, payload) => hub.publish(channel, payload));
 await runtime.recoverInterruptedJobs();

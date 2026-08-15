@@ -68,6 +68,7 @@ export class PiRuntime {
     private readonly transcript: TranscriptStore,
     private readonly canvas: CanvasBridge,
     private readonly voice: VoiceBridge,
+    private readonly skillsDir?: string,
   ) {
     this.#diagramPreviews = new DiagramPreviewQueue(canvas);
   }
@@ -95,6 +96,7 @@ export class PiRuntime {
       guardExtension: this.#guardExtension(),
       modelRuntime: this.#modelRuntime,
       customTools: this.#tools(agentId),
+      skillPaths: this.skillsDir ? [this.skillsDir] : [],
     };
   }
 

@@ -11,6 +11,7 @@ import { RuntimeController } from "./runtime-controller";
 import { registerIpc } from "./ipc";
 import { IPC } from "../shared/contracts";
 import { isTrustedOrigin } from "./trusted-origin";
+import { resolveSkillsDir } from "./skills";
 
 let mainWindow: BrowserWindow | undefined;
 let pi: PiRuntime | undefined;
@@ -139,7 +140,9 @@ async function bootstrap(): Promise<void> {
   canvas = canvasBridge;
   voice = voiceBridge;
   canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
-  pi = new PiRuntime(process.env.BOARD_AI_PROJECT_DIR ?? process.cwd(), ledger, transcript, canvasBridge, voiceBridge);
+  const projectDir = process.env.BOARD_AI_PROJECT_DIR ?? process.cwd();
+  const skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
+  pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir);
   await pi.initialize();
   const runtime = new RuntimeController(ledger, transcript, pi, canvasBridge, sendToRenderer);
   await runtime.recoverInterruptedJobs();
