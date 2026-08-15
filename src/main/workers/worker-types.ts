@@ -127,6 +127,9 @@ export interface WorkerTransport {
   signal(signal: NodeJS.Signals): void;
   onEvent(handler: (event: WorkerEventDraft) => void): void;
   onExit(handler: (exit: WorkerExit) => void): void;
+  /** Raw stream lines, for the on-disk transcript. Optional: an SDK-backed
+   *  transport hands over parsed messages and re-serializes them here. */
+  onRaw?(handler: (line: string) => void): void;
   dispose(): void;
   readonly pid?: number;
   readonly externalSessionId?: string;

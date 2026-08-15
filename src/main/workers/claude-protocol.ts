@@ -273,6 +273,9 @@ export class ClaudeStreamParser {
         error: text(message.result) ?? text(message.error) ?? `Worker turn ended: ${subtype}`,
         subtype,
         terminalReason,
+        // The turn is over and no report is coming, unlike a denial or a
+        // single failed tool call, which the worker can still recover from.
+        fatal: true,
       },
     });
     return drafts;
