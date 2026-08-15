@@ -20,7 +20,6 @@ export class CanvasBridge {
   constructor(
     private readonly ledger: RuntimeLedger,
     private readonly sendRequest: (request: CanvasRequest) => boolean | void,
-    private readonly sendTransaction: (transaction: BoardTransaction) => void,
     private readonly timeoutMs = 15_000,
   ) {
     this.#snapshot = { revision: 0, elements: [], appState: {} };
@@ -189,7 +188,6 @@ export class CanvasBridge {
     // Persist intent before the renderer receives a mutating request. If the
     // renderer crashes, replay is safe because idempotencyKey is durable.
     await this.ledger.appendBoardTransaction(transaction);
-    this.sendTransaction(transaction);
 
     const requestParams = transaction.operation === "layout-diagram"
       ? { ...(transaction.params as Record<string, unknown>), __previewVersion: ++this.#diagramPreviewVersion }

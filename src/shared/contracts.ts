@@ -12,7 +12,6 @@ export const IPC = {
   runtimeState: "runtime:state",
   listActiveJobs: "jobs:list-active",
   submitBoardSnapshot: "board:submit-snapshot",
-  boardTransactions: "board:transaction",
   canvasRequest: "canvas:request",
   canvasResponse: "canvas:response",
 } as const;

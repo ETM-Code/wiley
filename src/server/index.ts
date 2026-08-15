@@ -139,7 +139,6 @@ const canvas = new CanvasBridge(
     if (!hub.latestClientId) return false;
     return hub.publish(IPC.canvasRequest, request);
   },
-  (transaction) => hub.publish(IPC.boardTransactions, transaction),
 );
 const voice = new VoiceBridge((message) => hub.publish(IPC.voiceInject, message));
 canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);

@@ -24,7 +24,7 @@ function ledgerStub(): RuntimeLedger {
 
 describe("canvas browser transport", () => {
   it("fails immediately when no browser canvas is connected", async () => {
-    const bridge = new CanvasBridge(ledgerStub(), () => false, () => undefined, 15_000);
+    const bridge = new CanvasBridge(ledgerStub(), () => false, 15_000);
     const started = performance.now();
 
     await expect(bridge.request("get-scene-summary")).rejects.toThrow(/no active browser client/i);
@@ -40,7 +40,6 @@ describe("canvas browser transport", () => {
         queueMicrotask(() => bridge.acceptResponse({ id: next.id, result: [{ type: "rectangle" }] }));
         return true;
       },
-      () => undefined,
       1_000,
     );
 
@@ -50,7 +49,7 @@ describe("canvas browser transport", () => {
 
   it("accepts a renderer scene produced after the gateway revision advanced", async () => {
     const ledger = ledgerStub();
-    const bridge = new CanvasBridge(ledger, () => true, () => undefined, 1_000);
+    const bridge = new CanvasBridge(ledger, () => true, 1_000);
 
     const snapshot = await bridge.submitHumanSnapshot({
       revision: 0,
@@ -65,7 +64,7 @@ describe("canvas browser transport", () => {
 
   it("rejects non-finite scene geometry without replacing the canonical snapshot", async () => {
     const ledger = ledgerStub();
-    const bridge = new CanvasBridge(ledger, () => true, () => undefined, 1_000);
+    const bridge = new CanvasBridge(ledger, () => true, 1_000);
 
     await expect(bridge.submitHumanSnapshot({
       revision: 1,
@@ -85,7 +84,7 @@ describe("canvas browser transport", () => {
       appState: {},
     });
 
-    const bridge = new CanvasBridge(ledger, () => true, () => undefined, 1_000);
+    const bridge = new CanvasBridge(ledger, () => true, 1_000);
 
     expect(bridge.getSnapshot()).toEqual({ revision: 0, elements: [], appState: {} });
   });
@@ -108,7 +107,6 @@ describe("canvas browser transport", () => {
         }));
         return true;
       },
-      () => undefined,
       1_000,
     );
 
@@ -129,7 +127,7 @@ describe("canvas browser transport", () => {
   });
 
   it("reports a human change summary with types, texts, and removals", async () => {
-    const bridge = new CanvasBridge(ledgerStub(), () => true, () => undefined, 1_000);
+    const bridge = new CanvasBridge(ledgerStub(), () => true, 1_000);
     const summaries: string[] = [];
     bridge.onHumanChange = (summary) => summaries.push(summary);
 
