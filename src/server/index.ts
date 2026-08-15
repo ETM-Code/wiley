@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import os from "node:os";
 import path from "node:path";
 
 import { CanvasBridge } from "../main/canvas-bridge";
@@ -21,6 +22,9 @@ import { TranscriptStore } from "../main/transcript";
 import { VoiceBridge } from "../main/voice-bridge";
 import { callVoiceTool } from "../main/voice-tools";
 import { mintRealtimeToken } from "../main/voice-token";
+import { createSecretStore, isLoopbackHost } from "../main/settings/secret-store";
+import { assertSecretName, SettingsService } from "../main/settings/settings-service";
+import { resolveConfigDir, SettingsStore } from "../main/settings/settings-store";
 
 const host = process.env.BOARD_AI_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.BOARD_AI_PORT?.trim() || 5174);
@@ -133,6 +137,15 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
 }
 
 await mkdir(dataDir, { recursive: true });
+const configDir = resolveConfigDir({ env: process.env, home: os.homedir() });
+const settingsStore = SettingsStore.open(
+  configDir,
+  createSecretStore({
+    dir: configDir,
+    host,
+    allowRemoteHost: process.env.WILEY_ALLOW_REMOTE_SECRETS === "1",
+  }),
+);
 const hub = new EventHub();
 const ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
 await ledger.initialize();
@@ -150,12 +163,46 @@ const canvas = new CanvasBridge(
 );
 const voice = new VoiceBridge((message) => hub.publish(IPC.voiceInject, message));
 canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
-const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice, resolveSkillsDir({ isPackaged: false, appRoot: projectDir }));
+const pi = new PiRuntime(
+  projectDir,
+  ledger,
+  transcript,
+  canvas,
+  voice,
+  resolveSkillsDir({ isPackaged: false, appRoot: projectDir }),
+  settingsStore,
+);
 await pi.initialize();
-const runtime = new RuntimeController(ledger, transcript, pi, canvas, (channel, payload) => hub.publish(channel, payload));
+const settings = new SettingsService({ store: settingsStore, modelRuntime: () => pi.modelRuntime });
+const runtime = new RuntimeController(
+  ledger,
+  transcript,
+  pi,
+  canvas,
+  (channel, payload) => hub.publish(channel, payload),
+  settingsStore,
+);
 await runtime.recoverInterruptedJobs();
+settingsStore.onChange(() => {
+  void settings.view().then(
+    (view) => hub.publish(IPC.settingsChanged, view),
+    (error: unknown) => console.error("Could not broadcast the settings change", error),
+  );
+});
 
 const voiceToolDeps = { runtime, canvas, voice, ledger, pi };
+
+/**
+ * A secret typed into a browser tab crosses the wire, so only a loopback peer
+ * may write one unless the operator opted in. The store enforces the same rule
+ * against its own bind address; this checks who is actually asking.
+ */
+function assertLocalSecretWrite(request: IncomingMessage): void {
+  if (process.env.WILEY_ALLOW_REMOTE_SECRETS === "1") return;
+  const remote = request.socket.remoteAddress ?? "";
+  const normalized = remote.startsWith("::ffff:") ? remote.slice(7) : remote;
+  if (!isLoopbackHost(normalized)) throw new Error("Secrets can only be set from this machine");
+}
 
 const server = createServer(async (request, response) => {
   try {
@@ -181,6 +228,9 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/board-state") {
       return sendJson(response, 200, canvas.getSnapshot());
+    }
+    if (request.method === "GET" && url.pathname === "/api/settings") {
+      return sendJson(response, 200, await settings.view());
     }
     if (request.method === "POST" && url.pathname === "/api/voice-token") {
       return sendJson(response, 200, await mintRealtimeToken());
@@ -221,6 +271,19 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 200, canvas.getSnapshot());
       }
       return sendJson(response, 200, await canvas.submitHumanSnapshot(body as unknown as BoardSnapshot));
+    }
+    if (request.method === "POST" && url.pathname === "/api/settings") {
+      return sendJson(response, 200, await settings.update(body));
+    }
+    if (request.method === "POST" && url.pathname === "/api/settings/secret") {
+      assertLocalSecretWrite(request);
+      const name = assertSecretName(body.name);
+      if (body.clear === true) return sendJson(response, 200, await settings.clearSecret(name));
+      if (typeof body.value !== "string" || !body.value.trim()) throw new Error("A secret value is required");
+      return sendJson(response, 200, await settings.setSecret(name, body.value));
+    }
+    if (request.method === "POST" && url.pathname === "/api/settings/probe") {
+      return sendJson(response, 200, await settings.probeWorkers());
     }
     if (request.method === "POST" && url.pathname === "/api/canvas-response") {
       canvas.acceptResponse(body as unknown as CanvasResponse);
