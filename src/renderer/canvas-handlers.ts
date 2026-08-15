@@ -35,9 +35,18 @@ import {
   reportCanvasStreamProgress,
   shouldStreamCanvas,
 } from "./canvas/streaming";
+import {
+  clearDiagramPreview,
+  diagramPreviewElementIds,
+  diagramPreviewVersions,
+  reportDiagramPreviewProgress,
+  withoutDiagramPreviewElements,
+} from "./canvas/preview-state";
+import { sceneSummary, uint8ToBase64 } from "./canvas/scene-summary";
 import type { JsonObject, SceneElement } from "./canvas/types";
 
 export { MODEL_GRID_SIZE, snapModelCoordinate } from "./diagram-layout";
+export { isDiagramPreviewActive, withoutDiagramPreviewElements } from "./canvas/preview-state";
 
 type AddParams = {
   elements: JsonObject[];
@@ -57,76 +66,6 @@ type ShapeParams = {
   strokeColor?: string;
   backgroundColor?: string;
 };
-
-const diagramPreviewElementIds = new Set<string>();
-let latestDiagramPreviewVersion = 0;
-let lastDiagramPreviewNodeCount = 0;
-
-export function isDiagramPreviewActive(): boolean {
-  return diagramPreviewElementIds.size > 0;
-}
-
-export function withoutDiagramPreviewElements<T extends { id?: unknown }>(elements: readonly T[]): T[] {
-  return elements.filter((element) => typeof element.id !== "string" || !diagramPreviewElementIds.has(element.id));
-}
-
-function reportDiagramPreviewProgress(nodes: number, edges: number, version: number): void {
-  if (typeof document === "undefined") return;
-  document.documentElement.dataset.wileyDiagramPreview = `${nodes}/${edges}`;
-  const entry = `${Math.round(performance.now())}:${nodes}/${edges}:${version}`;
-  const previous = (document.documentElement.dataset.wileyDiagramPreviewTrace ?? "").split("|").filter(Boolean);
-  document.documentElement.dataset.wileyDiagramPreviewTrace = [...previous, entry].slice(-128).join("|");
-  document.dispatchEvent(new CustomEvent("wiley:diagram-preview-progress", {
-    detail: { nodes, edges, version },
-  }));
-}
-
-function uint8ToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 32_768;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
-}
-
-function sceneSummary(elements: readonly SceneElement[]) {
-  const textByContainer = new Map<string, string>();
-  for (const element of elements) {
-    const candidate = element as SceneElement & { text?: string; containerId?: string | null };
-    if (candidate.type === "text" && candidate.containerId && candidate.text) {
-      textByContainer.set(candidate.containerId, candidate.text);
-    }
-  }
-
-  return elements.map((element) => {
-    const candidate = element as SceneElement & {
-      text?: string;
-      startBinding?: { elementId?: string } | null;
-      endBinding?: { elementId?: string } | null;
-    };
-    const connects =
-      candidate.type === "arrow"
-        ? {
-            start: candidate.startBinding?.elementId ?? null,
-            end: candidate.endBinding?.elementId ?? null,
-          }
-        : undefined;
-
-    return {
-      id: element.id,
-      type: element.type,
-      bbox: {
-        x: Math.round(element.x),
-        y: Math.round(element.y),
-        w: Math.round(element.width),
-        h: Math.round(element.height),
-      },
-      text: candidate.text ?? textByContainer.get(element.id),
-      connects,
-    };
-  });
-}
 
 async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
   const params = value as ShapeParams;
@@ -174,10 +113,10 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, previ
   const params = value as LayoutParams;
   const previewVersion = finite(asRecord(value).__previewVersion, 0);
   if (preview) {
-    if (previewVersion <= latestDiagramPreviewVersion) return { stale: true };
-    latestDiagramPreviewVersion = previewVersion;
-  } else if (previewVersion > latestDiagramPreviewVersion) {
-    latestDiagramPreviewVersion = previewVersion;
+    if (previewVersion <= diagramPreviewVersions.latest) return { stale: true };
+    diagramPreviewVersions.latest = previewVersion;
+  } else if (previewVersion > diagramPreviewVersions.latest) {
+    diagramPreviewVersions.latest = previewVersion;
   }
   const hadPreview = diagramPreviewElementIds.size > 0;
   const previousPreviewIds = new Set(diagramPreviewElementIds);
@@ -288,7 +227,7 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, previ
   if (preview) {
     // ELK is asynchronous. A newer JSON delta may have completed while this
     // layout was running, so only the latest requested version may paint.
-    if (previewVersion !== latestDiagramPreviewVersion) return { stale: true };
+    if (previewVersion !== diagramPreviewVersions.latest) return { stale: true };
     const base = baseScene();
     diagramPreviewElementIds.clear();
     for (const element of created) diagramPreviewElementIds.add(element.id);
@@ -297,8 +236,8 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, previ
       captureUpdate: CaptureUpdateAction.EVENTUALLY,
     });
     reportDiagramPreviewProgress(params.nodes.length, (params.edges ?? []).length, previewVersion);
-    if (params.nodes.length !== lastDiagramPreviewNodeCount) {
-      lastDiagramPreviewNodeCount = params.nodes.length;
+    if (params.nodes.length !== diagramPreviewVersions.lastNodeCount) {
+      diagramPreviewVersions.lastNodeCount = params.nodes.length;
       await api.scrollToContent(created, {
         fitToViewport: true,
         viewportZoomFactor: 0.9,
@@ -309,7 +248,7 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, previ
   }
 
   diagramPreviewElementIds.clear();
-  lastDiagramPreviewNodeCount = 0;
+  diagramPreviewVersions.lastNodeCount = 0;
   reportDiagramPreviewProgress(0, 0, previewVersion);
   const applyFinalScene = async () => {
     api.updateScene({
@@ -372,21 +311,6 @@ async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown, previ
   reportCanvasStreamProgress(streamed.length, created.length);
 
   return result;
-}
-
-function clearDiagramPreview(api: ExcalidrawImperativeAPI, value: unknown) {
-  const version = finite(asRecord(value).__previewVersion, 0);
-  if (version < latestDiagramPreviewVersion) return { stale: true };
-  latestDiagramPreviewVersion = version;
-  const cleared = diagramPreviewElementIds.size;
-  const elements = withoutDiagramPreviewElements([...api.getSceneElements()]);
-  diagramPreviewElementIds.clear();
-  lastDiagramPreviewNodeCount = 0;
-  if (cleared > 0) {
-    api.updateScene({ elements, captureUpdate: CaptureUpdateAction.EVENTUALLY });
-  }
-  reportDiagramPreviewProgress(0, 0, version);
-  return { cleared };
 }
 
 function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown): AddParams {
