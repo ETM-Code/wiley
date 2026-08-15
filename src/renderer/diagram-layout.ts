@@ -2,6 +2,24 @@ import ELK from "elkjs/lib/elk.bundled";
 import type { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 
 import type { DiagramElementRole } from "../shared/diagram-stamp";
+import {
+  NODE_EMPHASES,
+  NODE_ROLES,
+  EDGE_ARROWS,
+  EDGE_LINE_STYLES,
+  EDGE_WEIGHTS,
+  isHexColor,
+  isNodeRole,
+  resolveEdgeStyle,
+  resolveNodeStyle,
+  resolveTheme,
+  type EdgeArrow,
+  type EdgeLineStyle,
+  type EdgeWeight,
+  type NodeEmphasis,
+  type NodeRole,
+  type ThemeName,
+} from "./diagram-theme";
 
 import {
   deriveDiagramId,
@@ -20,11 +38,22 @@ export type GraphNode = {
   id: string;
   label: string;
   shape?: GraphShape;
+  role?: NodeRole;
+  emphasis?: NodeEmphasis;
   backgroundColor?: string;
   strokeColor?: string;
   rounded?: boolean;
 };
-export type GraphEdge = { from: string; to: string; label?: string };
+export type GraphEdge = {
+  from: string;
+  to: string;
+  label?: string;
+  style?: EdgeLineStyle;
+  weight?: EdgeWeight;
+  /** A hex value or one of the node role names. */
+  color?: string;
+  arrow?: EdgeArrow;
+};
 export type DiagramLayoutOptions = {
   direction?: "RIGHT" | "DOWN";
   nodeSpacing?: number;
@@ -32,6 +61,7 @@ export type DiagramLayoutOptions = {
 };
 export type LayoutParams = {
   title?: string;
+  theme?: ThemeName;
   nodes: GraphNode[];
   edges: GraphEdge[];
   anchor?: string;
@@ -61,6 +91,13 @@ export interface DiagramPlan {
   elementIdByNode: Map<string, string>;
   diagramId: string;
   roles: Map<string, DiagramElementRoleEntry>;
+  /** The theme every derived colour in this plan came from. */
+  theme: ThemeName;
+  /**
+   * Colours the request asked for by hand. Style checks accept these as
+   * deliberate; anything else has to be theme-derived.
+   */
+  explicitColors: Set<string>;
 }
 
 export const MODEL_GRID_SIZE = 20;
@@ -227,6 +264,16 @@ export function nodeDimensions(
   return { width: snapUpSize(width), height: snapUpSize(height) };
 }
 
+function requireMember<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  what: string,
+): void {
+  if (value !== undefined && !(allowed as readonly string[]).includes(String(value))) {
+    throw new Error(`Diagram ${what} must be one of ${allowed.join(", ")}`);
+  }
+}
+
 function validateGraph(params: LayoutParams): void {
   if (!Array.isArray(params?.nodes) || params.nodes.length === 0) {
     throw new Error("layout-diagram requires at least one node");
@@ -239,11 +286,20 @@ function validateGraph(params: LayoutParams): void {
     if (node.shape && !["rectangle", "diamond", "ellipse"].includes(node.shape)) {
       throw new Error(`Diagram node ${node.id} has an unsupported shape`);
     }
+    requireMember(node.role, NODE_ROLES, `node ${node.id} role`);
+    requireMember(node.emphasis, NODE_EMPHASES, `node ${node.id} emphasis`);
     nodeIds.add(node.id);
   }
   for (const edge of params.edges ?? []) {
     if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
       throw new Error(`Diagram edge references an unknown node: ${edge.from} -> ${edge.to}`);
+    }
+    const where = `edge ${edge.from} -> ${edge.to}`;
+    requireMember(edge.style, EDGE_LINE_STYLES, `${where} style`);
+    requireMember(edge.weight, EDGE_WEIGHTS, `${where} weight`);
+    requireMember(edge.arrow, EDGE_ARROWS, `${where} arrow`);
+    if (edge.color !== undefined && !isNodeRole(edge.color) && !isHexColor(edge.color)) {
+      throw new Error(`Diagram ${where} colour must be a hex value or a role name`);
     }
   }
 }
@@ -264,6 +320,15 @@ export async function planDiagramLayout(
   const ordinals = edgeOrdinals(edges);
   const edgeKeys = edges.map((edge, index) => edgeKey(edge, ordinals[index]));
   const direction = params.layout?.direction ?? "RIGHT";
+  const theme = resolveTheme(params.theme);
+  const explicitColors = new Set<string>();
+  for (const node of params.nodes) {
+    if (isHexColor(node.backgroundColor)) explicitColors.add(node.backgroundColor.trim());
+    if (isHexColor(node.strokeColor)) explicitColors.add(node.strokeColor.trim());
+  }
+  for (const edge of edges) {
+    if (isHexColor(edge.color)) explicitColors.add(edge.color.trim());
+  }
   const nodeSpacing = Math.min(240, Math.max(60, snapModelCoordinate(params.layout?.nodeSpacing, 80)));
   const layerSpacing = Math.min(360, Math.max(80, snapModelCoordinate(params.layout?.layerSpacing, 140)));
 
@@ -328,7 +393,7 @@ export async function planDiagramLayout(
   // Every element carries its own identity, so a later call can find, restyle,
   // or replace exactly this diagram's parts without re-reading the scene.
   const stamp = (role: DiagramElementRole, key?: string) => ({
-    customData: { wiley: { diagram: diagramId, role, ...(key ? { key } : {}) } },
+    customData: { wiley: { diagram: diagramId, role, theme: theme.name, ...(key ? { key } : {}) } },
   });
 
   const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
@@ -336,6 +401,10 @@ export async function planDiagramLayout(
     const size = sizes.get(node.id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
     const type = nodeToType(node);
     const id = elementIdByNode.get(node.id)!;
+    const style = resolveNodeStyle(theme, node.role, node.emphasis, {
+      backgroundColor: node.backgroundColor,
+      strokeColor: node.strokeColor,
+    });
     roles.set(id, { role: "node", key: node.id });
     return {
       id,
@@ -345,11 +414,13 @@ export async function planDiagramLayout(
       y: snapModelCoordinate(origin.y + position.y),
       width: size.width,
       height: size.height,
-      strokeColor: node.strokeColor ?? "#1e1e1e",
-      backgroundColor: node.backgroundColor ?? "transparent",
-      ...(node.backgroundColor && node.backgroundColor !== "transparent" ? { fillStyle: "solid" } : {}),
+      strokeColor: style.strokeColor,
+      backgroundColor: style.backgroundColor,
+      strokeWidth: style.strokeWidth,
+      opacity: style.opacity,
+      ...(style.backgroundColor !== "transparent" ? { fillStyle: style.fillStyle } : {}),
       ...(type === "rectangle" && node.rounded ? { roundness: { type: 3 } } : {}),
-      label: { text: node.label },
+      label: { text: node.label, strokeColor: style.labelColor },
     };
   });
 
@@ -383,6 +454,7 @@ export async function planDiagramLayout(
     const routeOrigin = absoluteRoute[0];
     const key = edgeKeys[index];
     const edgeId = edgeElementId(diagramId, key);
+    const edgeStyle = resolveEdgeStyle(theme, edge);
     roles.set(edgeId, { role: "edge", key, edgeIndex: index });
     edgeSkeletons.push({
       id: edgeId,
@@ -393,7 +465,12 @@ export async function planDiagramLayout(
       points: absoluteRoute.map((point) => [point.x - routeOrigin.x, point.y - routeOrigin.y]),
       start: { id: elementIdByNode.get(edge.from) },
       end: { id: elementIdByNode.get(edge.to) },
-      endArrowhead: "arrow",
+      strokeColor: edgeStyle.strokeColor,
+      strokeStyle: edgeStyle.strokeStyle,
+      strokeWidth: edgeStyle.strokeWidth,
+      opacity: edgeStyle.opacity,
+      startArrowhead: edgeStyle.startArrowhead,
+      endArrowhead: edgeStyle.endArrowhead,
     });
     const label = elkEdge?.labels?.[0];
     if (label?.text) {
@@ -411,7 +488,7 @@ export async function planDiagramLayout(
         text: label.text,
         fontSize: EDGE_LABEL_FONT_SIZE,
         fontFamily: 5,
-        strokeColor: "#1e1e1e",
+        strokeColor: edgeStyle.labelColor,
         backgroundColor: "transparent",
       });
     }
@@ -438,7 +515,7 @@ export async function planDiagramLayout(
       fontFamily: 5,
       textAlign: "left",
       verticalAlign: "middle",
-      strokeColor: "#1e1e1e",
+      strokeColor: theme.titleColor,
       backgroundColor: "transparent",
     }] : []),
     ...nodeSkeletons,
@@ -454,6 +531,8 @@ export async function planDiagramLayout(
     elementIdByNode,
     diagramId,
     roles,
+    theme: theme.name,
+    explicitColors,
   };
 }
 
