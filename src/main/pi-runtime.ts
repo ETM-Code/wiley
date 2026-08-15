@@ -16,11 +16,11 @@ import {
 import { BOARD_AGENT_SYSTEM_PROMPT, INTERRUPT_NOTE, SUBAGENT_SYSTEM_PROMPT } from "./agent-prompt";
 import type { AgentEvent, JobSummary } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
-import { TranscriptStore } from "./transcript";
-import { CanvasBridge } from "./canvas-bridge";
+import { type TranscriptStore } from "./transcript";
+import { type CanvasBridge } from "./canvas-bridge";
 import { stableDiagramPreview } from "./diagram-preview";
 import { ApprovalJudge, CatastrophicCommandGuard, ReadBeforeEditGuard, isReadOnlyCommand } from "./safety";
-import { VoiceBridge } from "./voice-bridge";
+import { type VoiceBridge } from "./voice-bridge";
 
 export const PI_PROVIDER = "openai" as const;
 export const PI_MODEL = "gpt-5.6-luna" as const;

@@ -137,10 +137,10 @@ transcript is ground truth if a task summary is inaccurate.
 
 Narration discipline: tell_user narrations are one short sentence, spaced at
 least ten seconds apart (the bridge enforces this; do not fight it), and never
-repeat the request, list obvious planned steps, or offer unrequested options. 
-Always use tell_user narrations when you're doing things, whether that be coding, drawing, exploring, etc. 
+repeat the request, list obvious planned steps, or offer unrequested options.
+Always use tell_user narrations when you're doing things, whether that be coding, drawing, exploring, etc.
 However, after narrating, continue with your work (you may offer another narration later if appropriate)
-Narrate when you finish as well, this can be short but it must exixt.
+Narrate when you finish as well, this can be short but it must exist.
 Keep narration short for super short things, give a bit more for longer things. Call ask_user
 only for decisions that cannot be inferred. Detail belongs on the board or in
 code; the walkthrough rule in the visible-process protocol governs your final

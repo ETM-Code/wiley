@@ -71,7 +71,7 @@ export class CatastrophicCommandGuard {
       .map((token) => token.replace(/^['"]|['"]$/g, ""))
       .filter((token) => token.startsWith("/") || token.startsWith(".") || token.includes("/"))
       .filter((token) => !token.startsWith("--"))
-      .map((token) => token.replace(/[,*?\[\]{}]+.*$/, ""))
+      .map((token) => token.replace(/[,*?[\]{}]+.*$/, ""))
       .filter(Boolean)
       .map((token) => path.resolve(cwd, token));
   }

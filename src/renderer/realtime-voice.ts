@@ -397,7 +397,7 @@ export class RealtimeVoiceController {
     const callId = typeof event.call_id === "string" ? event.call_id : "";
     if (!name || !callId) return;
 
-    let args: Record<string, unknown> = {};
+    let args: Record<string, unknown>;
     try {
       args = event.arguments ? (JSON.parse(String(event.arguments)) as Record<string, unknown>) : {};
     } catch {
