@@ -656,6 +656,53 @@ describe("diagram renderer", () => {
     expect(isDiagramPreviewActive()).toBe(false);
   });
 
+  it("applies a patch without letting it rewrite identity or scene bookkeeping", async () => {
+    let elements: Array<Record<string, any>> = [{
+      id: "wd-x-n-start",
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 60,
+      version: 1,
+      index: "a1",
+      frameId: null,
+      customData: { wiley: { diagram: "wd-x", role: "node", key: "start" } },
+    }];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const result = await handleCanvasRequest(api, {
+      id: 60,
+      op: "apply-patch",
+      params: {
+        updates: [{
+          id: "wd-x-n-start",
+          props: {
+            backgroundColor: "#dbeafe",
+            customData: { wiley: { diagram: "someone-else", role: "node" } },
+            frameId: "frame-9",
+            index: "zz",
+          },
+        }],
+      },
+    }) as { updated: number };
+
+    expect(result.updated).toBe(1);
+    const patched = elements[0];
+    // The requested property landed; the protected ones did not.
+    expect(patched.backgroundColor).toBe("#dbeafe");
+    expect(patched.customData).toEqual({ wiley: { diagram: "wd-x", role: "node", key: "start" } });
+    expect(patched.frameId).toBeNull();
+    expect(patched.index).toBe("a1");
+  });
+
   it("reports drawn diagrams in the scene summary", async () => {
     let elements: Array<Record<string, any>> = [
       { id: "human-box", type: "rectangle", x: 0, y: 0, width: 40, height: 40, version: 1 },
