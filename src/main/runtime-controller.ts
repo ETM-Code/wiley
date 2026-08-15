@@ -120,6 +120,7 @@ export class RuntimeController {
     return { status: "started", jobId: job.id };
   }
 
+  /** Workers are steered through the agent-message path; a worker connector lands next phase. */
   async steerJob(jobId: string, task: string, userWords: string): Promise<{ status: "steering"; jobId: string }> {
     const job = this.#requireJob(jobId);
     const interrupting = { ...job, task, userWords, status: "interrupting" as const, updatedAt: new Date().toISOString() };
@@ -131,19 +132,7 @@ export class RuntimeController {
     return { status: "steering", jobId };
   }
 
-  async pauseJob(jobId: string): Promise<void> {
-    const job = this.#requireJob(jobId);
-    await this.pi.abort(`Pause job ${jobId}`);
-    await this.ledger.putJob({ ...job, status: "paused", updatedAt: new Date().toISOString() });
-    this.#broadcastState();
-  }
-
-  async resumeJob(jobId: string): Promise<void> {
-    const job = this.#requireJob(jobId);
-    if (job.status !== "paused") throw new Error(`Job ${jobId} is not paused`);
-    void this.#dispatch({ ...job, task: `Resume this paused job: ${job.task}` }, false);
-  }
-
+  /** Workers are steered through the agent-message path; a worker connector lands next phase. */
   async cancelJob(jobId: string): Promise<void> {
     const job = this.#requireJob(jobId);
     await this.pi.abort(`Cancel job ${jobId}`);
