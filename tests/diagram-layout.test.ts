@@ -29,6 +29,7 @@ describe("diagram layout quality", () => {
     expect(report.sharedPorts).toEqual([]);
     expect(report.overlappingParallelSegments).toEqual([]);
     expect(report.offGrid).toEqual([]);
+    expect(report.styleCoherence).toEqual([]);
   });
 
   it.each(stressGraphs)("produces complete, finite geometry for $name", async ({ params }) => {

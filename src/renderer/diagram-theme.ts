@@ -290,7 +290,7 @@ export function relativeLuminance(color: string): number {
   const int = Number.parseInt(hex.slice(0, 6), 16);
   return 0.2126 * channel((int >> 16) & 0xff)
     + 0.7152 * channel((int >> 8) & 0xff)
-    + 0.0722 * (int & 0xff);
+    + 0.0722 * channel(int & 0xff);
 }
 
 export function contrastRatio(a: string, b: string): number {

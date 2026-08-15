@@ -1,4 +1,5 @@
 import { MODEL_GRID_SIZE, finiteNumber, type DiagramPlan } from "./diagram-layout";
+import { contrastRatio, resolveTheme, themeColors } from "./diagram-theme";
 
 type JsonObject = Record<string, unknown>;
 
@@ -9,7 +10,15 @@ export interface DiagramQualityReport {
   sharedPorts: string[];
   overlappingParallelSegments: string[];
   offGrid: string[];
+  styleCoherence: string[];
 }
+
+/** WCAG large-text minimum: below this a label stops being legible on its fill. */
+const MIN_LABEL_CONTRAST = 3;
+/** A diagram reads as designed at roughly one fill per three nodes. */
+const MAX_DISTINCT_FILLS = 6;
+const FILLS_PER_NODE = 3;
+const MAX_DISTINCT_NODE_STROKE_WIDTHS = 2;
 
 type Box = { id: string; x: number; y: number; width: number; height: number };
 type Segment = { x1: number; y1: number; x2: number; y2: number };
@@ -52,6 +61,63 @@ function arrowSegments(arrow: JsonObject): Segment[] {
   return segments;
 }
 
+function labelStroke(skeleton: JsonObject): string | undefined {
+  const label = skeleton.label as { strokeColor?: unknown } | undefined;
+  return typeof label?.strokeColor === "string" ? label.strokeColor : undefined;
+}
+
+/**
+ * Colour discipline. A themed diagram may only use colours the theme owns or
+ * ones the request asked for by name, every label has to read on the fill it
+ * sits on, and the palette has to stay small enough to mean something.
+ */
+function evaluateStyleCoherence(plan: DiagramPlan, report: DiagramQualityReport): void {
+  const theme = resolveTheme(plan.theme);
+  const allowed = themeColors(theme);
+  const fills = new Set<string>();
+  const strokeWidths = new Set<number>();
+  let nodeCount = 0;
+
+  for (const skeleton of plan.skeletons) {
+    const id = String(skeleton.id ?? "");
+    const role = plan.roles.get(id)?.role;
+    if (!role) continue;
+    const colors: Array<[string, unknown]> = [
+      ["strokeColor", skeleton.strokeColor],
+      ["backgroundColor", skeleton.backgroundColor],
+      ["label.strokeColor", labelStroke(skeleton)],
+    ];
+    for (const [field, value] of colors) {
+      if (typeof value !== "string") continue;
+      if (allowed.has(value) || plan.explicitColors.has(value)) continue;
+      report.styleCoherence.push(`${id}.${field}=${value} is neither theme-derived nor requested`);
+    }
+    if (role !== "node") continue;
+    nodeCount += 1;
+    const fill = typeof skeleton.backgroundColor === "string" ? skeleton.backgroundColor : "transparent";
+    // Transparent is the absence of a fill, not one more colour in the mix.
+    if (fill !== "transparent") fills.add(fill);
+    if (typeof skeleton.strokeWidth === "number") strokeWidths.add(skeleton.strokeWidth);
+    // A boxed node carries a bound label; a text node is its own label.
+    const ink = labelStroke(skeleton)
+      ?? (skeleton.type === "text" ? skeleton.strokeColor : undefined)
+      ?? theme.inkColor;
+    const surface = fill === "transparent" ? theme.paperColor : fill;
+    const ratio = contrastRatio(String(ink), surface);
+    if (ratio < MIN_LABEL_CONTRAST) {
+      report.styleCoherence.push(`${id} label ${String(ink)} on ${surface} contrasts ${ratio.toFixed(2)}:1`);
+    }
+  }
+
+  const fillBudget = Math.min(MAX_DISTINCT_FILLS, Math.ceil(nodeCount / FILLS_PER_NODE));
+  if (fills.size > fillBudget) {
+    report.styleCoherence.push(`${fills.size} distinct fills across ${nodeCount} nodes exceeds ${fillBudget}`);
+  }
+  if (strokeWidths.size > MAX_DISTINCT_NODE_STROKE_WIDTHS) {
+    report.styleCoherence.push(`${strokeWidths.size} distinct node stroke widths exceeds ${MAX_DISTINCT_NODE_STROKE_WIDTHS}`);
+  }
+}
+
 export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
   const report: DiagramQualityReport = {
     nodeOverlaps: [],
@@ -60,6 +126,7 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     sharedPorts: [],
     overlappingParallelSegments: [],
     offGrid: [],
+    styleCoherence: [],
   };
   const nodes: Box[] = [];
   const labels: Box[] = [];
@@ -166,6 +233,8 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
       }
     }
   }
+
+  evaluateStyleCoherence(plan, report);
 
   return report;
 }

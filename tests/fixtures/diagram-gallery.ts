@@ -1,20 +1,124 @@
-import type { LayoutParams } from "../../src/renderer/diagram-layout";
+import type { DiagramPlan, LayoutParams } from "../../src/renderer/diagram-layout";
+import type { DiagramElementRole, DiagramThemeName } from "../../src/shared/diagram-stamp";
 
 export type DiagramFixture = {
   name: string;
   params: LayoutParams;
 };
 
-/** The exact architecture diagram the user drew that came out tangled. */
+export type PlanPart = {
+  role: DiagramElementRole;
+  key?: string;
+  edgeIndex?: number;
+  skeleton: Record<string, unknown>;
+};
+
+/**
+ * Builds a plan directly, bypassing the planner. Negative fixtures need
+ * geometry and styling the planner would never produce, so the checks can be
+ * proven to fire rather than merely observed not to.
+ */
+export function handBuiltPlan(
+  parts: PlanPart[],
+  options: { theme?: DiagramThemeName; explicitColors?: string[]; diagramId?: string } = {},
+): DiagramPlan {
+  const roles = new Map<string, { role: DiagramElementRole; key?: string; edgeIndex?: number }>();
+  const elementIdByNode = new Map<string, string>();
+  for (const part of parts) {
+    const id = String(part.skeleton.id);
+    roles.set(id, {
+      role: part.role,
+      ...(part.key ? { key: part.key } : {}),
+      ...(part.edgeIndex === undefined ? {} : { edgeIndex: part.edgeIndex }),
+    });
+    if (part.role === "node" && part.key) elementIdByNode.set(part.key, id);
+  }
+  return {
+    skeletons: parts.map((part) => part.skeleton),
+    nodeCount: parts.filter((part) => part.role === "node").length,
+    edgeCount: parts.filter((part) => part.role === "edge").length,
+    edgeLabelCount: parts.filter((part) => part.role === "edgeLabel").length,
+    elementIdByNode,
+    diagramId: options.diagramId ?? "wd-dirty",
+    roles,
+    theme: options.theme ?? "slate",
+    explicitColors: new Set(options.explicitColors ?? []),
+  };
+}
+
+function dirtyNode(
+  id: string,
+  overrides: Record<string, unknown>,
+): PlanPart {
+  return {
+    role: "node",
+    key: id,
+    skeleton: {
+      id: `wd-dirty-n-${id}`,
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 160,
+      height: 80,
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+      strokeWidth: 1,
+      label: { text: id, strokeColor: "#1e1e1e" },
+      ...overrides,
+    },
+  };
+}
+
+/**
+ * Explicit colours a caller genuinely asked for, arranged so the label sits
+ * on a fill it cannot be read against. Never part of the all-clean sweep.
+ */
+export const contrastTrapPlan: DiagramPlan = handBuiltPlan([
+  dirtyNode("readable", {
+    backgroundColor: "#1971c2",
+    label: { text: "readable", strokeColor: "#ffffff" },
+  }),
+  dirtyNode("trap", {
+    x: 400,
+    backgroundColor: "#1971c2",
+    label: { text: "trap", strokeColor: "#495057" },
+  }),
+], { explicitColors: ["#1971c2"] });
+
+/** A colour that belongs to no theme and was never requested. */
+export const strayColorPlan: DiagramPlan = handBuiltPlan([
+  dirtyNode("a", { backgroundColor: "#bada55" }),
+]);
+
+/** Six nodes wearing five theme fills: a rainbow, not a diagram. */
+export const rainbowPlan: DiagramPlan = handBuiltPlan(
+  ["#a5d8ff", "#96f2d7", "#ffec99", "#ffc9c9", "#99e9f2", "#a5d8ff"].map((fill, index) => dirtyNode(
+    `n${index}`,
+    { x: index * 300, backgroundColor: fill },
+  )),
+  { theme: "ocean" },
+);
+
+/** Three stroke weights on nodes reads as three unrelated diagrams. */
+export const strokeWidthSoupPlan: DiagramPlan = handBuiltPlan(
+  [1, 2, 4].map((strokeWidth, index) => dirtyNode(`n${index}`, { x: index * 300, strokeWidth })),
+);
+
+/**
+ * The exact architecture diagram the user drew that came out tangled. Its
+ * graph is the layout regression; the hand-picked hexes it arrived with are
+ * now expressed as roles, which is what the tool asks agents to do.
+ */
 export const planningDiagram: LayoutParams = {
+  theme: "ocean",
   title: "Voice coding architecture",
   nodes: [
-    { id: "plan", label: "Planning Model", shape: "rectangle", rounded: true, backgroundColor: "#d1f7c4" },
-    { id: "tests", label: "Local Coder • Tests", shape: "rectangle", rounded: true, backgroundColor: "#ffe8cc" },
-    { id: "backend", label: "Local Coder • Backend", shape: "rectangle", rounded: true, backgroundColor: "#ffe8cc" },
-    { id: "frontend", label: "Local Coder • Frontend", shape: "rectangle", rounded: true, backgroundColor: "#ffe8cc" },
-    { id: "runtime", label: "Local Runtime / Workspace", shape: "rectangle", rounded: true, backgroundColor: "#efe2fd" },
-    { id: "voice", label: "Voice Assistant / Orchestrator", shape: "ellipse", backgroundColor: "#d6e6ff" },
+    { id: "plan", label: "Planning Model", shape: "rectangle", rounded: true, role: "primary", emphasis: "strong" },
+    { id: "tests", label: "Local Coder • Tests", shape: "rectangle", rounded: true, role: "neutral" },
+    { id: "backend", label: "Local Coder • Backend", shape: "rectangle", rounded: true, role: "neutral" },
+    { id: "frontend", label: "Local Coder • Frontend", shape: "rectangle", rounded: true, role: "neutral" },
+    { id: "runtime", label: "Local Runtime / Workspace", shape: "rectangle", rounded: true, role: "muted" },
+    { id: "voice", label: "Voice Assistant / Orchestrator", shape: "ellipse", role: "primary" },
   ],
   edges: [
     { from: "plan", to: "tests", label: "tasks" },
