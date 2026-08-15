@@ -9,7 +9,7 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-const SHAPES = new Set(["rectangle", "diamond", "ellipse"]);
+const SHAPES = new Set(["rectangle", "diamond", "ellipse", "text"]);
 const DIRECTIONS = new Set(["RIGHT", "DOWN"]);
 const NODE_ROLES = new Set<string>(DIAGRAM_NODE_ROLES);
 const NODE_EMPHASES = new Set<string>(DIAGRAM_NODE_EMPHASES);

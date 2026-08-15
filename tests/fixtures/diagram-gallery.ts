@@ -157,6 +157,26 @@ export const stressGraphs: DiagramFixture[] = [
     },
   },
   {
+    name: "text-only captions alongside boxes",
+    params: {
+      title: "Request lifecycle",
+      layout: { direction: "DOWN" },
+      nodes: [
+        { id: "note", label: "Every step is idempotent", shape: "text" },
+        { id: "accept", label: "Accept", shape: "rectangle" },
+        { id: "queue", label: "Queue", shape: "rectangle" },
+        { id: "caption", label: "Retries land back here after a bounded backoff window", shape: "text" },
+        { id: "done", label: "Complete", shape: "ellipse" },
+      ],
+      edges: [
+        { from: "note", to: "accept" },
+        { from: "accept", to: "queue", label: "enqueue" },
+        { from: "queue", to: "caption" },
+        { from: "caption", to: "done", label: "drain" },
+      ],
+    },
+  },
+  {
     name: "emoji labels on nodes and edges",
     params: {
       title: "🚀 Release train",

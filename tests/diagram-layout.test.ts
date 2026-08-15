@@ -221,6 +221,28 @@ describe("diagram layout quality", () => {
     )).rejects.toThrow(/colour/);
   });
 
+  it("emits a text node as a standalone text element with no box or bound label", async () => {
+    const plan = await planDiagramLayout({
+      theme: "grape",
+      nodes: [
+        { id: "note", label: "A standing caption that has to wrap across more than one line", shape: "text", role: "accent" },
+        { id: "box", label: "Worker" },
+      ],
+      edges: [{ from: "note", to: "box" }],
+    }, ORIGIN, DIAGRAM_ID);
+    const note = plan.skeletons.find((skeleton) => skeleton.id === plan.elementIdByNode.get("note"))!;
+    expect(note.type).toBe("text");
+    expect(note.label).toBeUndefined();
+    expect(note.backgroundColor).toBe("transparent");
+    expect(note.strokeColor).toBe(THEMES.grape.entries.accent.stroke);
+    expect(String(note.text).split("\n").length).toBeGreaterThan(1);
+    // The measured block is the layout box, so the caption never overlaps.
+    const lines = String(note.text).split("\n");
+    const widest = Math.max(...lines.map((line) => measureText(line, 20).width));
+    expect(note.width).toBe(Math.ceil(widest));
+    expect(note.height).toBe(Math.ceil(lines.length * 20 * 1.3));
+  });
+
   it("gives emoji a square tile advance in both measurement fallbacks", () => {
     const rocket = measureText("🚀", 20).width;
     // The fontkit measurer has no Excalifont glyph for an emoji and must not
