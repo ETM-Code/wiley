@@ -1,4 +1,12 @@
-import { MODEL_GRID_SIZE, finiteNumber, type DiagramPlan } from "./diagram-layout";
+import {
+  CURVED_LABEL_SLACK,
+  EDGE_LABEL_FONT_SIZE,
+  MODEL_GRID_SIZE,
+  boundLabelAnchor,
+  finiteNumber,
+  measureText,
+  type DiagramPlan,
+} from "./diagram-layout";
 import {
   absoluteArrowPoints,
   arrowGeometry,
@@ -108,6 +116,34 @@ function evaluateStyleCoherence(plan: DiagramPlan, report: DiagramQualityReport)
   if (strokeWidths.size > MAX_DISTINCT_NODE_STROKE_WIDTHS) {
     report.styleCoherence.push(`${strokeWidths.size} distinct node stroke widths exceeds ${MAX_DISTINCT_NODE_STROKE_WIDTHS}`);
   }
+}
+
+/** A label box tagged with the arrow it rides, so it never accuses its own. */
+type LabelBox = Box & { owner?: string };
+
+/**
+ * The box Excalidraw will give a label bound to this arrow. The anchor rule
+ * is the editor's own; the slack covers a curved arrow, whose midpoint sits
+ * off the polyline the anchor is computed from.
+ */
+export function boundLabelBox(arrow: JsonObject, override?: Box): LabelBox | undefined {
+  const id = String(arrow.id ?? "");
+  const text = (arrow.label as { text?: unknown } | undefined)?.text;
+  if (typeof text !== "string" || !text.trim()) return undefined;
+  if (override) return { ...override, id: `${id}:label`, owner: id };
+  const points = absoluteArrowPoints(arrow);
+  if (points.length < 2) return undefined;
+  const size = measureText(text.trim(), EDGE_LABEL_FONT_SIZE);
+  const anchor = boundLabelAnchor(points);
+  const slack = arrow.roundness ? CURVED_LABEL_SLACK : 0;
+  return {
+    id: `${id}:label`,
+    owner: id,
+    x: anchor.x - size.width / 2 - slack,
+    y: anchor.y - size.height / 2 - slack,
+    width: size.width + slack * 2,
+    height: size.height + slack * 2,
+  };
 }
 
 function pointsBounds(points: readonly Point[], id: string): Box {
@@ -246,7 +282,11 @@ function evaluateContainers(
   }
 }
 
-export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
+export function evaluateDiagramPlan(
+  plan: DiagramPlan,
+  /** Measured bound-label boxes, when the caller has the real ones to hand. */
+  boundLabelBoxes?: ReadonlyMap<string, Box>,
+): DiagramQualityReport {
   const report: DiagramQualityReport = {
     nodeOverlaps: [],
     labelCollisions: [],
@@ -261,7 +301,7 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     edgesThroughContainers: [],
   };
   const nodes: Box[] = [];
-  const labels: Box[] = [];
+  const labels: LabelBox[] = [];
   const arrows: JsonObject[] = [];
   const boxById = new Map<string, Box>();
   for (const skeleton of plan.skeletons) {
@@ -278,6 +318,10 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
       arrows.push(skeleton);
       const points = absoluteArrowPoints(skeleton);
       boxById.set(id, points.length > 0 ? pointsBounds(points, id) : box);
+      // A bound label lives on its arrow, so the arrow's own containment and
+      // trespass verdict already covers it; only collisions are its own.
+      const bound = boundLabelBox(skeleton, boundLabelBoxes?.get(id));
+      if (bound) labels.push(bound);
       continue;
     }
     boxById.set(id, box);
@@ -300,6 +344,15 @@ export function evaluateDiagramPlan(plan: DiagramPlan): DiagramQualityReport {
     for (const other of labels) {
       if (other.id <= label.id) continue;
       if (boxesOverlap(label, other)) report.labelCollisions.push(`${label.id} x ${other.id}`);
+    }
+    // A bound label sits on its own arrow by construction; landing on anyone
+    // else's is a genuine collision.
+    if (!label.owner) continue;
+    for (const arrow of arrows) {
+      if (String(arrow.id) === label.owner) continue;
+      if (geometryIntersectsBox(arrowGeometry(arrow), label, 0)) {
+        report.labelCollisions.push(`${label.id} x ${String(arrow.id)}`);
+      }
     }
   }
 

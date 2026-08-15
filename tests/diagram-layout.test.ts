@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   MODEL_GRID_SIZE,
+  boundLabelAnchor,
+  boundLabelRoom,
   measureText,
   nodeDimensions,
   planDiagramLayout,
@@ -99,6 +101,20 @@ describe("diagram layout quality", () => {
   it("exercises every layout algorithm across the gallery", () => {
     const used = new Set(stressGraphs.map(({ params }) => params.layout?.algorithm ?? "layered"));
     expect([...used].sort()).toEqual(["force", "layered", "radial", "stress", "tree"]);
+  });
+
+  it("exercises both label modes across the gallery", async () => {
+    const modes = { bound: 0, standalone: 0 };
+    for (const { params } of stressGraphs) {
+      const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+      for (const entry of plan.roles.values()) {
+        if (entry.role !== "edgeLabel") continue;
+        if (entry.bound) modes.bound += 1;
+        else modes.standalone += 1;
+      }
+    }
+    expect(modes.bound).toBeGreaterThan(0);
+    expect(modes.standalone).toBeGreaterThan(0);
   });
 
   it("exercises more than one theme across the gallery", () => {
@@ -357,6 +373,86 @@ describe("diagram layout quality", () => {
       ORIGIN,
       DIAGRAM_ID,
     )).rejects.toThrow(/colour/);
+  });
+
+  it("measures the room a bound label would sit in the way Excalidraw does", () => {
+    // An even point count centres the label on the middle segment.
+    const straight = [{ x: 0, y: 0 }, { x: 300, y: 0 }];
+    expect(boundLabelAnchor(straight)).toEqual({ x: 150, y: 0 });
+    expect(boundLabelRoom(straight)).toBe(300);
+    const zigzag = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 40 }, { x: 400, y: 40 }];
+    expect(boundLabelAnchor(zigzag)).toEqual({ x: 100, y: 20 });
+    expect(boundLabelRoom(zigzag)).toBe(40);
+    // An odd count centres it on the middle point, where the shorter of the
+    // two neighbouring runs decides how much room there really is.
+    const bent = [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 30 }];
+    expect(boundLabelAnchor(bent)).toEqual({ x: 200, y: 0 });
+    expect(boundLabelRoom(bent)).toBe(60);
+  });
+
+  it("binds a label the route can carry and stands a long one beside it", async () => {
+    const plan = await planDiagramLayout({
+      // The layered engine widens a layer to fit an edge label, so the route
+      // that cannot carry one is a straight run between fixed placements.
+      layout: { algorithm: "stress" },
+      nodes: [
+        { id: "a", label: "Source" },
+        { id: "b", label: "Sink" },
+        { id: "c", label: "Archive" },
+      ],
+      edges: [
+        { from: "a", to: "b", label: "emit" },
+        { from: "b", to: "c", label: "every accepted revision with its author and timestamp" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+
+    const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
+    expect(arrows[0].label).toEqual({
+      text: "emit",
+      strokeColor: "#1e1e1e",
+      fontSize: 16,
+      fontFamily: 5,
+    });
+    expect(arrows[1].label).toBeUndefined();
+    // The standalone label keeps its own element; the bound one keeps only an
+    // identity, and both are counted.
+    const standalone = plan.skeletons.filter(
+      (skeleton) => plan.roles.get(String(skeleton.id))?.role === "edgeLabel",
+    );
+    expect(standalone).toHaveLength(1);
+    expect(standalone[0].text).toBe("every accepted revision with its author and timestamp");
+    expect(plan.edgeLabelCount).toBe(2);
+    expect([...plan.roles.values()].filter((entry) => entry.bound)).toHaveLength(1);
+  });
+
+  it("honours an explicit label mode over what the route would choose", async () => {
+    const params = (labelMode: "bound" | "standalone"): LayoutParams => ({
+      nodes: [{ id: "a", label: "Source" }, { id: "b", label: "Sink" }],
+      edges: [{
+        from: "a",
+        to: "b",
+        label: "every accepted revision with its author and timestamp",
+        labelMode,
+      }],
+    });
+    const forcedBound = await planDiagramLayout(params("bound"), ORIGIN, DIAGRAM_ID);
+    expect(forcedBound.skeletons.find((skeleton) => skeleton.type === "arrow")!.label)
+      .toMatchObject({ text: "every accepted revision with its author and timestamp" });
+
+    const forcedStandalone = await planDiagramLayout({
+      nodes: [{ id: "a", label: "Source" }, { id: "b", label: "Sink" }],
+      edges: [{ from: "a", to: "b", label: "hi", labelMode: "standalone" }],
+    }, ORIGIN, DIAGRAM_ID);
+    expect(forcedStandalone.skeletons.find((skeleton) => skeleton.type === "arrow")!.label)
+      .toBeUndefined();
+    expect(forcedStandalone.skeletons.some(
+      (skeleton) => forcedStandalone.roles.get(String(skeleton.id))?.role === "edgeLabel",
+    )).toBe(true);
+
+    await expect(planDiagramLayout({
+      nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+      edges: [{ from: "a", to: "b", labelMode: "floating" as never }],
+    }, ORIGIN, DIAGRAM_ID)).rejects.toThrow(/labelMode/);
   });
 
   it("nests members inside their container and groups them with it", async () => {

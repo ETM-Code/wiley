@@ -59,6 +59,20 @@ export type DiagramEdgeArrow = "none" | "end" | "both";
 
 export const DIAGRAM_EDGE_ARROWS: readonly DiagramEdgeArrow[] = ["none", "end", "both"];
 
+/**
+ * Where an edge's label goes. `bound` attaches it to the arrow so it follows
+ * every later move; `standalone` places it beside the route as its own text
+ * element; `auto` binds it whenever the middle of the route is long enough to
+ * carry it without covering anything.
+ */
+export type DiagramEdgeLabelMode = "auto" | "bound" | "standalone";
+
+export const DIAGRAM_EDGE_LABEL_MODES: readonly DiagramEdgeLabelMode[] = [
+  "auto",
+  "bound",
+  "standalone",
+];
+
 export type DiagramContainerRender = "group" | "frame";
 
 export const DIAGRAM_CONTAINER_RENDERS: readonly DiagramContainerRender[] = ["group", "frame"];

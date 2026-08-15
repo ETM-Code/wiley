@@ -1,6 +1,7 @@
 import {
   DIAGRAM_CONTAINER_RENDERS,
   DIAGRAM_EDGE_ARROWS,
+  DIAGRAM_EDGE_LABEL_MODES,
   DIAGRAM_EDGE_LINE_STYLES,
   DIAGRAM_EDGE_WEIGHTS,
   DIAGRAM_NODE_EMPHASES,
@@ -20,6 +21,7 @@ const EDGE_WEIGHTS = new Set<string>(DIAGRAM_EDGE_WEIGHTS);
 const EDGE_ARROWS = new Set<string>(DIAGRAM_EDGE_ARROWS);
 const THEMES = new Set<string>(DIAGRAM_THEME_NAMES);
 const CONTAINER_RENDERS = new Set<string>(DIAGRAM_CONTAINER_RENDERS);
+const EDGE_LABEL_MODES = new Set<string>(DIAGRAM_EDGE_LABEL_MODES);
 
 function record(value: unknown): JsonObject {
   return value && typeof value === "object" ? value as JsonObject : {};
@@ -172,6 +174,7 @@ export function stableDiagramPreview(value: unknown): JsonObject | undefined {
         ...optional("style", member(edge.style, EDGE_STYLES)),
         ...optional("weight", member(edge.weight, EDGE_WEIGHTS)),
         ...optional("arrow", member(edge.arrow, EDGE_ARROWS)),
+        ...optional("labelMode", member(edge.labelMode, EDGE_LABEL_MODES)),
         ...(typeof edge.color === "string" ? { color: edge.color } : {}),
       }];
     });
