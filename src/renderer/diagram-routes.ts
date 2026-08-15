@@ -556,8 +556,10 @@ export function planRoutes(
     const anchored = edge.route
       ? reanchorRoute(edge.route, options.snapDeltas?.get(edge.from), options.snapDeltas?.get(edge.to))
       : undefined;
-    const start = assignment?.start ?? anchored?.[0] ?? boxCenter(nodes.get(edge.from)!);
-    const end = assignment?.end ?? anchored?.[anchored.length - 1] ?? boxCenter(nodes.get(edge.to)!);
+    const fromBox = nodes.get(edge.from);
+    const toBox = nodes.get(edge.to);
+    const start = assignment?.start ?? anchored?.[0] ?? (fromBox ? boxCenter(fromBox) : { x: 0, y: 0 });
+    const end = assignment?.end ?? anchored?.[anchored.length - 1] ?? (toBox ? boxCenter(toBox) : { x: 0, y: 0 });
     const blockers = [...nodes.values()].filter((box) => box.id !== edge.from && box.id !== edge.to);
     const minStep = options.minSteps?.get(edge.id) ?? 1;
     const repaired = repairStraightRoute(start, end, blockers, minStep);

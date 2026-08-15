@@ -23,6 +23,7 @@ import {
 
 import {
   MAX_ROUTE_REPAIR_ITERATIONS,
+  PORT_SPACING,
   placeEdgeLabel,
   planRoutes,
   routeDefects,
@@ -175,9 +176,6 @@ const NODE_TEXT_WRAP_WIDTH = 280;
 // roughly 1.2x the font size wide, nothing like an average Latin glyph.
 export const WIDE_GLYPH_MIN_CODE_POINT = 0x1f000;
 export const WIDE_GLYPH_ADVANCE_RATIO = 1.2;
-// Ports separated by more than one grid cell can never snap onto each other.
-const PORT_SPACING = 28;
-
 const elk = new ELK();
 
 export function finiteNumber(value: unknown, fallback = 0): number {
