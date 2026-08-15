@@ -134,7 +134,6 @@ async function bootstrap(): Promise<void> {
   const canvasBridge = new CanvasBridge(
     ledger,
     (request) => sendToRenderer(IPC.canvasRequest, request),
-    (transaction) => sendToRenderer(IPC.boardTransactions, transaction),
   );
   const voiceBridge = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
   canvas = canvasBridge;
