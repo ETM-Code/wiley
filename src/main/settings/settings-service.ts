@@ -60,6 +60,7 @@ export class SettingsService {
         openaiApiKey: {
           present: Boolean(key.key),
           source: key.source,
+          stored: key.source === "store" || key.envOverride,
           backend: this.options.store.secrets.backend,
         },
       },

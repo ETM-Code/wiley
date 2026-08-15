@@ -118,7 +118,14 @@ export type WorkerProbes = Record<WorkerKind, WorkerProbe>;
  */
 export interface SettingsView extends WileySettings {
   secrets: {
-    openaiApiKey: { present: boolean; source: OpenAiKeySource; backend: SecretBackend };
+    openaiApiKey: {
+      /** A key is available from some source. */
+      present: boolean;
+      source: OpenAiKeySource;
+      /** A key is saved in the secret store, whether or not the env shadows it. */
+      stored: boolean;
+      backend: SecretBackend;
+    };
   };
   models: ModelOption[];
   probes: WorkerProbes;
