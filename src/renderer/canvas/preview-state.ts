@@ -13,6 +13,14 @@ export const diagramPreviewElementIds = new Set<string>();
  */
 export const diagramPreviewVersions = { latest: 0, lastNodeCount: 0 };
 
+/**
+ * The diagram id claimed by the preview currently streaming. Every
+ * provisional frame and the final commit address the same elements, so the
+ * board morphs in place instead of accumulating one throwaway copy per
+ * JSON delta.
+ */
+export const diagramPreviewStream: { diagramId: string | null } = { diagramId: null };
+
 export function isDiagramPreviewActive(): boolean {
   return diagramPreviewElementIds.size > 0;
 }
@@ -40,6 +48,7 @@ export function clearDiagramPreview(api: ExcalidrawImperativeAPI, value: unknown
   const elements = withoutDiagramPreviewElements([...api.getSceneElements()]);
   diagramPreviewElementIds.clear();
   diagramPreviewVersions.lastNodeCount = 0;
+  diagramPreviewStream.diagramId = null;
   if (cleared > 0) {
     api.updateScene({ elements, captureUpdate: CaptureUpdateAction.EVENTUALLY });
   }

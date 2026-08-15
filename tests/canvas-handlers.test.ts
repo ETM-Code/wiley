@@ -3,8 +3,11 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 vi.mock("@excalidraw/excalidraw", () => ({
   CaptureUpdateAction: { EVENTUALLY: "EVENTUALLY", IMMEDIATELY: "IMMEDIATELY" },
-  convertToExcalidrawElements: (skeletons: Array<Record<string, any>>) => {
-    const convertedIds = new Map(skeletons.map((item, index) => [item.id, `converted-${index}`]));
+  convertToExcalidrawElements: (skeletons: Array<Record<string, any>>, opts?: { regenerateIds?: boolean }) => {
+    // The real converter regenerates skeleton ids unless told otherwise.
+    const keepIds = opts?.regenerateIds === false;
+    const idOf = (item: Record<string, any>, index: number) => (keepIds ? String(item.id) : `converted-${index}`);
+    const convertedIds = new Map(skeletons.map((item, index) => [item.id, idOf(item, index)]));
     return skeletons.flatMap((item, index) => {
     const points = item.points as Array<[number, number]> | undefined;
     const x = item.x;
@@ -13,9 +16,7 @@ vi.mock("@excalidraw/excalidraw", () => ({
     const height = item.height ?? Math.abs(points?.at(-1)?.[1] ?? 0);
     const element = {
       ...item,
-      // Match the real converter, which creates fresh Excalidraw ids rather
-      // than preserving the supplied skeleton ids.
-      id: `converted-${index}`,
+      id: idOf(item, index),
       x,
       y,
       width,
@@ -55,6 +56,7 @@ import {
   MODEL_GRID_SIZE,
   withoutDiagramPreviewElements,
 } from "../src/renderer/canvas-handlers";
+import { nodeElementId } from "../src/renderer/diagram-spec";
 
 function expectOnModelGrid(value: unknown) {
   expect(typeof value).toBe("number");
@@ -99,6 +101,7 @@ describe("diagram renderer", () => {
         ],
       },
     }) as {
+      diagramId: string;
       idMap: Record<string, string>;
       __boardSnapshot: { elements: Array<Record<string, unknown>> };
     };
@@ -115,7 +118,16 @@ describe("diagram renderer", () => {
     expect(updateSizes[0]).toBeLessThan(updateSizes.at(-1)!);
     expect(captureActions.slice(0, -1).every((action) => action === "EVENTUALLY")).toBe(true);
     expect(captureActions.at(-1)).toBe("IMMEDIATELY");
-    expect(result.idMap.human).toBe("converted-0");
+    // Ids survive conversion, so the reported id is the id on the board.
+    expect(result.diagramId).toMatch(/^wd-/);
+    expect(result.idMap.human.startsWith(`${result.diagramId}-n-`)).toBe(true);
+    const sceneIds = new Set(result.__boardSnapshot.elements.map((element) => element.id));
+    for (const id of Object.values(result.idMap)) expect(sceneIds.has(id)).toBe(true);
+    for (const element of result.__boardSnapshot.elements) {
+      const stamp = (element.customData as { wiley?: { diagram?: string } } | undefined)?.wiley;
+      // Bound labels are made by the converter and carry no stamp of their own.
+      if (stamp) expect(stamp.diagram).toBe(result.diagramId);
+    }
     const arrows = result.__boardSnapshot.elements.filter((element) => element.type === "arrow");
     expect(arrows).toHaveLength(2);
     expect(arrows.every((arrow) => arrow.startBinding && arrow.endBinding)).toBe(true);
@@ -591,5 +603,104 @@ describe("diagram renderer", () => {
     expect(isDiagramPreviewActive()).toBe(false);
     expect(final.__boardSnapshot.elements.filter((element) => element.type === "rectangle")).toHaveLength(3);
     expect(updateSizes.at(-1)).toBe(final.__boardSnapshot.elements.length);
+  });
+
+  it("keeps one diagram identity across every preview frame and the final commit", async () => {
+    let elements: Array<Record<string, any>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const first = await handleCanvasRequest(api, {
+      id: -10,
+      op: "preview-diagram",
+      params: { __previewVersion: 201, nodes: [{ id: "one", label: "One" }], edges: [] },
+    }) as { diagramId: string };
+    const diagramId = first.diagramId;
+    const firstNodeId = nodeElementId(diagramId, "one");
+    expect(elements.some((element) => element.id === firstNodeId)).toBe(true);
+
+    const second = await handleCanvasRequest(api, {
+      id: -11,
+      op: "preview-diagram",
+      params: {
+        __previewVersion: 202,
+        nodes: [{ id: "one", label: "One" }, { id: "two", label: "Two" }],
+        edges: [{ from: "one", to: "two" }],
+      },
+    }) as { diagramId: string };
+    expect(second.diagramId).toBe(diagramId);
+    expect(elements.filter((element) => element.id === firstNodeId)).toHaveLength(1);
+
+    const final = await handleCanvasRequest(api, {
+      id: 40,
+      op: "layout-diagram",
+      params: {
+        __previewVersion: 203,
+        nodes: [{ id: "one", label: "One" }, { id: "two", label: "Two" }],
+        edges: [{ from: "one", to: "two" }],
+      },
+    }) as { diagramId: string; idMap: Record<string, string> };
+
+    // The provisional elements became the committed ones rather than being
+    // deleted and replaced by a second set under different ids.
+    expect(final.diagramId).toBe(diagramId);
+    expect(final.idMap.one).toBe(firstNodeId);
+    expect(elements.filter((element) => element.id === firstNodeId)).toHaveLength(1);
+    expect(isDiagramPreviewActive()).toBe(false);
+  });
+
+  it("refuses to draw when a derived id is already taken by something else", async () => {
+    let elements: Array<Record<string, any>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, any>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const first = await handleCanvasRequest(api, {
+      id: -20,
+      op: "preview-diagram",
+      params: { __previewVersion: 301, nodes: [{ id: "one", label: "One" }], edges: [] },
+    }) as { diagramId: string };
+
+    // Something outside this diagram already sits on the id the next frame
+    // will claim; converting anyway would drop one of them silently.
+    elements = [...elements, {
+      id: nodeElementId(first.diagramId, "two"),
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 20,
+      version: 1,
+    }];
+
+    await expect(handleCanvasRequest(api, {
+      id: -21,
+      op: "preview-diagram",
+      params: {
+        __previewVersion: 302,
+        nodes: [{ id: "one", label: "One" }, { id: "two", label: "Two" }],
+        edges: [{ from: "one", to: "two" }],
+      },
+    })).rejects.toThrow(/Diagram id collision/);
+
+    await handleCanvasRequest(api, {
+      id: -22,
+      op: "clear-diagram-preview",
+      params: { __previewVersion: 303 },
+    });
+    expect(isDiagramPreviewActive()).toBe(false);
   });
 });
