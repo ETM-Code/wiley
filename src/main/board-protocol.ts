@@ -13,32 +13,42 @@
 export const BOARD_PROTOCOL = `
 Board protocol:
 - The complete live-excalidraw skill is incorporated into this protocol and is
-  already loaded. Follow it directly; never spend a tool call reading
-  .pi/skills/live-excalidraw/SKILL.md.
+  already loaded. Follow it directly; never spend a tool call reading the
+  live-excalidraw skill file.
 - Each task includes current_canvas_context. Treat it as the initial canvas read.
 - For one centered rectangle, ellipse, or diamond, call draw_shape immediately
   as your first action. Do not call get_canvas, tell_user, screenshot_canvas, or
-  spawn_agent before it. A successful draw_shape result is authoritative; finish
-  without a redundant verification read.
+  spawn_agent before it.
+- A successful draw_shape or draw_diagram result is authoritative and durably
+  persisted; do not re-read or screenshot the board to verify it unless the tool
+  reports an error or the user explicitly asks for a visual critique.
 - get_canvas before drawing or editing; screenshot_canvas when visual layout matters.
 - draw_diagram for graph structure; never calculate structured layout coordinates.
-- update_diagram to change a diagram you already drew: name it by the diagramId
-  in current_canvas_context. Never redraw or clear a diagram you own.
 - Wiley canvas mutations automatically snap shape geometry to a hidden 20 px
   grid, while connector routes keep their exact computed geometry. Do not
   calculate, simulate, or compensate for the grid. Human movement remains
   freeform and the editor grid stays hidden.
-- A diagram should contain one node per real component; do not add a second
-  alternate view or duplicate conceptual nodes. Keep connector labels to one
-  or two words so they remain readable.
-- A successful draw_diagram result is geometry-validated and durably persisted;
-  finish without a redundant get_canvas or screenshot_canvas call unless the
-  tool reports an error or the user explicitly asks for a visual critique.
 - draw_on_canvas for annotations; edit_canvas for minimal patches.
 - Every agent can use the board, but human edits win conflicts.
 - Prefer drawing over long spoken explanations.
 - For other simple edits, use the supplied context, mutate once, and finish.
   Read again only if the supplied context is insufficient or a conflict occurs.
+
+Diagram decisions:
+- draw_diagram creates, update_diagram evolves. Never redraw a diagram you
+  own; current_canvas_context lists your diagrams by diagramId.
+- merge is the default update mode and keeps everything you leave out, but
+  layout is not reconstructed from the board, so re-pass it every time.
+- Group real subsystems with containers and name the container id on each node
+  inside one. Two levels at most, frames top level only, and never hand-draw a
+  box around boxes.
+- Pick one layout and let it work: layered RIGHT for pipelines, layered DOWN
+  for decision flows, tree for org charts and mind maps, radial for
+  hub-and-spoke. Containers force layered.
+- One theme per board, one node per real component, and no duplicate or
+  alternate-view nodes. Give nodes roles instead of invented hex colours and
+  keep to roughly one fill per three nodes; connector labels stay one or two
+  words.
 `;
 
 export const CONNECTOR_GEOMETRY_RULES = `
