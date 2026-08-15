@@ -84,6 +84,11 @@ describe("diagram layout quality", () => {
     }
   });
 
+  it("exercises more than one theme across the gallery", () => {
+    const themed = new Set(stressGraphs.map(({ params }) => params.theme).filter(Boolean));
+    expect(themed.size).toBeGreaterThanOrEqual(3);
+  });
+
   it("derives the same element ids for the same request", async () => {
     const first = await planDiagramLayout(planningDiagram, ORIGIN);
     const second = await planDiagramLayout(planningDiagram, ORIGIN, first.diagramId);
