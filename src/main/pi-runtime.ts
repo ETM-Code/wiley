@@ -1,15 +1,10 @@
 import path from "node:path";
-import os from "node:os";
 import { readFile } from "node:fs/promises";
 import { Type } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import {
-  createAgentSession,
-  DefaultResourceLoader,
   defineTool,
   ModelRuntime,
-  SessionManager,
-  SettingsManager,
   type AgentSession,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
@@ -20,13 +15,14 @@ import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
 import type { ApprovalJudge } from "./safety";
 import { type VoiceBridge } from "./voice-bridge";
-import { MAX_ACTIVE_SUBAGENTS, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
+import { MAX_ACTIVE_SUBAGENTS, PI_MODEL, PI_PROVIDER } from "./pi/constants";
 import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./pi/image";
 import { lastAssistantText } from "./pi/messages";
 import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
 import { DiagramPreviewQueue } from "./pi/diagram-preview-queue";
 import { redact } from "./pi/redact";
 import { createApprovalJudge, createGuardExtension } from "./pi/safety-extension";
+import { createRootSession, createSubagentSession, type PiSessionOptions } from "./pi/session-factory";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
@@ -89,32 +85,20 @@ export class PiRuntime {
   }
 
   async #createRootSession(): Promise<void> {
-    const model = getModel(PI_PROVIDER, PI_MODEL);
-    if (!model || !this.#modelRuntime) throw new Error(`Pi model unavailable: ${PI_PROVIDER}/${PI_MODEL}`);
-    const agentDir = path.join(os.homedir(), ".pi", "agent");
-    const settingsManager = SettingsManager.create(this.projectDir, agentDir);
-    const loader = new DefaultResourceLoader({
-      cwd: this.projectDir,
-      agentDir,
-      settingsManager,
-      systemPromptOverride: () => BOARD_AGENT_SYSTEM_PROMPT,
-      extensionFactories: [this.#guardExtension()],
-    });
-    await loader.reload();
-    const customTools = this.#tools("root");
-    const { session } = await createAgentSession({
-      cwd: this.projectDir,
-      model,
-      thinkingLevel: PI_THINKING_LEVEL,
-      modelRuntime: this.#modelRuntime,
-      resourceLoader: loader,
-      tools: ["read", "bash", "edit", "write", "grep", "find", "ls", ...customTools.map((tool) => tool.name)],
-      customTools,
-      sessionManager: SessionManager.create(this.projectDir),
-      settingsManager,
-    });
+    const session = await createRootSession(this.#sessionOptions(BOARD_AGENT_SYSTEM_PROMPT, "root"));
     this.#main = session;
     this.#subscribeSession(session, "root", () => this.#currentJobId ?? "system");
+  }
+
+  #sessionOptions(systemPrompt: string, agentId: string): PiSessionOptions {
+    if (!this.#modelRuntime) throw new Error(`Pi model unavailable: ${PI_PROVIDER}/${PI_MODEL}`);
+    return {
+      projectDir: this.projectDir,
+      systemPrompt,
+      guardExtension: this.#guardExtension(),
+      modelRuntime: this.#modelRuntime,
+      customTools: this.#tools(agentId),
+    };
   }
 
   /**
@@ -624,31 +608,7 @@ export class PiRuntime {
   }
 
   async #createSubagentSession(agentId: string): Promise<AgentSession> {
-    const model = getModel(PI_PROVIDER, PI_MODEL);
-    if (!model || !this.#modelRuntime) throw new Error(`Pi model unavailable: ${PI_PROVIDER}/${PI_MODEL}`);
-    const agentDir = path.join(os.homedir(), ".pi", "agent");
-    const settingsManager = SettingsManager.create(this.projectDir, agentDir);
-    const loader = new DefaultResourceLoader({
-      cwd: this.projectDir,
-      agentDir,
-      settingsManager,
-      systemPromptOverride: () => SUBAGENT_SYSTEM_PROMPT,
-      extensionFactories: [this.#guardExtension()],
-    });
-    await loader.reload();
-    const customTools = this.#tools(agentId);
-    const { session } = await createAgentSession({
-      cwd: this.projectDir,
-      model,
-      thinkingLevel: PI_THINKING_LEVEL,
-      modelRuntime: this.#modelRuntime,
-      resourceLoader: loader,
-      tools: ["read", "bash", "edit", "write", "grep", "find", "ls", ...customTools.map((tool) => tool.name)],
-      customTools,
-      sessionManager: SessionManager.inMemory(),
-      settingsManager,
-    });
-    return session;
+    return createSubagentSession(this.#sessionOptions(SUBAGENT_SYSTEM_PROMPT, agentId));
   }
 
   async #ensureWarmSubagent(): Promise<void> {
