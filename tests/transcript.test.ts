@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { JsonlRuntimeLedger } from "../src/main/ledger";
+import { SqliteRuntimeLedger } from "../src/main/ledger";
 import { TranscriptStore } from "../src/main/transcript";
 
 const cleanup: string[] = [];
@@ -15,7 +15,7 @@ afterEach(async () => {
 async function makeStore(): Promise<TranscriptStore> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "board-ai-transcript-"));
   cleanup.push(directory);
-  const ledger = new JsonlRuntimeLedger(path.join(directory, "ledger.jsonl"));
+  const ledger = new SqliteRuntimeLedger(path.join(directory, "runtime.sqlite"));
   await ledger.initialize();
   return new TranscriptStore(ledger);
 }

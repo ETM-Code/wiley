@@ -18,6 +18,7 @@ function ledgerStub(): RuntimeLedger {
     hasBoardTransaction: vi.fn(() => false),
     putBoardSnapshot: vi.fn(),
     getBoardSnapshot: vi.fn(),
+    close: vi.fn(),
   } as unknown as RuntimeLedger;
 }
 
