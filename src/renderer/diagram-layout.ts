@@ -857,6 +857,14 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     "elk.layered.spacing.edgeNodeBetweenLayers": "32",
     "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
     "elk.spacing.edgeLabel": "10",
+    // A request lists its edges in the order the story is told, so the edge
+    // that closes a loop is the later one. ELK's default greedy cycle breaker
+    // ignores that and is free to reverse the forward edge instead, which
+    // turns a flow chart upside down and sends the retry edge the long way
+    // around the whole drawing. Model order breaks exactly the edges that
+    // point backwards against the declared order.
+    "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
+    "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
   }));
   const absolute = resolveAbsolute(result);
   const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
