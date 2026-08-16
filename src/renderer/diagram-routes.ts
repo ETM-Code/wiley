@@ -485,11 +485,34 @@ export function routeDefects(
  * label has to be placed against the route we ended up drawing.
  *
  * Candidates ring the route's midpoint in a fixed order, near before far, and
- * the first one clear of every obstacle wins. When the whole ring is blocked
- * the least covered candidate is used: a label grazing a line still beats one
- * parked squarely on a node, which is what taking the first candidate blind
- * used to do.
+ * the first one clear of every obstacle wins. When the midpoint's ring is
+ * blocked the search slides along the route the way a person would, and if
+ * every spot is blocked the least covered one is used: a label grazing a line
+ * still beats one parked squarely on a node, which is what taking the first
+ * candidate blind used to do.
  */
+/** The point a given fraction of the way along a polyline. */
+function pointAlong(points: readonly Point[], at: number): Point {
+  if (points.length === 0) return { x: 0, y: 0 };
+  const segments = pointsToSegments(points);
+  const lengths = segments.map((segment) => Math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1));
+  const total = lengths.reduce((sum, length) => sum + length, 0);
+  if (total === 0) return points[0];
+  let remaining = total * at;
+  for (const [index, segment] of segments.entries()) {
+    if (remaining > lengths[index]) {
+      remaining -= lengths[index];
+      continue;
+    }
+    const ratio = lengths[index] === 0 ? 0 : remaining / lengths[index];
+    return {
+      x: segment.x1 + (segment.x2 - segment.x1) * ratio,
+      y: segment.y1 + (segment.y2 - segment.y1) * ratio,
+    };
+  }
+  return points[points.length - 1];
+}
+
 export function placeEdgeLabel(
   points: readonly Point[],
   size: { width: number; height: number },
@@ -501,19 +524,22 @@ export function placeEdgeLabel(
       ? points[(points.length - 1) / 2]
       : midpoint(points[points.length / 2 - 1], points[points.length / 2]);
   const gap = 8;
-  const offsets: Point[] = [];
-  for (const scale of [1, 2, 3, 4]) {
-    offsets.push(
-      { x: 0, y: -(size.height / 2 + gap) * scale },
-      { x: 0, y: (size.height / 2 + gap) * scale },
-      { x: (size.width / 2 + gap) * scale, y: 0 },
-      { x: -(size.width / 2 + gap) * scale, y: 0 },
-    );
+  const candidates: Point[] = [];
+  for (const along of [anchor, ...[0.3, 0.7, 0.15, 0.85].map((at) => pointAlong(points, at))]) {
+    for (const scale of [1, 2, 3, 4]) {
+      for (const offset of [
+        { x: 0, y: -(size.height / 2 + gap) * scale },
+        { x: 0, y: (size.height / 2 + gap) * scale },
+        { x: (size.width / 2 + gap) * scale, y: 0 },
+        { x: -(size.width / 2 + gap) * scale, y: 0 },
+      ]) {
+        candidates.push({
+          x: along.x + offset.x - size.width / 2,
+          y: along.y + offset.y - size.height / 2,
+        });
+      }
+    }
   }
-  const candidates = offsets.map((offset) => ({
-    x: anchor.x + offset.x - size.width / 2,
-    y: anchor.y + offset.y - size.height / 2,
-  }));
   let bestCandidate = candidates[0];
   let bestOverlap = Number.POSITIVE_INFINITY;
   for (const candidate of candidates) {

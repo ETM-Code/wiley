@@ -1,6 +1,7 @@
 import {
   CURVED_LABEL_SLACK,
   EDGE_LABEL_FONT_SIZE,
+  LABEL_MIN_GAP,
   MODEL_GRID_SIZE,
   boundLabelAnchor,
   finiteNumber,
@@ -62,13 +63,6 @@ export function isObstacleFinding(finding: string): boolean {
 
 /** How far inside a container's border its members have to stay. */
 export const CONTAINER_INSET = 12;
-
-/**
- * Clear space two labels owe each other. Below this the reader stops seeing
- * two captions and starts seeing one run of text, which is what the pairs
- * sitting ten pixels apart at the top of a diagram looked like.
- */
-const LABEL_MIN_GAP = 10;
 
 /** Two ports nearer than this on one node read as a single attachment. */
 const MIN_PORT_SEPARATION = 14;
