@@ -25,7 +25,8 @@ export type CanvasMutation =
   | "add-elements"
   | "connect-elements"
   | "clear-scene"
-  | "apply-patch";
+  | "apply-patch"
+  | "tidy-diagram";
 
 /**
  * Everything the tool definitions are allowed to reach. PiRuntime implements
@@ -319,6 +320,26 @@ function canvasTools(host: PiToolHost, agentId: string): ToolDefinition[] {
 
 function rootOnlyTools(host: PiToolHost): ToolDefinition[] {
   return [
+    defineTool({
+      name: "tidy_diagram",
+      label: "Tidy Diagram",
+      description: "Clean up the user's own hand-drawn sketch: snap it to the grid, line the shapes up into rows and columns, even out the spacing, re-route their arrows and give them real bindings so they stay attached when anything moves. Every element keeps its id, its text, its colours, and its existence: nothing is deleted, nothing is redrawn as a copy. This is the only tool allowed to move the user's elements, so call it only when they explicitly ask for the board or their drawing to be tidied, straightened, cleaned up, or laid out properly. Never tidy uninvited, and never as a side effect of another request. Aim it with elementIds for exactly those elements, or near (an element id, with an optional radius) for the sketch around one, or nothing at all for everything they drew. layout align (the default) keeps the arrangement they made and straightens it, which is what someone asking to \"tidy this up\" means; layout relayout rearranges the whole thing from the connections between their shapes, which is a bigger change, so use it only when they ask for it to be laid out or organised again. The result reports how many shapes moved and how many arrows were properly bound.",
+      parameters: Type.Object({
+        elementIds: Type.Optional(Type.Array(Type.String())),
+        near: Type.Optional(Type.String()),
+        radius: Type.Optional(Type.Number()),
+        layout: Type.Optional(Type.Union([Type.Literal("align"), Type.Literal("relayout")])),
+        direction: Type.Optional(Type.Union([
+          Type.Literal("RIGHT"),
+          Type.Literal("DOWN"),
+          Type.Literal("LEFT"),
+          Type.Literal("UP"),
+        ])),
+      }, { additionalProperties: false }),
+      execute: async (_id, params, signal) => diagramToolText(
+        await host.mutateCanvas("root", "tidy-diagram", params, signal),
+      ),
+    }),
     defineTool({
       name: "spawn_agent",
       label: "Spawn Worker",
