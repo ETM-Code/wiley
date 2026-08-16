@@ -60,9 +60,11 @@ import { placeUpdatedPlan } from "../src/renderer/canvas/diagram-update";
 import {
   assertDiagramQuality,
   assertQualityClearOfHuman,
+  assertRenderedQuality,
   diagramDefects,
   placementCollisions,
 } from "../src/renderer/canvas/diagram-render";
+import { evaluateConvertedScene } from "../src/renderer/diagram-quality";
 import { planBounds, planDiagramLayout } from "../src/renderer/diagram-layout";
 import { resampleRoute, tweenGeometry } from "../src/renderer/diagram-diff";
 
@@ -737,6 +739,36 @@ describe("keeping the agent's drawing clear of the person's", () => {
       height: skeleton.height as number,
     };
   }
+
+  it("fails a drawing whose converted route crosses a box the plan cleared", async () => {
+    const plan = await flowPlan();
+    const queue = boxOf(plan, "queue");
+    // What the converter can hand back that the plan never had: an arrow
+    // rebuilt as a straight run between its two bindings, straight through
+    // the box the plan routed around. Until now this was evaluated after
+    // conversion, merged into what the agent is told, and never failed on.
+    const nodeIds = [...plan.elementIdByNode.values()];
+    const converted = [
+      ...plan.skeletons.filter((skeleton) => nodeIds.includes(String(skeleton.id))),
+      {
+        id: [...plan.roles].find(([, entry]) => entry.role === "edge")![0],
+        type: "arrow",
+        x: queue.x - 200,
+        y: queue.y + queue.height / 2,
+        width: queue.width + 400,
+        height: 0,
+        points: [[0, 0], [queue.width + 400, 0]],
+      },
+    ];
+    const report = evaluateConvertedScene(
+      converted as unknown as Parameters<typeof evaluateConvertedScene>[0],
+      plan,
+    );
+    expect(report.edgesThroughNodes.length).toBeGreaterThan(0);
+    expect(() => assertRenderedQuality(report)).toThrow(/after conversion/);
+    // And the drawing that is actually clean after conversion still ships.
+    expect(() => assertRenderedQuality(assertDiagramQuality(plan)!)).not.toThrow();
+  });
 
   it("does not fail a drawing merely for landing on the person's box", async () => {
     const plan = await flowPlan();

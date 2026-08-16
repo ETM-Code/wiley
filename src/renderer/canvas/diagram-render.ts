@@ -138,6 +138,30 @@ export function assertDiagramQuality(
  * the user's own work is deliberately not one of them: that is a placement
  * the caller gets to try again before it counts as a failure.
  */
+/**
+ * The same gate, run again on the scene the converter actually built.
+ *
+ * The plan is checked before conversion, and for four rounds running that was
+ * taken to mean the board was checked. It was not: the converter rebuilds
+ * every arrow, re-measures every bound label, and pulls a bound endpoint onto
+ * the shape it is attached to, so a route that cleared a box in the plan can
+ * cross it on the board. The converted report was merged into what the agent
+ * is told and nothing ever failed on it, which is how a connector through a
+ * box could ship while every check called the drawing clean.
+ */
+export function assertRenderedQuality(quality: DiagramQualityReport): void {
+  // Two of the four, not all of them. A frame is auto-fitted to its children
+  // by the editor itself, which lands the border a pixel or two off where the
+  // plan put it and reports every member as overflowing by that much; that is
+  // the editor's arithmetic and the plan pass already holds the geometry to
+  // account. Ink drawn on top of ink is what only this pass can see.
+  const defects = [...quality.nodeOverlaps, ...quality.edgesThroughNodes]
+    .filter((finding) => !isObstacleFinding(finding));
+  if (defects.length > 0) {
+    throw new Error(`Diagram quality check failed after conversion: ${defects.slice(0, 3).join("; ")}`);
+  }
+}
+
 export function diagramDefects(quality: DiagramQualityReport): string[] {
   return [
     ...quality.nodeOverlaps,
@@ -404,6 +428,7 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
         ),
       )
     : quality;
+  if (rendered) assertRenderedQuality(rendered);
   const titleElement = title ? convertedById.get(titleElementId(diagramId)) : undefined;
   const titleTexts = titleElement ? [titleElement] : [];
   // Regions are the stage the rest of the drawing lands on, so they arrive
