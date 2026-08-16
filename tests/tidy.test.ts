@@ -463,31 +463,156 @@ describe("an arrow drawn onto a framing shape", () => {
 });
 
 describe("an arrow the tidy is not moving both ends of", () => {
-  it("is left alone rather than pulled off the shape that stayed put", async () => {
-    const elements: MessyElement[] = [
-      { id: "in-a", type: "rectangle", x: 13, y: 11, width: 120, height: 60, version: 1 },
-      { id: "in-b", type: "rectangle", x: 300, y: 17, width: 120, height: 60, version: 2 },
-      { id: "outside", type: "rectangle", x: 900, y: 600, width: 120, height: 60, version: 3 },
-      {
-        id: "arr",
-        type: "arrow",
-        x: 133,
-        y: 41,
-        width: 767,
-        height: 589,
-        points: [[0, 0], [767, 589]],
-        startBinding: { elementId: "in-a" },
-        endBinding: { elementId: "outside" },
-        version: 4,
-      },
-    ];
+  const elements: MessyElement[] = [
+    { id: "in-a", type: "rectangle", x: 13, y: 11, width: 120, height: 60, version: 1 },
+    { id: "in-b", type: "rectangle", x: 300, y: 17, width: 120, height: 60, version: 2 },
+    { id: "outside", type: "rectangle", x: 900, y: 600, width: 120, height: 60, version: 3 },
+    {
+      id: "arr",
+      type: "arrow",
+      x: 133,
+      y: 41,
+      width: 767,
+      height: 589,
+      points: [[0, 0], [767, 589]],
+      startBinding: { elementId: "in-a" },
+      endBinding: { elementId: "outside" },
+      version: 4,
+    },
+  ];
+
+  it("keeps both of its ends on the shapes they are bound to", async () => {
     const target = board(elements);
     await tidy(target, { elementIds: ["in-a", "in-b"] });
 
-    const after = target.elements().find((element) => element.id === "arr")!;
-    const before = elements[3];
-    expect({ x: after.x, y: after.y }).toEqual({ x: before.x, y: before.y });
-    expect(target.elements().find((element) => element.id === "outside"))
-      .toMatchObject({ x: 900, y: 600 });
+    const moved = target.elements().find((element) => element.id === "in-a")!;
+    const stayed = target.elements().find((element) => element.id === "outside")!;
+    expect({ x: stayed.x, y: stayed.y }).toEqual({ x: 900, y: 600 });
+
+    const arrow = target.elements().find((element) => element.id === "arr")!;
+    const points = arrow.points as Array<[number, number]>;
+    const tail = { x: arrow.x + points.at(-1)![0], y: arrow.y + points.at(-1)![1] };
+    // The bound end travelled with its shape; the far end is exactly where it
+    // was, still on the box that did not move.
+    expect({ x: arrow.x, y: arrow.y })
+      .toEqual({ x: 133 + (moved.x - 13), y: 41 + (moved.y - 11) });
+    expect(tail).toEqual({ x: 900, y: 630 });
+  });
+});
+
+describe("an agent connector already bound into the sketch", () => {
+  const sketch: MessyElement[] = [
+    { id: "hb", type: "rectangle", x: 603, y: 7, width: 140, height: 66, version: 1 },
+    { id: "hb-t", type: "text", x: 620, y: 30, width: 60, height: 20, text: "Theirs", containerId: "hb", version: 2 },
+    { id: "hc", type: "rectangle", x: 611, y: 240, width: 140, height: 66, version: 3 },
+    {
+      id: "agent-node",
+      type: "rectangle",
+      x: 100,
+      y: 0,
+      width: 160,
+      height: 80,
+      version: 4,
+      customData: { wiley: { diagram: "wd-1", role: "node", key: "svc", theme: "slate" } },
+    },
+    {
+      id: "wd-1-e-bridge",
+      type: "arrow",
+      x: 260,
+      y: 40,
+      width: 343,
+      height: 0,
+      points: [[0, 0], [343, 0]],
+      startBinding: { elementId: "agent-node" },
+      endBinding: { elementId: "hb" },
+      boundElements: [],
+      version: 5,
+      customData: { wiley: { diagram: "wd-1", role: "edge", key: "svc__hb__0", theme: "slate" } },
+    },
+  ];
+
+  it("follows the shape it is bound to instead of being left behind", async () => {
+    const target = board(sketch);
+    await tidy(target, { layout: "relayout" });
+
+    const box = target.elements().find((element) => element.id === "hb")!;
+    const arrow = target.elements().find((element) => element.id === "wd-1-e-bridge")!;
+    const points = arrow.points as Array<[number, number]>;
+    const tail = { x: arrow.x + points.at(-1)![0], y: arrow.y + points.at(-1)![1] };
+    // Wherever the box went, the arrow's far end went the same distance. Its
+    // other end is on the agent's own node, which is not part of the sketch,
+    // so that end did not move at all.
+    expect(tail).toEqual({ x: 603 + (box.x - 603), y: 40 + (box.y - 7) });
+    expect({ x: arrow.x, y: arrow.y }).toEqual({ x: 260, y: 40 });
+    // And the agent's own node, which is not part of the sketch, stayed put.
+    expect(target.elements().find((element) => element.id === "agent-node"))
+      .toMatchObject({ x: 100, y: 0 });
+  });
+});
+
+describe("a sketch boxed in by the agent's own diagrams", () => {
+  it("is tidied anyway rather than refused", async () => {
+    const sketch: MessyElement[] = [
+      { id: "h1", type: "rectangle", x: 0, y: 0, width: 120, height: 60, version: 1 },
+      { id: "h2", type: "rectangle", x: 300, y: 8, width: 120, height: 60, version: 2 },
+      { id: "h3", type: "rectangle", x: 4, y: 200, width: 120, height: 60, version: 3 },
+    ];
+    // Six agent diagrams stacked directly below, which is exactly what the
+    // default anchoring produces over a few calls.
+    const stack: MessyElement[] = Array.from({ length: 6 }, (_, index) => ({
+      id: `ag${index}`,
+      type: "rectangle",
+      x: -200,
+      y: 300 + index * 400,
+      width: 900,
+      height: 360,
+      version: 10 + index,
+      customData: { wiley: { diagram: `wd-${index}`, role: "node", key: "n", theme: "slate" } },
+    }));
+    const target = board([...sketch, ...stack]);
+    const result = await tidy(target);
+
+    expect(result.moved).toBeGreaterThan(0);
+    for (const agent of stack) {
+      expect(target.elements().find((element) => element.id === agent.id))
+        .toMatchObject({ x: agent.x, y: agent.y });
+    }
+  });
+});
+
+describe("a caption the editor bound to the person's own arrow", () => {
+  it("is read as that connector's label, not as a loose mark", () => {
+    const graph = inferHumanGraph([
+      { id: "a", type: "rectangle", x: 0, y: 0, width: 120, height: 60 },
+      { id: "b", type: "rectangle", x: 300, y: 0, width: 120, height: 60 },
+      {
+        id: "arr",
+        type: "arrow",
+        x: 120,
+        y: 30,
+        width: 180,
+        height: 0,
+        points: [[0, 0], [180, 0]],
+      },
+      { id: "arr-t", type: "text", x: 190, y: 20, width: 40, height: 20, text: "then", containerId: "arr" },
+    ]);
+    expect(graph.edges[0].label).toBe("then");
+    expect(graph.unattached).toEqual([]);
+  });
+});
+
+describe("a board too big to read carefully", () => {
+  it("reports only what the editor already knows rather than sweeping it", () => {
+    const many: SketchElement[] = [];
+    for (let index = 0; index < 40; index++) {
+      many.push({ id: `b${index}`, type: "rectangle", x: index * 200, y: 0, width: 120, height: 60 });
+      many.push({ id: `n${index}`, type: "text", x: index * 200 + 10, y: 10, width: 40, height: 20, text: `T${index}` });
+    }
+    const cheap = inferHumanGraph(many, { inferenceLimit: 10 });
+    expect(cheap.nodes).toHaveLength(40);
+    expect(cheap.nodes.every((node) => node.label === undefined)).toBe(true);
+
+    const careful = inferHumanGraph(many);
+    expect(careful.nodes[0].label).toBe("T0");
   });
 });

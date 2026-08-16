@@ -42,7 +42,7 @@ import {
   type RouteRequest,
 } from "../diagram-routes";
 import { easeInOutCubic } from "../diagram-diff";
-import type { DiagramObstacle } from "../diagram-quality";
+import { OBSTACLE_MARKER, type DiagramObstacle } from "../diagram-quality";
 import { assertDiagramQuality, placementCollisions } from "./diagram-render";
 import { shiftClearOf } from "./geometry";
 import {
@@ -55,6 +55,7 @@ import {
   type SketchElement,
 } from "./human-graph";
 import { humanObstacles } from "./human-merge";
+import { shiftedArrowGeometry } from "./patch";
 import { pauseForStreaming, shouldStreamCanvas } from "./streaming";
 import type { SceneElement } from "./types";
 
@@ -170,6 +171,16 @@ export function tidyTargets(
  */
 export function expandTidyScope(graph: HumanGraph, targets: readonly string[]): string[] {
   const scope = new Set(targets);
+  // A frame drawn round the selection comes too, to a fixed point for nested
+  // frames. Leaving it behind would move the shapes out from under the
+  // grouping the person drew and quietly lose it.
+  for (let pass = 0; pass < graph.nodes.length; pass++) {
+    const before = scope.size;
+    for (const node of graph.nodes) {
+      if (node.encloses?.some((id) => scope.has(id))) scope.add(node.elementId);
+    }
+    if (scope.size === before) break;
+  }
   for (const node of graph.nodes) {
     if (!scope.has(node.elementId) || !node.labelElementId) continue;
     scope.add(node.labelElementId);
@@ -609,6 +620,24 @@ export function tidyPatches(input: {
     });
   }
 
+  // Anything else on the board bound into the sketch travels with it: the
+  // agent's own connectors reaching a hand-drawn box, and the person's arrows
+  // that this tidy is not itself re-routing. Without this the box moves and
+  // the arrow stays put, still bound, pointing where the box used to be.
+  for (const element of input.scene) {
+    if (element.type !== "arrow" || patches.has(element.id)) continue;
+    const start = element.startBinding?.elementId;
+    const end = element.endBinding?.elementId;
+    const from = start ? deltas.get(start) : undefined;
+    const to = end ? deltas.get(end) : undefined;
+    if (!from && !to) continue;
+    const moved = shiftedArrowGeometry(
+      { x: finiteNumber(element.x), y: finiteNumber(element.y), points: element.points },
+      { sdx: from?.dx ?? 0, sdy: from?.dy ?? 0, edx: to?.dx ?? 0, edy: to?.dy ?? 0 },
+    );
+    if (moved) merge(element.id, moved);
+  }
+
   // A scribble or an aside was written beside something. It travels with
   // whichever shape it was nearest, so a tidy that packs the grid together
   // cannot drop a row of boxes on top of the note about them.
@@ -739,18 +768,18 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
   const obstacles = [...foreign, ...stamped];
 
   // The tidied sketch moves as one piece, so if it lands on work that is not
-  // part of it, the whole piece slides down until it is clear.
+  // part of it, the whole piece slides clear. Down first, then sideways: a
+  // sketch with the agent's diagrams stacked under it has nowhere to go
+  // downwards and every reason to go right.
   const wrapped = wrapperBoxes(wrappers, placed);
-  const clearing = shiftClearOf(
-    boxesBounds([...placed.values(), ...wrapped.values()]),
-    obstacles.map((obstacle) => ({
-      minX: obstacle.bounds.x,
-      minY: obstacle.bounds.y,
-      maxX: obstacle.bounds.x + obstacle.bounds.width,
-      maxY: obstacle.bounds.y + obstacle.bounds.height,
-    })),
-    "below",
-  );
+  const avoid = obstacles.map((obstacle) => ({
+    minX: obstacle.bounds.x,
+    minY: obstacle.bounds.y,
+    maxX: obstacle.bounds.x + obstacle.bounds.width,
+    maxY: obstacle.bounds.y + obstacle.bounds.height,
+  }));
+  const here = boxesBounds([...placed.values(), ...wrapped.values()]);
+  const clearing = shiftClearOf(here, avoid, "below") ?? shiftClearOf(here, avoid, "right");
   if (clearing && (clearing.dx !== 0 || clearing.dy !== 0)) {
     for (const box of [...placed.values(), ...wrapped.values()]) {
       box.x += clearing.dx;
@@ -770,9 +799,16 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
   const shapes = new Map(members.map((node) => [node.elementId, node.shape]));
   const quality = assertDiagramQuality(tidyPlan(placed, routes, shapes), obstacles);
   const landed = quality ? placementCollisions(quality) : [];
-  if (landed.length > 0) {
-    throw new Error(`The tidied sketch would land on other work: ${landed.slice(0, 3).join("; ")}`);
+  // Landing on somebody else's drawing is a refusal; landing on the agent's
+  // own diagram is a fact worth reporting, because the agent can move that.
+  const theirs = new Set(foreign.map((obstacle) => obstacle.id));
+  const onTheirWork = landed.filter(
+    (finding) => [...theirs].some((id) => finding.endsWith(` x ${id}${OBSTACLE_MARKER}`)),
+  );
+  if (onTheirWork.length > 0) {
+    throw new Error(`The tidied sketch would land on their other drawing: ${onTheirWork.slice(0, 3).join("; ")}`);
   }
+  const overlapping = landed.filter((finding) => !onTheirWork.includes(finding));
 
   const { patches, bound } = tidyPatches({ scene: sketch, graph, boxes, routes });
   const moved = [...patches].filter(([id, patch]) => {
@@ -792,6 +828,7 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
       moved,
       bound,
       unattached: graph.unattached.length,
+      ...(overlapping.length > 0 ? { overlapsYourDiagrams: overlapping.length } : {}),
       ...(quality ? { quality } : {}),
     };
   };

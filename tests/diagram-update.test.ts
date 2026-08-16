@@ -662,6 +662,51 @@ describe("update-diagram reaching into the human's sketch", () => {
     })).rejects.toThrow(/style/);
   });
 
+  it("reaches a shape the person drew a box around", async () => {
+    const target = board();
+    const drawn = await drawFlow(target);
+    const deliver = target.elements().find(
+      (element) => element.customData?.wiley?.key === "deliver",
+    )!;
+    // Their box, and the ring they drew round it afterwards.
+    const inner: SceneRecord = {
+      id: "framed", type: "rectangle", x: deliver.x, y: deliver.y + 600, width: 160, height: 80,
+    };
+    const ring: SceneRecord = {
+      id: "ring", type: "rectangle", x: inner.x - 60, y: inner.y - 60, width: 280, height: 200,
+    };
+    target.api.updateScene({
+      elements: [...target.elements(), ring, inner] as never,
+      captureUpdate: "IMMEDIATELY" as never,
+    });
+
+    await handleCanvasRequest(target.api, {
+      id: 40,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "deliver", to: "human:framed" }],
+      },
+    });
+    const arrow = target.elements().find(
+      (element) => (element.endBinding as { elementId?: string } | undefined)?.elementId === "framed",
+    );
+    expect(arrow).toBeDefined();
+
+    // And the diagram stays updatable now that the connection exists.
+    const again = await handleCanvasRequest(target.api, {
+      id: 41,
+      op: "update-diagram",
+      params: { diagram: drawn.diagramId, mode: "merge", nodes: [{ id: "audit", label: "Audit" }] },
+    }) as { counts: { added: number } };
+    expect(again.counts.added).toBeGreaterThan(0);
+    for (const theirs of [ring, inner]) {
+      expect(target.elements().find((element) => element.id === theirs.id))
+        .toMatchObject({ x: theirs.x, y: theirs.y });
+    }
+  });
+
   it("refuses an id with no element of the person's behind it", async () => {
     const { target, drawn } = await boardWithSketch();
     await expect(handleCanvasRequest(target.api, {
