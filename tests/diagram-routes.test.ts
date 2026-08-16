@@ -8,6 +8,7 @@ import {
   flowRoute,
   meetOutline,
   orthogonalRoute,
+  placeEdgeLabel,
   planRoutes,
   portSlots,
   reanchorRoute,
@@ -171,6 +172,29 @@ describe("repairStraightRoute", () => {
 
   it("is deterministic", () => {
     expect(repairStraightRoute(from, to, blocker)).toEqual(repairStraightRoute(from, to, blocker));
+  });
+});
+
+describe("placeEdgeLabel", () => {
+  const size = { width: 60, height: 20 };
+  const route = [{ x: 0, y: 100 }, { x: 400, y: 100 }];
+
+  it("takes the first clear spot around the middle of the route", () => {
+    expect(placeEdgeLabel(route, size, [])).toEqual({ x: 170, y: 72 });
+  });
+
+  it("passes over a clear spot the caller rules out", () => {
+    // A connector running through the caption is a strike-through, and no box
+    // in the obstacle list can say so.
+    const above = (box: { y: number }) => box.y < 100;
+    const spot = placeEdgeLabel(route, size, [], above);
+    expect(spot.y).toBeGreaterThan(100);
+  });
+
+  it("still answers when the caller rules out every clear spot", () => {
+    // Standing somewhere beats standing nowhere: the ruled-out spot comes back
+    // rather than an arbitrary corner of the ring.
+    expect(placeEdgeLabel(route, size, [], () => true)).toEqual(placeEdgeLabel(route, size, []));
   });
 });
 
