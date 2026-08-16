@@ -42,15 +42,25 @@ export class SettingsStore {
     const next = applyPatch(this.#settings, patch);
     this.#settings = next;
     writeSettingsFile(this.#file, next);
+    this.notifyChanged();
+    return next;
+  }
+
+  /**
+   * Tells every listener to re-read. Secrets live beside settings rather than
+   * inside them, so saving a key or a session token changes what the runtime
+   * should be authenticated with without changing settings.json at all.
+   */
+  notifyChanged(): void {
+    const settings = this.#settings;
     for (const listener of this.#listeners) {
       try {
-        listener(next);
+        listener(settings);
       } catch (error) {
         // One bad subscriber must not stop the others, nor the write above.
         console.error("A settings listener threw", error);
       }
     }
-    return next;
   }
 
   onChange(listener: SettingsListener): () => void {

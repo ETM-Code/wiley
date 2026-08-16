@@ -1,10 +1,20 @@
 // Renderer-safe: never import node: modules here.
 
+import type { CloudAccount } from "../main/cloud/cloud-client";
 import type { ModelOption } from "../main/settings/model-catalog";
 import type { OpenAiKeySource, SecretBackend, SecretName } from "../main/settings/secret-store";
 import type { SettingsPatch, WileySettings, WorkerKind } from "../main/settings/settings-schema";
 
-export type { ModelOption, OpenAiKeySource, SecretBackend, SecretName, SettingsPatch, WileySettings, WorkerKind };
+export type {
+  CloudAccount,
+  ModelOption,
+  OpenAiKeySource,
+  SecretBackend,
+  SecretName,
+  SettingsPatch,
+  WileySettings,
+  WorkerKind,
+};
 
 export const IPC = {
   agentToolCall: "agent:tool-call",
@@ -27,6 +37,7 @@ export const IPC = {
   settingsSecretSet: "settings:secret-set",
   settingsSecretClear: "settings:secret-clear",
   settingsProbe: "settings:probe",
+  cloudTestConnection: "cloud:test-connection",
   workersOpenTerminal: "workers:open-terminal",
   workersNewTerminalSession: "workers:new-terminal-session",
 } as const;
@@ -142,6 +153,11 @@ export interface SettingsView extends WileySettings {
       stored: boolean;
       backend: SecretBackend;
     };
+    /** The hosted-account session token, which has no environment equivalent. */
+    cloudSessionToken: {
+      stored: boolean;
+      backend: SecretBackend;
+    };
   };
   models: ModelOption[];
   probes: WorkerProbes;
@@ -249,6 +265,7 @@ export interface BoardApi {
   setSecret(name: SecretName, value: string): Promise<SettingsView>;
   clearSecret(name: SecretName): Promise<SettingsView>;
   probeWorkers(): Promise<WorkerProbes>;
+  testCloudConnection(): Promise<CloudAccount>;
   openWorkerTerminal(workerId: string): Promise<TerminalHandoff>;
   newTerminalSession(kind: WorkerKind): Promise<TerminalHandoff>;
   onSettingsChanged(callback: (settings: SettingsView) => void): () => void;

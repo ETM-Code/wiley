@@ -10,6 +10,7 @@ import {
 } from "../shared/contracts";
 import { assertSecretName, type SettingsService } from "./settings/settings-service";
 import { mintConfiguredVoiceToken } from "./cloud/cloud-mode";
+import { testCloudConnection } from "./cloud/cloud-account";
 import { type RuntimeController } from "./runtime-controller";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
@@ -81,6 +82,7 @@ export function registerIpc(options: {
   });
   handle(IPC.settingsSecretClear, (_event, name: unknown) => settings.clearSecret(assertSecretName(name)));
   handle(IPC.settingsProbe, () => settings.probeWorkers());
+  handle(IPC.cloudTestConnection, () => testCloudConnection(settings));
   handle(IPC.workersOpenTerminal, (_event, input: { workerId?: unknown }) => {
     if (typeof input?.workerId !== "string" || !input.workerId.trim()) throw new Error("A worker id is required");
     return pi.openWorkerTerminal(input.workerId.trim());

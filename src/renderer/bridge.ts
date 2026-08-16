@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  CloudAccount,
   BoardSnapshot,
   CanvasRequest,
   CanvasResponse,
@@ -17,6 +18,7 @@ import type {
 
 export type {
   AgentEvent,
+  CloudAccount,
   BoardSnapshot,
   CanvasRequest,
   CanvasResponse,
@@ -85,6 +87,7 @@ type PreloadApi = {
   setSecret?: (name: SecretName, value: string) => Promise<SettingsView>;
   clearSecret?: (name: SecretName) => Promise<SettingsView>;
   probeWorkers?: () => Promise<WorkerProbes>;
+  testCloudConnection?: () => Promise<CloudAccount>;
   openWorkerTerminal?: (workerId: string) => Promise<TerminalHandoff>;
   newTerminalSession?: (kind: WorkerKind) => Promise<TerminalHandoff>;
   onSettingsChanged?: (listener: (settings: SettingsView) => void) => Unsubscribe | void;
@@ -159,6 +162,7 @@ function createBrowserApi(): PreloadApi {
     clearSecret: (name) =>
       fetchJson<SettingsView>("/api/settings/secret", { method: "POST", body: JSON.stringify({ name, clear: true }) }),
     probeWorkers: () => fetchJson<WorkerProbes>("/api/settings/probe", { method: "POST", body: "{}" }),
+    testCloudConnection: () => fetchJson<CloudAccount>("/api/cloud/test", { method: "POST", body: "{}" }),
     openWorkerTerminal: (workerId) =>
       fetchJson<TerminalHandoff>("/api/workers/open-terminal", { method: "POST", body: JSON.stringify({ workerId }) }),
     newTerminalSession: (kind) =>
@@ -288,6 +292,16 @@ export const bridge = {
 
   async probeWorkers(): Promise<WorkerProbes | undefined> {
     return preload()?.probeWorkers?.();
+  },
+
+  /**
+   * The host reaches the relay, never the tab: the renderer's connect-src is
+   * pinned to OpenAI and stays that way.
+   */
+  async testCloudConnection(): Promise<CloudAccount> {
+    const test = preload()?.testCloudConnection;
+    if (!test) throw new Error("This host cannot reach a Wiley Cloud relay");
+    return test();
   },
 
   async openWorkerTerminal(workerId: string): Promise<TerminalHandoff> {

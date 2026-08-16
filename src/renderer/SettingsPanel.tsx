@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { bridge, type SettingsView, type WileySettings } from "./bridge";
+import { bridge, type CloudAccount, type SettingsView, type WileySettings } from "./bridge";
 import { VOICE_MODEL_OPTIONS, VOICE_NAME_OPTIONS } from "../main/settings/model-catalog";
 import {
   AGENT_THINKING_LEVELS,
@@ -247,6 +247,8 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<SettingsView | null>(null);
   const [draft, setDraft] = useState<WileySettings | null>(null);
   const [secretInput, setSecretInput] = useState("");
+  const [cloudTokenInput, setCloudTokenInput] = useState("");
+  const [cloudAccount, setCloudAccount] = useState<CloudAccount | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -345,7 +347,10 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   ]);
   const requiredModels = [draft.agent.model, draft.agent.subagentModel ?? draft.agent.model];
   const keyState = view.secrets.openaiApiKey;
-  const cloudReady = draft.auth.relayBaseUrl.trim().length > 0;
+  const tokenState = view.secrets.cloudSessionToken;
+  // The relay URL has to be saved, not merely typed: the host reads it from
+  // settings, so an unsaved draft would test an address it does not have.
+  const cloudReady = view.auth.relayBaseUrl.trim().length > 0;
 
   return (
     <aside className="settings-panel" aria-label="Settings">
@@ -367,7 +372,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
                 disabled={mode === "cloud" && !cloudReady}
                 onChange={() => patchAuth({ mode })}
               />
-              <span>{mode === "byok" ? "Your own API key" : "Wiley cloud (coming soon)"}</span>
+              <span>{mode === "byok" ? "Your own API key" : "Wiley Cloud (beta)"}</span>
             </label>
           ))}
         </div>
@@ -415,15 +420,71 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
             </div>
           </>
         ) : (
-          <p className="settings-hint">Account: {draft.auth.accountEmail ?? "not signed in"}</p>
+          <p className="settings-hint">
+            {cloudAccount?.email ?? draft.auth.accountEmail
+              ? `Signed in as ${cloudAccount?.email ?? draft.auth.accountEmail}${cloudAccount?.tier ? ` (${cloudAccount.tier})` : ""}.`
+              : "No account confirmed yet. Save a sign-in token and test the connection."}
+          </p>
         )}
         <TextField
           label="Relay base URL"
           value={draft.auth.relayBaseUrl}
           placeholder="https://relay.example.com"
-          hint="Hosted accounts are not available yet; set this to unlock the option."
+          hint="Bring your own relay. Wiley Cloud is a beta seam, not a hosted service you can sign up for yet."
           onChange={(relayBaseUrl) => patchAuth({ relayBaseUrl })}
         />
+        <label className="settings-field">
+          <span className="settings-field__label">Sign-in token</span>
+          <input
+            type="password"
+            value={cloudTokenInput}
+            placeholder={tokenState.stored ? "••••••••  (saved)" : "wc_…"}
+            autoComplete="off"
+            onChange={(event) => setCloudTokenInput(event.target.value)}
+          />
+          <small className="settings-hint">
+            {tokenState.stored
+              ? `A token is saved (${tokenState.backend === "safeStorage" ? "encrypted by the system keychain" : "local file"}).`
+              : "Issued by whoever runs the relay. Never sent to the browser tab."}
+          </small>
+        </label>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="status-button"
+            disabled={busy || !cloudTokenInput.trim()}
+            onClick={() => void run(async () => {
+              const next = await bridge.setSecret("cloudSessionToken", cloudTokenInput.trim());
+              setCloudTokenInput("");
+              return next;
+            }, "Sign-in token saved")}
+          >
+            Save token
+          </button>
+          <button
+            type="button"
+            className="status-button"
+            disabled={busy || !tokenState.stored}
+            onClick={() => void run(async () => {
+              setCloudAccount(null);
+              return bridge.clearSecret("cloudSessionToken");
+            }, "Sign-in token cleared")}
+          >
+            Clear token
+          </button>
+          <button
+            type="button"
+            className="status-button"
+            disabled={busy || !cloudReady || !tokenState.stored}
+            onClick={() => void run(async () => {
+              const account = await bridge.testCloudConnection();
+              setCloudAccount(account);
+              return undefined;
+            }, "Relay reachable")}
+          >
+            Test connection
+          </button>
+        </div>
       </section>
 
       <section className="settings-section">
