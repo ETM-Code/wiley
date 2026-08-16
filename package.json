@@ -20,6 +20,9 @@
     "test:e2e:worker": "node scripts/e2e-worker.mjs",
     "start": "electron-vite preview",
     "package:mac": "npm run build && electron-builder --mac dmg --arm64",
+    "package:mac:notarized": "npm run build && WILEY_NOTARIZE=1 electron-builder --mac dmg --arm64 -c.mac.notarize=true",
+    "package:mac:unsigned": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64",
+    "icon": "bash scripts/make-icon.sh",
     "sync:skill": "tsx scripts/sync-skill.ts",
     "relay:test": "npm --prefix relay test",
     "lint": "eslint .",
@@ -60,15 +63,41 @@
     "appId": "ai.eltrus.wiley",
     "productName": "Wiley",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": ".pi/skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "**/*.wasm",
+      "**/node_modules/@silvia-odwyer/photon-node/**",
+      "**/node_modules/@anthropic-ai/claude-agent-sdk/**"
+    ],
     "mac": {
-      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
       "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "identity": "EOGHAN TIMOTHY COLLINS (9D7HJAGQ8L)",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "notarize": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Wiley listens so you can talk through what to draw and build.",
+        "LSMinimumSystemVersion": "12.0"
+      },
       "target": [
         {
           "target": "dmg",
