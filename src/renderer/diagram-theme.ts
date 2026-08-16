@@ -193,16 +193,27 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
     defaultRole: "primary",
     title: "blue",
   },
+  /**
+   * A green board, but not three greens deep. The primary was green, success
+   * was lime, and the quiet register was green's own wash, so an incident
+   * board handed a reader a pale green, a green and a yellow-green and no way
+   * to tell which difference meant something. Success is the role a green
+   * belongs to, so it keeps the hue and the primary steps round to cyan: the
+   * blue-green edge of the same family, far enough that the two read as two
+   * decisions. The quiet register follows the primary, as every theme's does,
+   * which makes the third fill a value step within one hue rather than a
+   * fourth colour.
+   */
   forest: {
     roles: {
-      primary: "green",
-      success: "lime",
+      primary: "cyan",
+      success: "green",
       warning: "yellow",
       danger: "red",
       accent: "violet",
       neutral: "neutral",
     },
-    quiet: { hue: "green", weight: "soft" },
+    quiet: { hue: "cyan", weight: "soft" },
     defaultRole: "primary",
     title: "green",
   },
@@ -339,6 +350,84 @@ export function contrastRatio(a: string, b: string): number {
   const lighter = Math.max(first, second);
   const darker = Math.min(first, second);
   return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** CIE L*a*b*, D65, the space every colour distance below is measured in. */
+function toLab(color: string): { l: number; a: number; b: number } | null {
+  const value = color.trim();
+  if (!HEX.test(value)) return null;
+  let hex = value.slice(1);
+  if (hex.length === 3 || hex.length === 4) hex = [...hex.slice(0, 3)].map((c) => c + c).join("");
+  const int = Number.parseInt(hex.slice(0, 6), 16);
+  const [red, green, blue] = [(int >> 16) & 0xff, (int >> 8) & 0xff, int & 0xff].map(channel);
+  const x = (red * 0.4124 + green * 0.3576 + blue * 0.1805) / 0.95047;
+  const y = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  const z = (red * 0.0193 + green * 0.1192 + blue * 0.9505) / 1.08883;
+  const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  return { l: 116 * f(y) - 16, a: 500 * (f(x) - f(y)), b: 200 * (f(y) - f(z)) };
+}
+
+/**
+ * How much colour a fill carries: its distance from the neutral axis in Lab.
+ * Every hue in the palette sits above 20 and every gray below 4, so this
+ * cleanly says whether a fill is speaking colour at all.
+ */
+export function colorChroma(color: string): number {
+  const lab = toLab(color);
+  return lab === null ? 0 : Math.hypot(lab.a, lab.b);
+}
+
+/**
+ * CIEDE2000, the standard colour difference (CIE 142-2001). Plain Lab
+ * distance is not usable here: it calls two pale washes further apart than
+ * two grays a reader separates at a glance, because it takes no account of
+ * how much less a chroma difference is worth at high chroma. The correction
+ * terms are the whole reason this formula exists rather than Pythagoras.
+ */
+export function colorDifference(first: string, second: string): number {
+  const one = toLab(first);
+  const two = toLab(second);
+  if (one === null || two === null) return Number.POSITIVE_INFINITY;
+  const radians = Math.PI / 180;
+  const chroma1 = Math.hypot(one.a, one.b);
+  const chroma2 = Math.hypot(two.a, two.b);
+  const meanChroma = (chroma1 + chroma2) / 2;
+  const boost = 0.5 * (1 - Math.sqrt(meanChroma ** 7 / (meanChroma ** 7 + 25 ** 7)));
+  const a1 = (1 + boost) * one.a;
+  const a2 = (1 + boost) * two.a;
+  const c1 = Math.hypot(a1, one.b);
+  const c2 = Math.hypot(a2, two.b);
+  const h1 = c1 === 0 ? 0 : ((Math.atan2(one.b, a1) / radians) + 360) % 360;
+  const h2 = c2 === 0 ? 0 : ((Math.atan2(two.b, a2) / radians) + 360) % 360;
+  const deltaL = two.l - one.l;
+  const deltaC = c2 - c1;
+  const rawHue = c1 * c2 === 0 ? 0
+    : Math.abs(h2 - h1) <= 180 ? h2 - h1
+      : h2 - h1 > 180 ? h2 - h1 - 360
+        : h2 - h1 + 360;
+  const deltaH = 2 * Math.sqrt(c1 * c2) * Math.sin((rawHue * radians) / 2);
+  const meanL = (one.l + two.l) / 2;
+  const meanC = (c1 + c2) / 2;
+  const meanH = c1 * c2 === 0 ? h1 + h2
+    : Math.abs(h1 - h2) <= 180 ? (h1 + h2) / 2
+      : h1 + h2 < 360 ? (h1 + h2 + 360) / 2
+        : (h1 + h2 - 360) / 2;
+  const turn = 1
+    - 0.17 * Math.cos((meanH - 30) * radians)
+    + 0.24 * Math.cos(2 * meanH * radians)
+    + 0.32 * Math.cos((3 * meanH + 6) * radians)
+    - 0.20 * Math.cos((4 * meanH - 63) * radians);
+  const weightL = 1 + (0.015 * (meanL - 50) ** 2) / Math.sqrt(20 + (meanL - 50) ** 2);
+  const weightC = 1 + 0.045 * meanC;
+  const weightH = 1 + 0.015 * meanC * turn;
+  const rotation = -Math.sin(2 * 30 * Math.exp(-(((meanH - 275) / 25) ** 2)) * radians)
+    * 2 * Math.sqrt(meanC ** 7 / (meanC ** 7 + 25 ** 7));
+  return Math.sqrt(
+    (deltaL / weightL) ** 2
+    + (deltaC / weightC) ** 2
+    + (deltaH / weightH) ** 2
+    + rotation * (deltaC / weightC) * (deltaH / weightH),
+  );
 }
 
 /**
