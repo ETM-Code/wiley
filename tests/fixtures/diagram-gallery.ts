@@ -111,12 +111,16 @@ export const strayColorPlan: DiagramPlan = handBuiltPlan([
   dirtyNode("a", { backgroundColor: "#bada55" }),
 ]);
 
-/** Six nodes wearing five theme fills: a rainbow, not a diagram. */
+/**
+ * Ten nodes wearing nine theme fills: a rainbow, not a diagram. A colour that
+ * lands on one node and nowhere else groups nothing, and past a handful of
+ * them the reader has no palette left to read.
+ */
 export const rainbowPlan: DiagramPlan = handBuiltPlan(
-  ["#a5d8ff", "#96f2d7", "#ffec99", "#ffc9c9", "#99e9f2", "#a5d8ff"].map((fill, index) => dirtyNode(
-    `n${index}`,
-    { x: index * 300, backgroundColor: fill },
-  )),
+  [
+    "#a5d8ff", "#96f2d7", "#ffec99", "#ffc9c9", "#99e9f2",
+    "#e9ecef", "#e7f5ff", "#e6fcf5", "#fff9db", "#a5d8ff",
+  ].map((fill, index) => dirtyNode(`n${index}`, { x: index * 300, backgroundColor: fill })),
   { theme: "ocean" },
 );
 

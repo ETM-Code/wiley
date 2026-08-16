@@ -63,7 +63,7 @@ describe("diagram decision rules", () => {
 		["containers force layered", "Containers force layered"],
 		["one theme per board", "One theme per board"],
 		["roles over invented colours", "Give nodes roles instead of invented hex colours"],
-		["a tight palette", "one fill per three nodes"],
+		["a tight palette", "about one fill per two nodes, eight at the very"],
 	])("tells the root agent about %s", (_name, rule) => {
 		expect(BOARD_AGENT_SYSTEM_PROMPT).toContain(rule);
 	});
