@@ -1187,6 +1187,48 @@ describe("diagram renderer", () => {
     expect(isDiagramPreviewActive()).toBe(false);
   });
 
+  it("leaves no preview copy behind when one lands mid-commit", async () => {
+    let elements: Array<Record<string, unknown>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+    const graph = {
+      nodes: [{ id: "one", label: "One" }, { id: "two", label: "Two" }, { id: "three", label: "Three" }],
+      edges: [{ from: "one", to: "two" }, { from: "two", to: "three" }],
+    };
+
+    // The commit reveals its elements over several frames. A late preview
+    // frame arriving inside that window claims a fresh diagram id, so its
+    // copy sits on ids the commit knows nothing about.
+    const commit = handleCanvasRequest(api, {
+      id: 70,
+      op: "layout-diagram",
+      params: { __previewVersion: 401, ...graph },
+    }) as Promise<{ diagramId: string }>;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const stray = await handleCanvasRequest(api, {
+      id: -70,
+      op: "preview-diagram",
+      params: { __previewVersion: 402, ...graph },
+    }) as { diagramId: string };
+    const final = await commit;
+
+    expect(stray.diagramId).not.toBe(final.diagramId);
+    expect(elements.filter((element) => element.type === "rectangle")).toHaveLength(3);
+    expect(elements.some((element) => String(element.id).startsWith(stray.diagramId))).toBe(false);
+    await handleCanvasRequest(api, {
+      id: -71,
+      op: "clear-diagram-preview",
+      params: { __previewVersion: 403 },
+    });
+  });
+
   it("never evaluates a streaming preview", async () => {
     let elements: Array<Record<string, unknown>> = [];
     const api = {
