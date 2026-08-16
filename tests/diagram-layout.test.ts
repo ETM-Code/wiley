@@ -389,6 +389,33 @@ describe("diagram layout quality", () => {
     expect((title.y as number) + (title.height as number)).toBeLessThanOrEqual(Math.min(...nodeTops) - 40);
   });
 
+  it("centres the title on the drawing rather than on the origin", async () => {
+    // A tree hangs its apex in the middle, so a title pinned to the origin
+    // ends up in the far corner with nothing under it.
+    const plan = await planDiagramLayout({
+      title: "Product org",
+      layout: { algorithm: "tree", direction: "DOWN" },
+      nodes: [
+        { id: "root", label: "Chief executive" },
+        ...Array.from({ length: 3 }, (_, index) => ({ id: `lead${index}`, label: `Lead ${index + 1}` })),
+        ...Array.from({ length: 6 }, (_, index) => ({ id: `team${index}`, label: `Team ${index + 1}` })),
+      ],
+      edges: [
+        ...Array.from({ length: 3 }, (_, index) => ({ from: "root", to: `lead${index}` })),
+        ...Array.from({ length: 6 }, (_, index) => ({ from: `lead${Math.floor(index / 2)}`, to: `team${index}` })),
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const title = plan.skeletons.find(
+      (skeleton) => plan.roles.get(String(skeleton.id))?.role === "title",
+    )!;
+    const nodes = plan.skeletons.filter((skeleton) => plan.roles.get(String(skeleton.id))?.role === "node");
+    const left = Math.min(...nodes.map((skeleton) => skeleton.x as number));
+    const right = Math.max(...nodes.map((skeleton) => (skeleton.x as number) + (skeleton.width as number)));
+    const titleMiddle = (title.x as number) + (title.width as number) / 2;
+    expect(Math.abs(titleMiddle - (left + right) / 2)).toBeLessThanOrEqual(MODEL_GRID_SIZE);
+    expect(title.x as number).toBeGreaterThan(left);
+  });
+
   it("measures with the real Excalifont, not the fallback estimate", () => {
     const wide = measureText("WWWW", 20).width;
     const narrow = measureText("iiii", 20).width;
