@@ -376,6 +376,51 @@ describe("diagram renderer", () => {
     }
   });
 
+  it("routes a connection around a shape standing between the two ends", async () => {
+    // The exact shape of a live failure: login and dashbrd sit either side of
+    // auth svc, and the straight perimeter-to-perimeter line runs through it.
+    let elements: Array<Record<string, unknown>> = [
+      { id: "login", type: "rectangle", x: 100, y: 120, width: 190, height: 90, version: 1 },
+      { id: "auth", type: "rectangle", x: 360, y: 95, width: 170, height: 100, version: 1 },
+      { id: "dash", type: "rectangle", x: 620, y: 140, width: 200, height: 95, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    await handleCanvasRequest(api, {
+      id: 62,
+      op: "connect-elements",
+      params: { connections: [{ from: "login", to: "dash" }] },
+    });
+
+    const arrow = elements.find((element) => element.type === "arrow")!;
+    const originX = arrow.x as number;
+    const originY = arrow.y as number;
+    const absolute = (arrow.points as Array<[number, number]>)
+      .map(([dx, dy]) => ({ x: originX + dx, y: originY + dy }));
+
+    const blocker = { x: 360, y: 95, width: 170, height: 100 };
+    const crosses = absolute.slice(1).some((point, index) => {
+      const previous = absolute[index];
+      // Sample the segment densely rather than trusting its endpoints alone.
+      for (let step = 0; step <= 40; step++) {
+        const x = previous.x + (point.x - previous.x) * (step / 40);
+        const y = previous.y + (point.y - previous.y) * (step / 40);
+        if (x > blocker.x + 1 && x < blocker.x + blocker.width - 1
+          && y > blocker.y + 1 && y < blocker.y + blocker.height - 1) return true;
+      }
+      return false;
+    });
+    expect(crosses).toBe(false);
+  });
+
   it("connects existing human-drawn elements with bound arrows", async () => {
     let elements: Array<Record<string, any>> = [
       { id: "magic", type: "rectangle", x: 0, y: 400, width: 300, height: 90, version: 1 },
