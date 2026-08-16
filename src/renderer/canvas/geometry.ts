@@ -115,7 +115,9 @@ function boundsOverlap(a: PlanBounds, b: PlanBounds): boolean {
 const MAX_CLEARING_PASSES = 4;
 
 /**
- * How far content has to move to clear everything in its way.
+ * How far content has to move to clear everything in its way. `undefined`
+ * means no shift gets it clear, which is a different answer from `{0, 0}`:
+ * that one means it was clear where it already stood.
  *
  * It slides along one axis, in the direction it was placed: a diagram asked
  * to sit left of an anchor moves further left rather than back across the
@@ -138,7 +140,7 @@ export function shiftClearOf(
       maxY: content.maxY + dy,
     };
     const hit = avoid.filter((box) => boundsOverlap(here, box));
-    if (hit.length === 0) return dx === 0 && dy === 0 ? undefined : { dx, dy };
+    if (hit.length === 0) return { dx, dy };
     const distance = direction === "right"
       ? Math.max(...hit.map((box) => box.maxX - here.minX))
       : direction === "left"

@@ -21,8 +21,16 @@ describe("shiftClearOf directions", () => {
     expect(shift.dx).toBeGreaterThan(360);
   });
 
-  it("says nothing when nothing is in the way", () => {
+  it("reads zero when nothing is in the way, and nothing when nothing works", () => {
     expect(shiftClearOf(content, [{ minX: 900, minY: 900, maxX: 950, maxY: 950 }], "right"))
-      .toBeUndefined();
+      .toEqual({ dx: 0, dy: 0 });
+    // Five boxes in a row: four passes is not enough to get past all of them.
+    const wall = Array.from({ length: 5 }, (_, index) => ({
+      minX: index * 400,
+      minY: 0,
+      maxX: index * 400 + 380,
+      maxY: 100,
+    }));
+    expect(shiftClearOf(content, wall, "right")).toBeUndefined();
   });
 });

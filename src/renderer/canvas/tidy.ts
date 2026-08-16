@@ -1,14 +1,18 @@
 /**
  * Tidying the person's own sketch.
  *
- * This is the one operation allowed to move a human element, and it exists
- * only because someone asked for it out loud. Every element keeps its id, its
- * colours, and its text; nothing is deleted and nothing is replaced by an
- * agent-drawn copy. What changes is where things sit: sizes and positions
- * snap to the grid, shapes line up into the rows and columns they were
- * already roughly in, spacing evens out, captions ride the shapes they name,
- * and the arrows get re-routed and given the real bindings the person's
- * freehand ones never had.
+ * The diagram machinery treats a human element as a fixed obstacle everywhere
+ * else; this is the one place inside it that moves one, and only because
+ * someone asked out loud. (applyPatch moves a human element too, but only the
+ * one the user just pointed at, which is a different thing from rearranging
+ * somebody's drawing on the agent's own initiative.)
+ *
+ * Every element keeps its id, its colours, and its text; nothing is deleted
+ * and nothing is replaced by an agent-drawn copy. What changes is where
+ * things sit: sizes and positions snap to the grid, shapes line up into the
+ * rows and columns they were already roughly in, spacing evens out, captions
+ * ride the shapes they name, and the arrows get re-routed and given the real
+ * bindings the person's freehand ones never had.
  *
  * `align` keeps the topology the person drew and straightens it. `relayout`
  * hands the inferred graph to ELK and takes the arrangement it comes back
@@ -86,6 +90,21 @@ function snapUp(value: number): number {
   return Math.max(MODEL_GRID_SIZE, Math.ceil(value / MODEL_GRID_SIZE) * MODEL_GRID_SIZE);
 }
 
+/** Types whose proportions carry meaning and must not be snapped apart. */
+const FIXED_RATIO_TYPES = new Set(["image", "embeddable", "iframe"]);
+
+/**
+ * A shape's tidied size. A drawn box rounds up onto the grid; a screenshot or
+ * an embed keeps the exact size it has, because snapping its width and height
+ * to separate multiples would stretch the picture inside it.
+ */
+function tidiedSize(node: HumanNode): { width: number; height: number } {
+  if (FIXED_RATIO_TYPES.has(node.shape)) {
+    return { width: node.bounds.width, height: node.bounds.height };
+  }
+  return { width: snapUp(node.bounds.width), height: snapUp(node.bounds.height) };
+}
+
 function median(values: readonly number[]): number | undefined {
   if (values.length === 0) return undefined;
   const sorted = [...values].sort((a, b) => a - b);
@@ -138,6 +157,31 @@ export function tidyTargets(
       return Math.hypot(dx, dy) <= radius;
     })
     .map((element) => element.id);
+}
+
+/**
+ * Widens a named selection to everything that has to travel with it.
+ *
+ * A request names shapes, because shapes are what the canvas context lists.
+ * Moving them without their connectors would leave the person's arrows lying
+ * where the boxes used to be, still claiming bindings to shapes they no
+ * longer reach, so every connector with an end inside the selection comes
+ * too, along with the captions riding all of it.
+ */
+export function expandTidyScope(graph: HumanGraph, targets: readonly string[]): string[] {
+  const scope = new Set(targets);
+  for (const node of graph.nodes) {
+    if (!scope.has(node.elementId) || !node.labelElementId) continue;
+    scope.add(node.labelElementId);
+  }
+  for (const edge of graph.edges) {
+    const touches = (edge.fromElementId && scope.has(edge.fromElementId))
+      || (edge.toElementId && scope.has(edge.toElementId));
+    if (!touches) continue;
+    scope.add(edge.elementId);
+    if (edge.labelElementId) scope.add(edge.labelElementId);
+  }
+  return [...scope];
 }
 
 /**
@@ -226,10 +270,7 @@ export function wrapperBoxes(
 
 /** The straightened grid: same rough topology, exact rows, even gaps. */
 export function alignBoxes(nodes: readonly HumanNode[]): Map<string, Geometry> {
-  const sizes = new Map(nodes.map((node) => [node.elementId, {
-    width: snapUp(node.bounds.width),
-    height: snapUp(node.bounds.height),
-  }]));
+  const sizes = new Map(nodes.map((node) => [node.elementId, tidiedSize(node)]));
   const heights = nodes.map((node) => node.bounds.height);
   const tolerance = Math.max(
     MIN_CLUSTER_TOLERANCE,
@@ -249,10 +290,29 @@ export function alignBoxes(nodes: readonly HumanNode[]): Map<string, Geometry> {
   columns.forEach((column, index) => column.forEach((id) => columnOf.set(id, index)));
 
   const byId = new Map(nodes.map((node) => [node.elementId, node]));
-  const extent = (groups: string[][], pick: (node: HumanNode) => number) => groups
-    .map((group) => Math.max(...group.map((id) => pick(byId.get(id)!))));
-  const columnWidths = extent(columns, (node) => snapUp(node.bounds.width));
-  const rowHeights = extent(rows, (node) => snapUp(node.bounds.height));
+  // Rows and columns are clustered independently, so two shapes the person
+  // drew nearly on top of each other fall in the same row *and* the same
+  // column. Sharing a cell would put them at identical coordinates, which is
+  // an overlap the evaluator rightly refuses. Each row therefore hands out
+  // its own columns left to right, never reusing one it has already given.
+  const columnFor = new Map<string, number>();
+  for (const row of rows) {
+    let previous = -1;
+    const members = [...row].sort((a, b) => byId.get(a)!.bounds.x - byId.get(b)!.bounds.x
+      || (a < b ? -1 : a > b ? 1 : 0));
+    for (const id of members) {
+      const column = Math.max(columnOf.get(id)!, previous + 1);
+      columnFor.set(id, column);
+      previous = column;
+    }
+  }
+  const columnCount = Math.max(0, ...[...columnFor.values()].map((column) => column + 1));
+
+  const widest = (column: number) => Math.max(0, ...nodes
+    .filter((node) => columnFor.get(node.elementId) === column)
+    .map((node) => sizes.get(node.elementId)!.width));
+  const columnWidths = Array.from({ length: columnCount }, (_, column) => widest(column));
+  const rowHeights = rows.map((row) => Math.max(...row.map((id) => sizes.get(id)!.height)));
 
   const columnGap = gapOf(columns.slice(1).map((group, index) => {
     const left = Math.max(...columns[index].map((id) => byId.get(id)!.bounds.x + byId.get(id)!.bounds.width));
@@ -282,7 +342,7 @@ export function alignBoxes(nodes: readonly HumanNode[]): Map<string, Geometry> {
   for (const node of nodes) {
     const size = sizes.get(node.elementId)!;
     boxes.set(node.elementId, {
-      x: columnX[columnOf.get(node.elementId)!],
+      x: columnX[columnFor.get(node.elementId)!],
       y: rowY[rowOf.get(node.elementId)!],
       width: size.width,
       height: size.height,
@@ -300,7 +360,7 @@ async function relayoutBoxes(
   const graphNodes: GraphNode[] = nodes.map((node) => ({
     id: node.elementId,
     label: node.label ?? node.elementId,
-    size: { width: snapUp(node.bounds.width), height: snapUp(node.bounds.height) },
+    size: tidiedSize(node),
   }));
   const graphEdges: GraphEdge[] = edges
     .filter((edge) => edge.fromElementId && edge.toElementId
@@ -319,8 +379,7 @@ async function relayoutBoxes(
     boxes.set(node.elementId, {
       x: snapModelCoordinate(skeleton.x),
       y: snapModelCoordinate(skeleton.y),
-      width: snapUp(node.bounds.width),
-      height: snapUp(node.bounds.height),
+      ...tidiedSize(node),
     });
   }
   return boxes;
@@ -618,10 +677,13 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
   const params = (value ?? {}) as TidyParams;
   const scene = [...api.getSceneElements()];
   const sketch = scene as unknown as SketchElement[];
-  const targets = tidyTargets(sketch, params);
-  if (targets.length === 0) {
+  const named = tidyTargets(sketch, params);
+  if (named.length === 0) {
     throw new Error("tidy-diagram found nothing of the user's to tidy");
   }
+  // Read the whole sketch first, so naming a handful of shapes still brings
+  // the arrows between them along instead of stranding them.
+  const targets = expandTidyScope(inferHumanGraph(sketch), named);
   const graph = inferHumanGraph(sketch, { elementIds: targets });
   if (graph.nodes.length === 0) {
     throw new Error("tidy-diagram found no shapes in that part of the board");
@@ -678,7 +740,7 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
     })),
     "below",
   );
-  if (clearing) {
+  if (clearing && (clearing.dx !== 0 || clearing.dy !== 0)) {
     for (const box of [...placed.values(), ...wrapped.values()]) {
       box.x += clearing.dx;
       box.y += clearing.dy;
