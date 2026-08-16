@@ -616,6 +616,52 @@ describe("update-diagram reaching into the human's sketch", () => {
     expect(arrow).toBeDefined();
   });
 
+  it("does not stack a second arrow when the same bare id is asked for twice", async () => {
+    const { target, drawn } = await boardWithSketch();
+    const params = {
+      diagram: drawn.diagramId,
+      mode: "merge",
+      edges: [{ from: "deliver", to: "sketch-login" }],
+    };
+    await handleCanvasRequest(target.api, { id: 30, op: "update-diagram", params });
+    const after = await handleCanvasRequest(target.api, {
+      id: 31,
+      op: "update-diagram",
+      params,
+    }) as { counts: { added: number } };
+
+    expect(after.counts.added).toBe(0);
+    const bridges = target.elements().filter(
+      (element) => (element.endBinding as { elementId?: string } | undefined)?.elementId === "sketch-login",
+    );
+    expect(bridges).toHaveLength(1);
+    expect((target.elements().find((element) => element.id === "sketch-login")!
+      .boundElements as unknown[]).length).toBe(1);
+  });
+
+  it("checks an edge into the sketch as strictly as any other", async () => {
+    const { target, drawn } = await boardWithSketch();
+    await expect(handleCanvasRequest(target.api, {
+      id: 32,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "typo", to: "human:sketch-login" }],
+      },
+    })).rejects.toThrow(/unknown node/);
+
+    await expect(handleCanvasRequest(target.api, {
+      id: 33,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "deliver", to: "human:sketch-login", style: "zigzag" }],
+      },
+    })).rejects.toThrow(/style/);
+  });
+
   it("refuses an id with no element of the person's behind it", async () => {
     const { target, drawn } = await boardWithSketch();
     await expect(handleCanvasRequest(target.api, {
@@ -656,24 +702,31 @@ describe("keeping the agent's drawing clear of the person's", () => {
     expect(diagramDefects(quality)).toEqual([]);
   });
 
-  it("fails a route driven through the person's box", async () => {
+  it("treats a route driven through the person's box as a placement to redo", async () => {
     const plan = await flowPlan();
     const accept = boxOf(plan, "accept");
     const queue = boxOf(plan, "queue");
+    // Sits in the channel between two nodes, which the layout engine had no
+    // way of knowing about: nothing about the diagram itself is wrong.
     const gap = {
       x: accept.x + accept.width + 10,
       y: accept.y,
       width: Math.max(20, queue.x - accept.x - accept.width - 20),
       height: accept.height,
     };
-    expect(() => assertDiagramQuality(plan, [{ id: "theirs", bounds: gap, kind: "shape" }]))
-      .toThrow(/quality check failed/);
+    const obstacles = [{ id: "theirs", bounds: gap, kind: "shape" as const }];
+    const quality = assertDiagramQuality(plan, obstacles)!;
+    expect(diagramDefects(quality)).toEqual([]);
+    expect(placementCollisions(quality).some((finding) => finding.startsWith("wd-clear-e-"))).toBe(true);
+
+    const { quality: retried } = assertQualityClearOfHuman(plan, obstacles, "right");
+    expect(placementCollisions(retried!)).toEqual([]);
   });
 
   it("shifts once to get out of the way and reports the move", async () => {
     const plan = await flowPlan();
     const obstacles = [{ id: "theirs", bounds: boxOf(plan, "queue"), kind: "shape" as const }];
-    const { quality, shifted } = assertQualityClearOfHuman(plan, obstacles, true);
+    const { quality, shifted } = assertQualityClearOfHuman(plan, obstacles, "right");
     expect(shifted?.dx).toBeGreaterThan(0);
     expect(shifted?.dy).toBe(0);
     expect(placementCollisions(quality!)).toEqual([]);
@@ -695,7 +748,34 @@ describe("keeping the agent's drawing clear of the person's", () => {
     expect(() => assertQualityClearOfHuman(plan, [
       { id: "theirs", bounds: first, kind: "shape" },
       { id: "their-note", bounds: landing, kind: "text" },
-    ], true)).toThrow(/sit on the user's own drawing/);
+    ], "right")).toThrow(/sit on the user's own drawing/);
+  });
+
+  it("slides past a stray doodle in the lane instead of failing the draw", async () => {
+    // One rectangle sitting where the diagram is about to land, in the middle
+    // of a channel its routes want. The layout engine never saw it.
+    const anchor: SceneRecord = { id: "anchor", type: "rectangle", x: 0, y: 0, width: 200, height: 120 };
+    const stray: SceneRecord = { id: "stray", type: "rectangle", x: 620, y: 40, width: 80, height: 40 };
+    const target = board([anchor, stray]);
+    await drawFlow(target, { ...flow, anchor: "anchor", anchorDirection: "right" });
+
+    const drawn = target.elements().filter((element) => element.customData?.wiley);
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const element of drawn) {
+      const hits = element.x < stray.x + stray.width && stray.x < element.x + element.width
+        && element.y < stray.y + stray.height && stray.y < element.y + element.height;
+      expect(hits).toBe(false);
+    }
+    expect(target.elements().find((element) => element.id === "stray"))
+      .toMatchObject({ x: 620, y: 40 });
+  });
+
+  it("slides the other way when it was asked to sit on the other side", async () => {
+    const anchor: SceneRecord = { id: "anchor", type: "rectangle", x: 0, y: 0, width: 200, height: 120 };
+    const target = board([anchor]);
+    await drawFlow(target, { ...flow, anchor: "anchor", anchorDirection: "left" });
+    const drawn = target.elements().filter((element) => element.customData?.wiley);
+    expect(Math.max(...drawn.map((element) => element.x + element.width))).toBeLessThanOrEqual(0);
   });
 
   it("places a new diagram beside a hand-drawn box without touching it", async () => {
