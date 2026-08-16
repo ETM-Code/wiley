@@ -1,5 +1,19 @@
 import { readDiagramStamp, type DiagramThemeName } from "../../shared/diagram-stamp";
+import {
+  humanGraphPayload,
+  inferHumanGraph,
+  type SketchElement,
+} from "./human-graph";
 import type { SceneElement } from "./types";
+
+/**
+ * The person's own sketch, read as a graph. Handing this back with every
+ * scene read is what lets the agent connect to a hand-drawn box by id without
+ * first working out from raw geometry which text belongs to which rectangle.
+ */
+export function humanGraphOf(elements: readonly SceneElement[]) {
+  return humanGraphPayload(inferHumanGraph(elements as unknown as SketchElement[]));
+}
 
 export function uint8ToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -120,5 +134,6 @@ export function sceneSummary(elements: readonly SceneElement[]) {
       };
     }),
     diagrams: diagramIndex(elements),
+    humanGraph: humanGraphOf(elements),
   };
 }

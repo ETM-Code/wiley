@@ -1,5 +1,13 @@
 import type { BoardSnapshot } from "../../shared/contracts";
 import { readDiagramStamp } from "../../shared/diagram-stamp";
+// Pure, and free of both Node and Excalidraw, so the process that describes
+// the board and the process that draws on it read the sketch identically.
+import {
+  formatHumanGraph,
+  humanGraphPayload,
+  inferHumanGraph,
+  type SketchElement,
+} from "../../renderer/canvas/human-graph";
 
 /** Above this the board context carries a sample plus a truncation flag. */
 const BOARD_CONTEXT_ELEMENT_LIMIT = 100;
@@ -38,6 +46,15 @@ export function formatDiagramListing(diagrams: readonly BoardDiagram[]): string 
   }).join("\n");
 }
 
+/** The person's own boxes and arrows, read as a graph the agent can name. */
+export function boardHumanGraph(board: BoardSnapshot) {
+  return inferHumanGraph(board.elements as unknown as SketchElement[]);
+}
+
+export function formatBoardHumanGraph(board: BoardSnapshot): string {
+  return formatHumanGraph(boardHumanGraph(board));
+}
+
 export function buildBoardContext(board: BoardSnapshot) {
   return {
     revision: board.revision,
@@ -53,6 +70,7 @@ export function buildBoardContext(board: BoardSnapshot) {
       text: element.text,
     })),
     diagrams: boardDiagrams(board),
+    humanGraph: humanGraphPayload(boardHumanGraph(board)),
     truncated: board.elements.length > BOARD_CONTEXT_ELEMENT_LIMIT,
   };
 }
@@ -76,6 +94,7 @@ export function buildTaskMessage(input: {
     JSON.stringify(buildBoardContext(input.board)),
     "<diagrams>",
     formatDiagramListing(boardDiagrams(input.board)),
+    formatBoardHumanGraph(input.board),
     "</diagrams>",
     "</current_canvas_context>",
   ].join("\n");

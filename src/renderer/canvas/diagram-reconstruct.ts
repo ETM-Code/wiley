@@ -17,6 +17,8 @@ import type {
   GraphShape,
   LayoutParams,
 } from "../diagram-layout";
+import type { HumanGraph } from "./human-graph";
+import { humanGraphNode, humanNodeId } from "./human-merge";
 import type { SceneElement } from "./types";
 
 type Labelled = SceneElement & {
@@ -66,9 +68,20 @@ function boundText(elements: readonly SceneElement[]): Map<string, string> {
   return text;
 }
 
+export type ReconstructOptions = {
+  /**
+   * The reading of the person's own sketch. With it, an arrow this diagram
+   * already runs into the sketch reconstructs as an edge to a `human:` node
+   * carrying that element's real id, instead of being dropped for having an
+   * endpoint the stamps cannot explain.
+   */
+  human?: HumanGraph;
+};
+
 export function reconstructSpec(
   elements: readonly SceneElement[],
   diagramId: string,
+  options: ReconstructOptions = {},
 ): LayoutParams {
   const mine = diagramElements(elements, diagramId);
   const labels = boundText(elements);
@@ -115,12 +128,25 @@ export function reconstructSpec(
     });
   }
 
+  const humanByElementId = new Map((options.human?.nodes ?? []).map((node) => [node.elementId, node]));
+  const claimedHuman = new Map<string, GraphNode>();
+  const resolve = (elementId: string | undefined): string | undefined => {
+    if (!elementId) return undefined;
+    const owned = nodeKeyByElementId.get(elementId);
+    if (owned) return owned;
+    const human = humanByElementId.get(elementId);
+    if (!human) return undefined;
+    const id = humanNodeId(elementId);
+    claimedHuman.set(id, humanGraphNode(human));
+    return id;
+  };
+
   const edges: GraphEdge[] = [];
   for (const element of mine as Labelled[]) {
     const stamp = readDiagramStamp(element)!;
     if (stamp.role !== "edge") continue;
-    const from = nodeKeyByElementId.get(element.startBinding?.elementId ?? "");
-    const to = nodeKeyByElementId.get(element.endBinding?.elementId ?? "");
+    const from = resolve(element.startBinding?.elementId);
+    const to = resolve(element.endBinding?.elementId);
     // A connector whose ends were pulled off their shapes has no graph meaning
     // left; dropping it beats inventing an endpoint.
     if (!from || !to) continue;
@@ -129,7 +155,7 @@ export function reconstructSpec(
   }
 
   return {
-    nodes,
+    nodes: [...nodes, ...claimedHuman.values()],
     edges,
     ...(containers.length ? { containers } : {}),
     ...(title ? { title } : {}),
