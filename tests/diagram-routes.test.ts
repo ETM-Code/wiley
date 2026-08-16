@@ -220,6 +220,37 @@ describe("planRoutes", () => {
     expect(route.points[0]).toEqual({ x: 160, y: 40 });
   });
 
+  it("turns a flow connector square onto the sides the caller named", () => {
+    const tree = new Map([["p", box("p", 0, 0)], ["c", box("c", 600, 300)]]);
+    const [route] = planRoutes(tree, [
+      { id: "e", from: "p", to: "c", sides: { from: "bottom", to: "top" } },
+    ]);
+    const points = route.points;
+    expect(points).toHaveLength(4);
+    // Leaves straight down out of the parent and arrives straight down into
+    // the child, so neither arrowhead reads as aimed at a corner.
+    expect(points[1].x).toBe(points[0].x);
+    expect(points[2].x).toBe(points[3].x);
+    expect(points[1].y).toBe(points[2].y);
+    expect(points[0]).toEqual({ x: 80, y: 80 });
+    expect(points[3]).toEqual({ x: 680, y: 300 });
+  });
+
+  it("falls back to a bend when the turned connector is blocked", () => {
+    const tree = new Map([
+      ["p", box("p", 0, 0)],
+      ["c", box("c", 600, 300)],
+      // Sits on the turned connector's cross run and nowhere near the direct
+      // line between the two ports.
+      ["wall", box("wall", 100, 170, 120, 40)],
+    ]);
+    const [route] = planRoutes(tree, [
+      { id: "e", from: "p", to: "c", sides: { from: "bottom", to: "top" } },
+    ]);
+    expect(route.points).toHaveLength(2);
+    expect(countBlockers(route.points, route.rounded, [tree.get("wall")!])).toBe(0);
+  });
+
   it("produces the same routes for the same graph every time", () => {
     const edges = [
       { id: "e1", from: "a", to: "b" },
