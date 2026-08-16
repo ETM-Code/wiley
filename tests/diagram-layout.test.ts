@@ -388,6 +388,21 @@ describe("diagram layout quality", () => {
     const fix = node("fix");
     expect(landing("page", "fix").y).toBeCloseTo(fix.y as number, 5);
     expect(landing("sev", "fix").x).toBeCloseTo((fix.x as number) + (fix.width as number), 5);
+    // Two runs sharing a margin get a lane each, longest outermost. Sharing
+    // one line makes the repair loop give up on the margin altogether, and
+    // what it gives back is an elbow stubbing out of a diamond's point.
+    const laneOf = (from: string, to: string) => absoluteArrowPoints(arrowTo(from, to))[1].x;
+    expect(laneOf("post", "triage")).toBeLessThan(laneOf("verify", "fix"));
+    for (const [from, to] of [["verify", "fix"], ["post", "triage"]] as const) {
+      const points = absoluteArrowPoints(arrowTo(from, to));
+      expect(points).toHaveLength(4);
+      // Every run in the margin leaves the board before it turns: a bend
+      // inside the box it just left is the stub a reader picks out first.
+      const box = node(from);
+      for (const point of points.slice(1, -1)) {
+        expect(point.x <= (box.x as number) || point.x >= (box.x as number) + (box.width as number)).toBe(true);
+      }
+    }
     const report = evaluateDiagramPlan(plan);
     expect(report.edgesThroughNodes).toEqual([]);
     expect(report.nodeOverlaps).toEqual([]);
