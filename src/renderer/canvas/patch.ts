@@ -2,6 +2,14 @@ import { CaptureUpdateAction, convertToExcalidrawElements } from "@excalidraw/ex
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { finiteNumber as finite, measureText, wrapLabel } from "../diagram-layout";
+import {
+  MAX_ROUTE_REPAIR_ITERATIONS,
+  planRoutes,
+  routeDefects,
+  type Box,
+  type Point,
+  type RouteRequest,
+} from "../diagram-routes";
 import { asRecord, gridResult, perimeterPoint, snapModelGeometry } from "./geometry";
 import type { JsonObject, SceneElement } from "./types";
 
@@ -82,10 +90,65 @@ type ConnectParams = {
   connections: Array<{ from: string; to: string; label?: string; bidirectional?: boolean }>;
 };
 
+/** Shapes a route has to get around. Text and connectors are not obstacles. */
+const ROUTE_BLOCKING_TYPES = new Set([
+  "rectangle", "diamond", "ellipse", "image", "embeddable", "iframe", "frame",
+]);
+
+/**
+ * Routes each connection around everything else on the board, the same way a
+ * diagram's own edges and a tidied sketch's arrows are routed. A straight line
+ * between two perimeters is only correct when nothing stands between them, and
+ * on a real board something usually does.
+ */
+function routeAround(
+  scene: readonly PatchableElement[],
+  requests: readonly RouteRequest[],
+): Point[][] {
+  const nodes = new Map<string, Box>();
+  for (const element of scene) {
+    if (!ROUTE_BLOCKING_TYPES.has(element.type)) continue;
+    const box = {
+      id: element.id,
+      x: finite(element.x),
+      y: finite(element.y),
+      width: finite(element.width),
+      height: finite(element.height),
+    };
+    if (box.width > 0 && box.height > 0) nodes.set(element.id, box);
+  }
+  const attachments = new Map(requests.map((request) => [
+    request.id,
+    { from: request.from, to: request.to },
+  ]));
+  const minSteps = new Map<string, number>();
+  let routes = planRoutes(nodes, requests, { minSteps });
+  for (let round = 0; round < MAX_ROUTE_REPAIR_ITERATIONS; round++) {
+    const guilty = routeDefects(nodes, routes, attachments);
+    if (guilty.size === 0) break;
+    for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
+    routes = planRoutes(nodes, requests, { minSteps });
+  }
+  return requests.map((request, index) => {
+    const points = routes[index]?.points;
+    if (points && points.length >= 2) return points;
+    // Nothing routable (a zero-sized endpoint, say): fall back to the straight
+    // perimeter-to-perimeter line rather than emitting no arrow at all.
+    const from = nodes.get(request.from);
+    const to = nodes.get(request.to);
+    if (!from || !to) return [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+    return [
+      perimeterPoint(from, { x: to.x + to.width / 2, y: to.y + to.height / 2 }),
+      perimeterPoint(to, { x: from.x + from.width / 2, y: from.y + from.height / 2 }),
+    ];
+  });
+}
+
 /**
  * Connects existing elements (including human-drawn ones) with bound arrows.
- * The route is computed here, perimeter to perimeter, and the bindings are
- * written explicitly so the arrows follow the shapes when either end moves.
+ * The route is computed here, around whatever else is on the board, and the
+ * bindings are written explicitly so the arrows follow the shapes when either
+ * end moves.
  */
 export function connectElements(api: ExcalidrawImperativeAPI, value: unknown) {
   const params = value as ConnectParams;
@@ -94,7 +157,8 @@ export function connectElements(api: ExcalidrawImperativeAPI, value: unknown) {
   }
   const scene = api.getSceneElements() as readonly PatchableElement[];
   const byId = new Map(scene.map((element) => [element.id, element]));
-  const skeletons = params.connections.map((connection, index) => {
+  const requests: RouteRequest[] = [];
+  for (const [index, connection] of params.connections.entries()) {
     const from = byId.get(connection.from);
     const to = byId.get(connection.to);
     if (!from) throw new Error(`connect-elements: unknown element id ${connection.from}`);
@@ -102,16 +166,23 @@ export function connectElements(api: ExcalidrawImperativeAPI, value: unknown) {
     if (connection.from === connection.to) {
       throw new Error("connect-elements cannot connect an element to itself");
     }
-    const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
-    const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
-    const startPoint = perimeterPoint(from, toCenter);
-    const endPoint = perimeterPoint(to, fromCenter);
-    return {
+    requests.push({
       id: `agent-connect-${index}-${crypto.randomUUID().slice(0, 8)}`,
+      from: connection.from,
+      to: connection.to,
+    });
+  }
+
+  const routes = routeAround(scene, requests);
+  const skeletons = params.connections.map((connection, index) => {
+    const points = routes[index];
+    const origin = points[0];
+    return {
+      id: requests[index].id,
       type: "arrow",
-      x: startPoint.x,
-      y: startPoint.y,
-      points: [[0, 0], [endPoint.x - startPoint.x, endPoint.y - startPoint.y]],
+      x: origin.x,
+      y: origin.y,
+      points: points.map((point) => [point.x - origin.x, point.y - origin.y]),
       endArrowhead: "arrow",
       ...(connection.bidirectional ? { startArrowhead: "arrow" } : {}),
       strokeColor: "#1e1e1e",
