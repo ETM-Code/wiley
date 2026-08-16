@@ -298,3 +298,18 @@ describe("human graph reporting", () => {
     expect(payload.unattached).toEqual(["scribble"]);
   });
 });
+
+describe("payload size", () => {
+  it("stops listing a sketch that has stopped being worth reading", () => {
+    const many: SketchElement[] = [];
+    for (let index = 0; index < 80; index++) many.push(box(`b${index}`, index * 200, 0));
+    const payload = humanGraphPayload(inferHumanGraph(many));
+    expect(payload.nodes).toHaveLength(60);
+    expect(payload.truncated).toBe(true);
+  });
+
+  it("says nothing about truncation when there is none", () => {
+    const payload = humanGraphPayload(inferHumanGraph([box("a", 0, 0)]));
+    expect(payload.truncated).toBeUndefined();
+  });
+});

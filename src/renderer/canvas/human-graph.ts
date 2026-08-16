@@ -342,12 +342,22 @@ export function looseEdgeCount(graph: HumanGraph): number {
 }
 
 /**
+ * Above this the sketch stops being something to reason about and starts
+ * being a wall of ids on every single turn.
+ */
+export const HUMAN_GRAPH_PAYLOAD_LIMIT = 60;
+
+/**
  * The shape the agent's context carries: enough to name a human element in a
  * request without spending a tool call reading the raw scene.
  */
-export function humanGraphPayload(graph: HumanGraph) {
+export function humanGraphPayload(graph: HumanGraph, limit = HUMAN_GRAPH_PAYLOAD_LIMIT) {
+  const truncated = graph.nodes.length > limit
+    || graph.edges.length > limit
+    || graph.unattached.length > limit;
   return {
-    nodes: graph.nodes.map((node) => ({
+    ...(truncated ? { truncated: true } : {}),
+    nodes: graph.nodes.slice(0, limit).map((node) => ({
       id: node.elementId,
       shape: node.shape,
       ...(node.label ? { label: node.label } : {}),
@@ -358,13 +368,13 @@ export function humanGraphPayload(graph: HumanGraph) {
         h: Math.round(node.bounds.height),
       },
     })),
-    edges: graph.edges.map((edge) => ({
+    edges: graph.edges.slice(0, limit).map((edge) => ({
       id: edge.elementId,
       from: edge.fromElementId ?? null,
       to: edge.toElementId ?? null,
       ...(edge.label ? { label: edge.label } : {}),
     })),
-    unattached: graph.unattached,
+    unattached: graph.unattached.slice(0, limit),
   };
 }
 
