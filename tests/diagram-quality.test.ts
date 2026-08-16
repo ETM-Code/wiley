@@ -279,6 +279,24 @@ describe("bound edge labels", () => {
     expect(evaluateDiagramPlan(plan).labelCollisions).toEqual(["wire:label x crosser"]);
   });
 
+  it("flags two labels crowded together, not only ones that overlap", () => {
+    const caption = (id: string, x: number, y: number): PlanPart => ({
+      role: "edgeLabel",
+      key: id,
+      skeleton: { id, type: "text", x, y, width: 60, height: 24, text: id },
+    });
+    // Twenty pixels apart: two separate captions.
+    expect(evaluateDiagramPlan(handBuiltPlan([
+      caption("near", 0, 0),
+      caption("far", 0, 44),
+    ])).labelCollisions).toEqual([]);
+    // Six pixels apart: one smudge of text, though neither box touches.
+    expect(evaluateDiagramPlan(handBuiltPlan([
+      caption("near", 0, 0),
+      caption("far", 0, 30),
+    ])).labelCollisions).toEqual(["far x near"]);
+  });
+
   it("reads the converter's own measurement instead of predicting one", () => {
     const plan = labelled([[160, 40], [600, 40]]);
     expect(evaluateDiagramPlan(plan).labelCollisions).toEqual([]);
