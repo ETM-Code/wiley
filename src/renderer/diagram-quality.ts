@@ -95,6 +95,19 @@ function arrowSegments(arrow: JsonObject): Segment[] {
   return pointsToSegments(absoluteArrowPoints(arrow));
 }
 
+/**
+ * The parent whose fan an arrow belongs to, when a tree's children leave by
+ * one shared trunk. Two siblings on the same trunk share their port and the
+ * run out of it, which is the shape rather than a doubled line.
+ */
+function trunkOf(plan: DiagramPlan, arrowId: string): string | undefined {
+  const entry = plan.roles.get(arrowId);
+  const trunk = entry?.role === "edge" ? entry.trunk : undefined;
+  // Roles name the parent by its semantic id; every check here works in
+  // element ids, which is what the arrow's own binding reports.
+  return trunk === undefined ? undefined : plan.elementIdByNode.get(trunk);
+}
+
 function labelStroke(skeleton: JsonObject): string | undefined {
   const label = skeleton.label as { strokeColor?: unknown } | undefined;
   return typeof label?.strokeColor === "string" ? label.strokeColor : undefined;
@@ -464,6 +477,9 @@ export function evaluateDiagramPlan(
           if (existing.owner === String(arrow.id) && existing.point.x === point.x && existing.point.y === point.y) {
             continue;
           }
+          // A fan that shares a trunk shares the port it leaves by. That is
+          // the org-chart shape, not two connectors landing on one spot.
+          if (trunkOf(plan, String(arrow.id)) === nodeId && trunkOf(plan, existing.owner) === nodeId) continue;
           const gap = Math.max(Math.abs(existing.point.x - point.x), Math.abs(existing.point.y - point.y));
           if (gap === 0) {
             report.sharedPorts.push(
@@ -484,6 +500,8 @@ export function evaluateDiagramPlan(
   const runs = arrows.map((arrow) => arrowSegments(arrow));
   for (let a = 0; a < arrows.length; a++) {
     for (let b = a + 1; b < arrows.length; b++) {
+      const trunk = trunkOf(plan, String(arrows[a].id));
+      if (trunk !== undefined && trunk === trunkOf(plan, String(arrows[b].id))) continue;
       const merged = runs[a].some((first) => runs[b].some((second) => segmentsVisuallyMerge(first, second)));
       if (merged) {
         report.overlappingParallelSegments.push(`${String(arrows[a].id)} x ${String(arrows[b].id)}`);
