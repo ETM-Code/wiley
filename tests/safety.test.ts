@@ -29,6 +29,24 @@ describe("catastrophic command guard", () => {
     expect(guard.inspect(":(){ :|:& };:").allow).toBe(false);
     expect(guard.inspect("rm -rf ./dist", project).allow).toBe(true);
   });
+
+  // The packaged app's default workspace sits directly inside the home
+  // directory, which is the one place a guard keyed on "outside the project"
+  // could plausibly be talked into deleting the lot.
+  it("protects the home directory even when the workspace lives inside it", () => {
+    const workspace = path.join(os.homedir(), "Wiley");
+    const guard = new CatastrophicCommandGuard(workspace);
+
+    expect(guard.inspect("rm -rf ~", workspace).allow).toBe(false);
+    expect(guard.inspect("rm -rf $HOME", workspace).allow).toBe(false);
+    expect(guard.inspect(`rm -rf ${os.homedir()}`, workspace).allow).toBe(false);
+    expect(guard.inspect("rm -rf ~/Documents", workspace).allow).toBe(false);
+    expect(guard.inspect("chmod -R 777 ~", workspace).allow).toBe(false);
+
+    expect(guard.inspect("rm -rf ./site", workspace).allow).toBe(true);
+    expect(guard.inspect(`rm -rf ${path.join(workspace, "build")}`, workspace).allow).toBe(true);
+    expect(guard.inspect("rm -rf ~/Wiley/node_modules", workspace).allow).toBe(true);
+  });
 });
 
 describe("read-before-edit guard", () => {

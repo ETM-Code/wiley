@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent } from "electron";
+import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
 import {
   IPC,
   type BoardSnapshot,
@@ -82,6 +82,19 @@ export function registerIpc(options: {
   });
   handle(IPC.settingsSecretClear, (_event, name: unknown) => settings.clearSecret(assertSecretName(name)));
   handle(IPC.settingsProbe, () => settings.probeWorkers());
+  handle(IPC.settingsChooseDirectory, async (event, current: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: "Choose the folder Wiley may work in",
+      buttonLabel: "Use this folder",
+      properties: ["openDirectory", "createDirectory"],
+      ...(typeof current === "string" && current.trim() ? { defaultPath: current.trim() } : {}),
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? undefined : result.filePaths[0];
+  });
   handle(IPC.cloudTestConnection, () => testCloudConnection(settings));
   handle(IPC.workersOpenTerminal, (_event, input: { workerId?: unknown }) => {
     if (typeof input?.workerId !== "string" || !input.workerId.trim()) throw new Error("A worker id is required");

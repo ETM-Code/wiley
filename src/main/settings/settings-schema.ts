@@ -106,6 +106,13 @@ export interface WileySettings {
   agent: AgentSettings;
   workers: Record<WorkerKind, WorkerSettings>;
   /**
+   * The workspace the agent may edit. Unset means the launch directory when
+   * running from a checkout and ~/Wiley in a packaged app, which is the only
+   * sane default for an app launched from Finder with "/" as its cwd. Read
+   * once at startup, so a change takes effect the next time Wiley opens.
+   */
+  projectDir?: string;
+  /**
    * Which terminal emulator a worker handoff opens in, by application name.
    * Free text rather than an enum: the panel offers what it found installed,
    * and an unlisted emulator should still be launchable by name.
@@ -342,7 +349,7 @@ function normalizeWorker(raw: unknown, kind: WorkerKind): WorkerSettings {
 export function normalizeSettings(raw: unknown): WileySettings {
   const source = isPlainObject(raw) ? raw : {};
   const workers = isPlainObject(source.workers) ? source.workers : {};
-  return {
+  const settings: WileySettings = {
     version: SETTINGS_VERSION,
     auth: normalizeAuth(source.auth),
     voice: normalizeVoice(source.voice),
@@ -353,6 +360,9 @@ export function normalizeSettings(raw: unknown): WileySettings {
     },
     terminalApp: str(source.terminalApp, DEFAULT_TERMINAL_APP),
   };
+  const projectDir = optionalStr(source.projectDir);
+  if (projectDir) settings.projectDir = projectDir;
+  return settings;
 }
 
 type Migration = (raw: Record<string, unknown>) => Record<string, unknown>;

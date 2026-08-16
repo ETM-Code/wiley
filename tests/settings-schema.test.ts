@@ -45,6 +45,17 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ terminalApp: 7 }).terminalApp).toBe("Terminal");
   });
 
+  it("leaves the project folder unset unless someone chose one", () => {
+    expect(normalizeSettings({}).projectDir).toBeUndefined();
+    expect(normalizeSettings({ projectDir: "  /Users/me/work  " }).projectDir).toBe("/Users/me/work");
+    expect(normalizeSettings({ projectDir: "   " }).projectDir).toBeUndefined();
+    expect(normalizeSettings({ projectDir: 7 }).projectDir).toBeUndefined();
+    // Clearing the field in the panel sends null, which resets it to "decide
+    // for me" rather than storing an empty path nothing can chdir into.
+    const chosen = normalizeSettings({ projectDir: "/Users/me/work" });
+    expect(applyPatch(chosen, { projectDir: null }).projectDir).toBeUndefined();
+  });
+
   it("falls back to the default when an enum value is not recognised", () => {
     const settings = normalizeSettings({
       auth: { mode: "enterprise" },

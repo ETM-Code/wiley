@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, net, protocol, safeStorage, session } from "electron";
+import { app, BrowserWindow, dialog, net, protocol, safeStorage, session } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SqliteRuntimeLedger } from "./ledger";
@@ -13,6 +13,7 @@ import { IPC } from "../shared/contracts";
 import { env } from "../shared/env";
 import { isTrustedOrigin } from "./trusted-origin";
 import { resolveSkillsDir } from "./skills";
+import { resolvePackagedPath, resolveProjectDir, sweepStaleHandoffs } from "./host-environment";
 import { createSecretStore } from "./settings/secret-store";
 import { SettingsService } from "./settings/settings-service";
 import { SettingsStore } from "./settings/settings-store";
@@ -130,6 +131,8 @@ async function createWindow(): Promise<BrowserWindow> {
 async function bootstrap(): Promise<void> {
   installAppProtocol();
   installSecurityPolicy();
+  const swept = sweepStaleHandoffs();
+  if (swept > 0) console.log(`Removed ${swept} terminal handoff ${swept === 1 ? "directory" : "directories"} older than a week`);
   // Read directly, not through env(): WILEY_CONFIG_DIR points at saved secrets
   // and never had a board-ai spelling, so it gets no deprecated alias.
   const configDir = process.env.WILEY_CONFIG_DIR?.trim() || app.getPath("userData");
@@ -146,8 +149,20 @@ async function bootstrap(): Promise<void> {
   canvas = canvasBridge;
   voice = voiceBridge;
   canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
-  const projectDir = env("PROJECT_DIR")?.trim() || process.cwd();
+  const projectDir = resolveProjectDir({
+    packaged: app.isPackaged,
+    home: app.getPath("home"),
+    configured: settingsStore.get().projectDir,
+  });
   const skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
+  // A packaged app inherits launchd's PATH, which knows about none of the
+  // places a CLI actually gets installed. Ask the user's login shell before
+  // anything spawns a worker.
+  if (app.isPackaged) {
+    process.env.PATH = resolvePackagedPath({ currentPath: process.env.PATH, home: app.getPath("home") });
+    console.log(`PATH for this run: ${process.env.PATH.split(path.delimiter).length} entries, ${process.env.PATH.length} characters`);
+  }
+  console.log(`Workspace: ${projectDir}`);
   pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir, settingsStore, dataDir);
   await pi.initialize();
   const settings = new SettingsService({
@@ -182,7 +197,16 @@ void app.whenReady().then(async () => {
     await bootstrap();
   } catch (error) {
     console.error("Failed to start Wiley", error);
+    // A packaged app has no terminal to print to, so a silent quit reads as
+    // "it does not launch". Say what broke and where the two usual causes are.
+    dialog.showErrorBox(
+      "Wiley could not start",
+      `${error instanceof Error ? error.stack ?? error.message : String(error)}\n\n` +
+      "If this mentions an API key or authentication, open Settings and save your OpenAI key. " +
+      "If it mentions a network or a host, check your connection and try again.",
+    );
     app.quit();
+    return;
   }
 
   app.on("activate", () => {
