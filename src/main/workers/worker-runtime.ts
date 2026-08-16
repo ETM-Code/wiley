@@ -12,7 +12,11 @@ import { createCliProbeRunner, probeWorkerClis } from "./cli-detect";
 import { createCodexWorkerFactory } from "./codex-worker";
 import { WorkerManager } from "./worker-manager";
 import { createFileRecorder, createStartupReaper, NULL_RECORDER } from "./worker-recorder";
-import { createWorkerCommandTripwire, createWorkerToolReviewer } from "./worker-safety";
+import {
+  createWorkerCommandTripwire,
+  createWorkerFloorReviewer,
+  createWorkerToolReviewer,
+} from "./worker-safety";
 import type { WorkerEvent } from "./worker-types";
 
 export interface WorkerRuntimeOptions {
@@ -37,11 +41,13 @@ export function createWorkerManager(options: WorkerRuntimeOptions): WorkerManage
     recentUserRequests: options.recentUserRequests,
     approvalJudge: options.approvalJudge,
   };
-  const reviewTool = createWorkerToolReviewer({
+  const claudeSafety = {
     ...shared,
     denyRules: () => options.settings().workers.claude.denyRules,
     writableRoots: () => options.settings().workers.claude.extraDirs,
-  });
+  };
+  const reviewTool = createWorkerToolReviewer(claudeSafety);
+  const reviewFloor = createWorkerFloorReviewer(claudeSafety);
   const tripwire = createWorkerCommandTripwire({
     ...shared,
     denyRules: () => options.settings().workers.codex.denyRules,
@@ -50,6 +56,7 @@ export function createWorkerManager(options: WorkerRuntimeOptions): WorkerManage
     projectDir: options.projectDir,
     settings: options.settings,
     reviewTool: (call) => reviewTool(call),
+    reviewFloor: (call) => reviewFloor(call),
     executable: options.executables?.().claude,
   });
   const codex = createCodexWorkerFactory({

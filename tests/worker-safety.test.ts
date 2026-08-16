@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApprovalJudge } from "../src/main/safety";
 import {
   createWorkerCommandTripwire,
+  createWorkerFloorReviewer,
   createWorkerToolReviewer,
   isJudgedWorkerTool,
   matchesDenyRule,
@@ -249,6 +250,35 @@ describe("codex command tripwire", () => {
     expect(await tripwire({ spec, command: "npm test" })).toEqual({ allow: true });
     // Detection after the fact: an opinion from a model would arrive too late
     // to matter and would only slow the block down.
+    expect(judged).toBe(0);
+  });
+});
+
+describe("the hard floor on every call", () => {
+  it("blocks a catastrophic command with no model round-trip at all", async () => {
+    const projectDir = await project();
+    let judged = 0;
+    const floor = createWorkerFloorReviewer({
+      projectDir,
+      voice: { push: () => undefined },
+      denyRules: () => ["Read(./.env)"],
+      recentUserRequests: () => [],
+      approvalJudge: () => new ApprovalJudge(async () => {
+        judged += 1;
+        return "BLOCK everything";
+      }),
+    });
+
+    expect(await floor({ spec, toolName: "Bash", input: { command: "rm -rf /" }, cwd: projectDir }))
+      .toMatchObject({ allow: false });
+    expect(await floor({ spec, toolName: "Read", input: { file_path: ".env" }, cwd: projectDir }))
+      .toMatchObject({ allow: false });
+    // This is the path claude reaches for calls it would auto-approve, so it
+    // has to answer instantly and let ordinary work straight through.
+    expect(await floor({ spec, toolName: "Bash", input: { command: "npm test" }, cwd: projectDir }))
+      .toEqual({ allow: true });
+    expect(await floor({ spec, toolName: "Write", input: { file_path: `${projectDir}/x.ts` }, cwd: projectDir }))
+      .toEqual({ allow: true });
     expect(judged).toBe(0);
   });
 });
