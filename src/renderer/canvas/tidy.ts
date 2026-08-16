@@ -39,7 +39,8 @@ import {
 } from "../diagram-routes";
 import { easeInOutCubic } from "../diagram-diff";
 import type { DiagramObstacle } from "../diagram-quality";
-import { assertDiagramQuality } from "./diagram-render";
+import { assertDiagramQuality, placementCollisions } from "./diagram-render";
+import { shiftClearOf } from "./geometry";
 import {
   connectorPoints,
   humanElements,
@@ -168,6 +169,61 @@ export function clusterAxis(
   return clusters;
 }
 
+/** Clear space a shape drawn around others keeps outside them. */
+const WRAP_PADDING = 40;
+
+export type WrapperGroup = { node: HumanNode; memberIds: string[]; depth: number };
+
+/**
+ * Separates the shapes someone drew *around* other shapes from the shapes
+ * themselves. A rectangle enclosing a cluster is framing, not a step in the
+ * flow: laying it out as a peer would either put it in a grid cell of its own,
+ * miles from the things it holds, or in the same cell as one of them. It gets
+ * its geometry from what it ends up holding instead, and is never judged,
+ * because overlapping its own members is the entire point of it.
+ */
+export function splitWrappers(nodes: readonly HumanNode[]): {
+  members: HumanNode[];
+  wrappers: WrapperGroup[];
+} {
+  const wrapping = new Set(nodes.filter((node) => node.encloses).map((node) => node.elementId));
+  const members = nodes.filter((node) => !wrapping.has(node.elementId));
+  const wrappers = nodes
+    .filter((node) => wrapping.has(node.elementId))
+    .map((node) => ({
+      node,
+      memberIds: (node.encloses ?? []).filter((id) => !wrapping.has(id)),
+      // A wrapper around a wrapper stands off further, so the two do not
+      // collapse onto the same box.
+      depth: (node.encloses ?? []).filter((id) => wrapping.has(id)).length,
+    }));
+  return { members, wrappers };
+}
+
+/** Each wrapper redrawn around wherever its members ended up. */
+export function wrapperBoxes(
+  wrappers: readonly WrapperGroup[],
+  boxes: ReadonlyMap<string, Geometry>,
+): Map<string, Geometry> {
+  const wrapped = new Map<string, Geometry>();
+  for (const wrapper of wrappers) {
+    const held = wrapper.memberIds
+      .map((id) => boxes.get(id))
+      .filter((box): box is Geometry => Boolean(box));
+    if (held.length === 0) continue;
+    const pad = WRAP_PADDING * (wrapper.depth + 1);
+    const x = snapModelCoordinate(Math.min(...held.map((box) => box.x)) - pad);
+    const y = snapModelCoordinate(Math.min(...held.map((box) => box.y)) - pad);
+    wrapped.set(wrapper.node.elementId, {
+      x,
+      y,
+      width: snapUp(Math.max(...held.map((box) => box.x + box.width)) + pad - x),
+      height: snapUp(Math.max(...held.map((box) => box.y + box.height)) + pad - y),
+    });
+  }
+  return wrapped;
+}
+
 /** The straightened grid: same rough topology, exact rows, even gaps. */
 export function alignBoxes(nodes: readonly HumanNode[]): Map<string, Geometry> {
   const sizes = new Map(nodes.map((node) => [node.elementId, {
@@ -268,6 +324,15 @@ async function relayoutBoxes(
     });
   }
   return boxes;
+}
+
+function boxesBounds(boxes: readonly Geometry[]) {
+  return {
+    minX: Math.min(...boxes.map((box) => box.x)),
+    minY: Math.min(...boxes.map((box) => box.y)),
+    maxX: Math.max(...boxes.map((box) => box.x + box.width)),
+    maxY: Math.max(...boxes.map((box) => box.y + box.height)),
+  };
 }
 
 /** Puts the tidied sketch back where the person had it. */
@@ -417,27 +482,42 @@ export function tidyPatches(input: {
   const routed = new Set(input.routes.map((route) => route.edge.elementId));
   let bound = 0;
   const boundAdditions = new Map<string, string[]>();
+  const attachedTo = new Map<string, Set<string>>();
   for (const route of input.routes) {
     const origin = route.points[0];
+    const connector = byId.get(route.edge.elementId);
+    // Only an arrow is a binding element in Excalidraw. A connector drawn
+    // with the line tool is re-routed but never claims a binding, and never
+    // gets recorded on a shape as an arrow it is not.
+    const bindable = connector?.type === "arrow";
     merge(route.edge.elementId, {
       x: origin.x,
       y: origin.y,
       width: Math.max(...route.points.map((point) => point.x)) - Math.min(...route.points.map((point) => point.x)),
       height: Math.max(...route.points.map((point) => point.y)) - Math.min(...route.points.map((point) => point.y)),
       points: route.points.map((point) => [point.x - origin.x, point.y - origin.y]),
-      startBinding: { elementId: route.edge.fromElementId, focus: 0, gap: 4 },
-      endBinding: { elementId: route.edge.toElementId, focus: 0, gap: 4 },
+      ...(bindable
+        ? {
+            startBinding: { elementId: route.edge.fromElementId, focus: 0, gap: 4 },
+            endBinding: { elementId: route.edge.toElementId, focus: 0, gap: 4 },
+          }
+        : {}),
     });
-    bound += 1;
-    for (const endpoint of [route.edge.fromElementId, route.edge.toElementId]) {
-      if (!endpoint) continue;
-      boundAdditions.set(endpoint, [...(boundAdditions.get(endpoint) ?? []), route.edge.elementId]);
+    if (bindable) {
+      bound += 1;
+      attachedTo.set(
+        route.edge.elementId,
+        new Set([route.edge.fromElementId, route.edge.toElementId]
+          .filter((id): id is string => Boolean(id))),
+      );
+      for (const endpoint of attachedTo.get(route.edge.elementId) ?? []) {
+        boundAdditions.set(endpoint, [...(boundAdditions.get(endpoint) ?? []), route.edge.elementId]);
+      }
     }
     // A caption on a re-routed arrow follows it to the new midpoint.
     const caption = route.edge.labelElementId ? byId.get(route.edge.labelElementId) : undefined;
-    const arrow = byId.get(route.edge.elementId);
-    if (!caption || !arrow) continue;
-    const wasMiddle = middleOf(connectorPoints(arrow));
+    if (!caption || !connector) continue;
+    const wasMiddle = middleOf(connectorPoints(connector));
     const nowMiddle = middleOf(route.points);
     merge(caption.id, {
       x: finiteNumber(caption.x) + (nowMiddle.x - wasMiddle.x),
@@ -459,16 +539,53 @@ export function tidyPatches(input: {
     });
   }
 
-  for (const [elementId, arrows] of boundAdditions) {
-    const element = byId.get(elementId) as (SketchElement & {
+  // A scribble or an aside was written beside something. It travels with
+  // whichever shape it was nearest, so a tidy that packs the grid together
+  // cannot drop a row of boxes on top of the note about them.
+  const nodeById = new Map(input.graph.nodes.map((node) => [node.elementId, node]));
+  for (const id of input.graph.unattached) {
+    const element = byId.get(id);
+    if (!element || patches.has(id)) continue;
+    const center = {
+      x: finiteNumber(element.x) + finiteNumber(element.width) / 2,
+      y: finiteNumber(element.y) + finiteNumber(element.height) / 2,
+    };
+    let nearest: { id: string; distance: number } | undefined;
+    for (const [nodeId, node] of nodeById) {
+      if (!deltas.has(nodeId)) continue;
+      const distance = Math.hypot(
+        node.bounds.x + node.bounds.width / 2 - center.x,
+        node.bounds.y + node.bounds.height / 2 - center.y,
+      );
+      if (!nearest || distance < nearest.distance
+        || (distance === nearest.distance && nodeId < nearest.id)) {
+        nearest = { id: nodeId, distance };
+      }
+    }
+    const delta = nearest ? deltas.get(nearest.id) : undefined;
+    if (!delta || (delta.dx === 0 && delta.dy === 0)) continue;
+    merge(id, {
+      x: finiteNumber(element.x) + delta.dx,
+      y: finiteNumber(element.y) + delta.dy,
+    });
+  }
+
+  // Re-routing can take an arrow off one shape and put it on another, so the
+  // shape it left has to stop claiming it; a stale entry would drag an arrow
+  // that is no longer attached the next time that shape moves.
+  for (const element of input.scene) {
+    const existing = (element as SketchElement & {
       boundElements?: Array<{ id: string; type: string }> | null;
-    }) | undefined;
-    const existing = element?.boundElements ?? [];
-    const missing = arrows
-      .filter((id) => !existing.some((entry) => entry?.id === id))
+    }).boundElements ?? [];
+    const kept = existing.filter((entry) => {
+      const owners = attachedTo.get(entry?.id ?? "");
+      return !owners || owners.has(element.id);
+    });
+    const missing = (boundAdditions.get(element.id) ?? [])
+      .filter((id) => !kept.some((entry) => entry?.id === id))
       .map((id) => ({ id, type: "arrow" as const }));
-    if (missing.length === 0) continue;
-    merge(elementId, { boundElements: [...existing, ...missing] });
+    if (missing.length === 0 && kept.length === existing.length) continue;
+    merge(element.id, { boundElements: [...kept, ...missing] });
   }
   return { patches, bound };
 }
@@ -511,10 +628,13 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
   }
 
   const layout: TidyLayout = params.layout ?? "align";
-  const boxes = layout === "relayout"
-    ? await relayoutBoxes(graph.nodes, graph.edges, params.direction ?? "RIGHT")
-    : alignBoxes(graph.nodes);
-  anchorToOrigin(boxes, graph.nodes);
+  // A shape drawn around a cluster is framing rather than a step, so it is
+  // laid out from what it holds instead of competing for a cell.
+  const { members, wrappers } = splitWrappers(graph.nodes);
+  const placed = layout === "relayout"
+    ? await relayoutBoxes(members, graph.edges, params.direction ?? "RIGHT")
+    : alignBoxes(members);
+  anchorToOrigin(placed, members);
 
   // Everything outside the tidy is somebody else's: the agent's own diagrams
   // and any part of the sketch this request did not name. A caption is inside
@@ -545,14 +665,41 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
     .filter((obstacle) => Object.values(obstacle.bounds).every(Number.isFinite));
   const obstacles = [...foreign, ...stamped];
 
+  // The tidied sketch moves as one piece, so if it lands on work that is not
+  // part of it, the whole piece slides down until it is clear.
+  const wrapped = wrapperBoxes(wrappers, placed);
+  const clearing = shiftClearOf(
+    boxesBounds([...placed.values(), ...wrapped.values()]),
+    obstacles.map((obstacle) => ({
+      minX: obstacle.bounds.x,
+      minY: obstacle.bounds.y,
+      maxX: obstacle.bounds.x + obstacle.bounds.width,
+      maxY: obstacle.bounds.y + obstacle.bounds.height,
+    })),
+    "below",
+  );
+  if (clearing) {
+    for (const box of [...placed.values(), ...wrapped.values()]) {
+      box.x += clearing.dx;
+      box.y += clearing.dy;
+    }
+  }
+  const boxes = new Map([...placed, ...wrapped]);
+
   const routes = routeSketch(
-    boxes,
+    placed,
     graph.edges,
     obstacles.filter((obstacle) => obstacle.kind === "shape")
       .map((obstacle) => ({ id: obstacle.id, ...obstacle.bounds })),
   );
-  const shapes = new Map(graph.nodes.map((node) => [node.elementId, node.shape]));
-  const quality = assertDiagramQuality(tidyPlan(boxes, routes, shapes), obstacles);
+  // Only the shapes that were placed are judged: a wrapper overlapping the
+  // members it was drawn around is what the person meant by drawing it.
+  const shapes = new Map(members.map((node) => [node.elementId, node.shape]));
+  const quality = assertDiagramQuality(tidyPlan(placed, routes, shapes), obstacles);
+  const landed = quality ? placementCollisions(quality) : [];
+  if (landed.length > 0) {
+    throw new Error(`The tidied sketch would land on other work: ${landed.slice(0, 3).join("; ")}`);
+  }
 
   const { patches, bound } = tidyPatches({ scene: sketch, graph, boxes, routes });
   const moved = [...patches].filter(([id, patch]) => {

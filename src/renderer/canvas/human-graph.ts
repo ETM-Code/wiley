@@ -47,6 +47,12 @@ export type HumanNode = {
   label?: string;
   /** Set when the caption is a free text element rather than a bound label. */
   labelElementId?: string;
+  /**
+   * Other shapes this one is drawn around. A ring someone put round a cluster
+   * is framing: it attracts arrows and captions only when nothing it holds is
+   * a better answer, since everything inside it sits inside it by definition.
+   */
+  encloses?: string[];
 };
 
 export type HumanEdge = {
@@ -113,6 +119,15 @@ export function distanceToBounds(point: { x: number; y: number }, bounds: HumanB
   const dx = Math.max(bounds.x - point.x, 0, point.x - (bounds.x + bounds.width));
   const dy = Math.max(bounds.y - point.y, 0, point.y - (bounds.y + bounds.height));
   return Math.hypot(dx, dy);
+}
+
+/** Whether one shape is drawn wholly around another, and is the bigger of the two. */
+export function enclosesBounds(outer: HumanBounds, inner: HumanBounds): boolean {
+  return outer.x <= inner.x
+    && outer.y <= inner.y
+    && outer.x + outer.width >= inner.x + inner.width
+    && outer.y + outer.height >= inner.y + inner.height
+    && outer.width * outer.height > inner.width * inner.height;
 }
 
 /**
@@ -223,17 +238,40 @@ export function inferHumanGraph(
     freeTexts.push(element);
   }
 
+  // A ring drawn round a cluster contains everything inside it, so it wins
+  // every proximity test it is allowed to enter. It only gets a look once the
+  // shapes it holds have had theirs.
+  const enclosedBy = new Map<string, string[]>();
+  for (const outer of shapes) {
+    const held = shapes
+      .filter((inner) => inner.id !== outer.id
+        && enclosesBounds(boundsOf(outer), boundsOf(inner)))
+      .map((inner) => inner.id);
+    if (held.length > 0) enclosedBy.set(outer.id, held);
+  }
+  const framing = (shape: SketchElement) => enclosedBy.has(shape.id);
+
   // A shape already wearing a bound label is not looking for a caption.
   const unlabelled = shapes.filter((shape) => !boundLabels.has(shape.id));
-  const labelPairs: Array<{ textId: string; ownerId: string; distance: number }> = [];
-  for (const text of freeTexts) {
-    const center = centerOf(boundsOf(text));
-    for (const shape of unlabelled) {
-      const distance = distanceToBounds(center, boundsOf(shape));
-      if (distance <= labelTolerance) labelPairs.push({ textId: text.id, ownerId: shape.id, distance });
+  const captionPairs = (candidates: readonly SketchElement[], taken: ReadonlySet<string>) => {
+    const pairs: Array<{ textId: string; ownerId: string; distance: number }> = [];
+    for (const text of freeTexts) {
+      if (taken.has(text.id)) continue;
+      const center = centerOf(boundsOf(text));
+      for (const shape of candidates) {
+        const distance = distanceToBounds(center, boundsOf(shape));
+        if (distance <= labelTolerance) pairs.push({ textId: text.id, ownerId: shape.id, distance });
+      }
     }
+    return pairs;
+  };
+  const captionByShape = claimNearest(captionPairs(unlabelled.filter((shape) => !framing(shape)), new Set()));
+  const claimed = new Set(captionByShape.values());
+  for (const [ownerId, textId] of claimNearest(
+    captionPairs(unlabelled.filter(framing), claimed),
+  )) {
+    captionByShape.set(ownerId, textId);
   }
-  const captionByShape = claimNearest(labelPairs);
   const textById = new Map(freeTexts.map((text) => [text.id, text]));
 
   const nodes: HumanNode[] = shapes.map((shape) => {
@@ -241,18 +279,23 @@ export function inferHumanGraph(
     const captionId = captionByShape.get(shape.id);
     const caption = captionId ? textById.get(captionId) : undefined;
     const label = bound?.text?.trim() || caption?.text?.trim();
+    const held = enclosedBy.get(shape.id);
     return {
       elementId: shape.id,
       shape: shape.type,
       bounds: boundsOf(shape),
       ...(label ? { label } : {}),
       ...(caption && label ? { labelElementId: caption.id } : {}),
+      ...(held ? { encloses: held } : {}),
     };
   });
 
-  const attach = (point: { x: number; y: number }): string | undefined => {
+  const nearestIn = (
+    candidates: readonly HumanNode[],
+    point: { x: number; y: number },
+  ): string | undefined => {
     let best: { id: string; distance: number } | undefined;
-    for (const node of nodes) {
+    for (const node of candidates) {
       const reach = Math.max(
         endpointTolerance,
         endpointFraction * Math.min(node.bounds.width, node.bounds.height),
@@ -266,6 +309,9 @@ export function inferHumanGraph(
     }
     return best?.id;
   };
+  const held = nodes.filter((node) => !node.encloses);
+  const attach = (point: { x: number; y: number }): string | undefined => nearestIn(held, point)
+    ?? nearestIn(nodes, point);
 
   const edges: HumanEdge[] = connectors.map((connector) => {
     const points = connectorPoints(connector);
