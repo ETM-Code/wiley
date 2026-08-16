@@ -490,6 +490,82 @@ describe("diagram layout quality", () => {
     expect(report.edgesThroughNodes).toEqual([]);
   });
 
+  it("draws one rank of a tree at one width and on one line", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "tree", direction: "DOWN" },
+      nodes: [
+        { id: "ceo", label: "Ada Whitlock" },
+        { id: "cto", label: "Ravi Menon" },
+        { id: "crev", label: "Sam Ortiz" },
+        { id: "plat", label: "Platform" },
+        { id: "apps", label: "Applications" },
+        { id: "sales", label: "Sales" },
+        { id: "success", label: "Customer success" },
+      ],
+      edges: [
+        { from: "ceo", to: "cto" },
+        { from: "ceo", to: "crev" },
+        { from: "cto", to: "plat" },
+        { from: "cto", to: "apps" },
+        { from: "crev", to: "sales" },
+        { from: "crev", to: "success" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const node = (id: string) => byId.get(plan.elementIdByNode.get(id)!)!;
+    // Peers on one rank are drawn the same size. "Sales" needs a third of the
+    // room "Customer success" needs, and a rank whose boxes range over that is
+    // a rank a reader takes for two kinds of thing.
+    for (const rank of [["cto", "crev"], ["plat", "apps", "sales", "success"]]) {
+      expect(new Set(rank.map((id) => node(id).width)).size).toBe(1);
+    }
+    expect(new Set(["plat", "apps", "sales", "success"].map((id) => node(id).y)).size).toBe(1);
+    // And the common width is a width the longest label still fits inside.
+    expect(node("success").width as number).toBeGreaterThanOrEqual(measureText("Customer success", 20).width);
+  });
+
+  it("forks a fan of two bare-text leaves symmetrically about its parent", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "tree", direction: "RIGHT" },
+      nodes: [
+        { id: "root", label: "Launch", shape: "ellipse" },
+        { id: "market", label: "Positioning" },
+        { id: "ops", label: "Operations" },
+        { id: "story", label: "Story", shape: "text" },
+        { id: "pricing", label: "Pricing", shape: "text" },
+        { id: "rota", label: "Support rota", shape: "text" },
+        { id: "billing", label: "Billing switch", shape: "text" },
+      ],
+      edges: [
+        { from: "root", to: "market" },
+        { from: "root", to: "ops" },
+        { from: "market", to: "story" },
+        { from: "market", to: "pricing" },
+        { from: "ops", to: "rota" },
+        { from: "ops", to: "billing" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const leafEdges = plan.skeletons.filter((skeleton) => {
+      const entry = plan.roles.get(String(skeleton.id));
+      // The four leaf connectors are the last four edges of the request.
+      return entry?.role === "edge" && (entry.edgeIndex ?? 0) >= 2;
+    });
+    expect(leafEdges).toHaveLength(4);
+    // A leaf connector is one shape. Four of them jogging up and down by
+    // different amounts, turning at different depths and running in for
+    // different lengths is what a reader calls untidy before naming anything
+    // else on the board.
+    const shapes = leafEdges.map((edge) => JSON.stringify(
+      (edge.points as Array<[number, number]>).map(([dx, dy], index, all) => [
+        dx,
+        // Mirrored about the parent's line: the two halves of one fork are the
+        // same shape, so compare the lower leaf against the upper one flipped.
+        (all[all.length - 1][1] < 0 ? -dy : dy),
+      ]),
+    ));
+    expect(new Set(shapes).size).toBe(1);
+  });
+
   it("keeps a tree's bare-text leaves in tight rows", async () => {
     const plan = await planDiagramLayout({
       layout: { algorithm: "tree", direction: "RIGHT" },
