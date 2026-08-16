@@ -90,6 +90,8 @@ class CodexWorker implements WorkerTransport {
   #raw?: (line: string) => void;
   #disposed = false;
   #turnRunning = false;
+  /** SIGINT means "end this turn"; SIGTERM and SIGKILL mean "end the worker". */
+  #terminating = false;
 
   constructor(private readonly spec: WorkerSpec, private readonly deps: CodexWorkerDeps) {}
 
@@ -180,6 +182,12 @@ class CodexWorker implements WorkerTransport {
    */
   #onTurnEnd(code: number | null, signal: NodeJS.Signals | null): void {
     if (this.#disposed) return;
+    if (this.#terminating) {
+      // Shutdown, not a turn boundary: report at once so nothing waits out a
+      // kill grace period for a process that has already gone.
+      this.#exit?.({ code, signal });
+      return;
+    }
     if (this.#parser.exitedWithoutCompletion()) {
       this.#parser.markAborted();
       this.#events?.({
@@ -210,8 +218,12 @@ class CodexWorker implements WorkerTransport {
   }
 
   signal(signal: NodeJS.Signals): void {
+    if (signal !== "SIGINT") this.#terminating = true;
     const pid = this.#child?.pid;
-    if (!pid) return;
+    if (!pid) {
+      if (this.#terminating) this.#exit?.({ code: null, signal });
+      return;
+    }
     try {
       process.kill(-pid, signal);
     } catch {
