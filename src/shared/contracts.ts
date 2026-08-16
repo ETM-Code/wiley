@@ -67,6 +67,18 @@ export interface AgentEvent {
   payload: unknown;
 }
 
+/** Every kind of background worker, including the in-process Pi one. */
+export type AgentKind = "pi" | WorkerKind;
+
+/** One background worker as the status surfaces and the sidebar see it. */
+export interface AgentSummary {
+  id: string;
+  kind: AgentKind;
+  status: string;
+  task: string;
+  report?: string;
+}
+
 export type JobStatus =
   | "queued"
   | "running"
@@ -94,6 +106,8 @@ export interface RuntimeState {
   microphoneEnabled: boolean;
   agentRunning: boolean;
   activeJobs: JobSummary[];
+  /** Background workers of every kind, so the sidebar can label each one. */
+  subagents: AgentSummary[];
   boardRevision: number;
   /** Live values from settings, not build-time constants. */
   voiceModel: string;

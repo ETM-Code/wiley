@@ -67,6 +67,7 @@ export class RuntimeController {
       microphoneEnabled: this.#microphoneEnabled,
       agentRunning: this.pi.isRunning,
       activeJobs: this.listActiveJobs(),
+      subagents: this.pi.listSubagents(),
       boardRevision: this.canvas.getSnapshot().revision,
       voiceModel: settings.voice.model,
       agentModel: settings.agent.model,

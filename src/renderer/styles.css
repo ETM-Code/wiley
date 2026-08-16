@@ -302,6 +302,19 @@ button {
   border-radius: 8px;
 }
 
+.worker-chip {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-on-surface, #1c1b1f);
+  background: var(--color-surface-high, #e6e5ea);
+  border-radius: 999px;
+}
+
 .agent-sidebar__section small,
 .agent-sidebar__empty {
   color: var(--color-on-surface-muted, #6f6e77);

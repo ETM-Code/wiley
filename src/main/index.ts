@@ -15,6 +15,7 @@ import { resolveSkillsDir } from "./skills";
 import { createSecretStore } from "./settings/secret-store";
 import { SettingsService } from "./settings/settings-service";
 import { SettingsStore } from "./settings/settings-store";
+import { createWorkerProbes } from "./workers/worker-runtime";
 
 let mainWindow: BrowserWindow | undefined;
 let pi: PiRuntime | undefined;
@@ -147,9 +148,14 @@ async function bootstrap(): Promise<void> {
   canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
   const projectDir = process.env.BOARD_AI_PROJECT_DIR ?? process.cwd();
   const skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
-  pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir, settingsStore);
+  const dataDir = process.env.BOARD_AI_DATA_DIR?.trim() || app.getPath("userData");
+  pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir, settingsStore, dataDir);
   await pi.initialize();
-  const settings = new SettingsService({ store: settingsStore, modelRuntime: () => pi?.modelRuntime });
+  const settings = new SettingsService({
+    store: settingsStore,
+    modelRuntime: () => pi?.modelRuntime,
+    probeWorkers: createWorkerProbes(() => settingsStore.get()),
+  });
   const runtime = new RuntimeController(ledger, transcript, pi, canvasBridge, sendToRenderer, settingsStore);
   await runtime.recoverInterruptedJobs();
   disposeIpc = registerIpc({
@@ -193,3 +199,7 @@ app.on("before-quit", () => {
   void pi?.dispose();
   ledger?.close();
 });
+
+// dispose() is asynchronous and quitting does not wait for it, so this is the
+// sweep that guarantees no worker process group outlives the app.
+process.on("exit", () => pi?.killWorkersSync());

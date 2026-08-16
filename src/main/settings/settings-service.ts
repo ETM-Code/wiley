@@ -5,12 +5,13 @@ import { type SettingsPatch, type WileySettings, WORKER_KINDS } from "./settings
 import type { SettingsStore } from "./settings-store";
 
 /**
- * Placeholder until the worker connector lands. It owns the real probe (does
- * the CLI exist, which version, can it be spawned), and replaces this.
+ * The answer when a host wires up no probe of its own. Both real hosts inject
+ * the worker connector's probe; this keeps a headless or test harness honest
+ * rather than letting it claim a CLI is available without having looked.
  */
 export function probeWorkersStub(): WorkerProbes {
   return Object.fromEntries(
-    WORKER_KINDS.map((kind) => [kind, { available: false, reason: "probe not implemented" }]),
+    WORKER_KINDS.map((kind) => [kind, { available: false, reason: "this host does not check for worker CLIs" }]),
   ) as WorkerProbes;
 }
 

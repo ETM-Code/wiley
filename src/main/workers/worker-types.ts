@@ -6,13 +6,13 @@
  * without dragging a child process or an SDK into the bundle.
  */
 
-import type { AgentEvent, AgentEventType } from "../../shared/contracts";
+import type { AgentEvent, AgentEventType, AgentKind } from "../../shared/contracts";
 import type { WorkerKind as CliWorkerKind } from "../settings/settings-schema";
 
 export type { CliWorkerKind };
 
 /** "pi" is the in-process Pi subagent; the rest are external CLIs. */
-export type WorkerKind = "pi" | CliWorkerKind;
+export type WorkerKind = AgentKind;
 
 export const WORKER_KIND_VALUES: readonly WorkerKind[] = ["pi", "claude", "codex"];
 

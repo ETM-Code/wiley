@@ -34,6 +34,7 @@ export type AgentStatus = {
   summary?: string;
   subagents?: Array<{
     id: string;
+    kind?: string;
     status: string;
     task?: string;
   }>;
