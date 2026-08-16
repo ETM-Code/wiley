@@ -96,6 +96,9 @@ export interface AuthSettings {
   accountEmail?: string;
 }
 
+/** The provider id the app registers with the SDK when a relay is in use. */
+export const CLOUD_PROVIDER_ID = "wiley-cloud";
+
 export interface WileySettings {
   version: number;
   auth: AuthSettings;
@@ -154,6 +157,15 @@ export const DEFAULT_SETTINGS: WileySettings = {
   },
   terminalApp: DEFAULT_TERMINAL_APP,
 };
+
+/**
+ * Which provider the agent actually runs on. Derived from the account mode
+ * rather than stored alongside it, so choosing the hosted path is one switch
+ * instead of two that can disagree with each other.
+ */
+export function effectiveProvider(settings: WileySettings): string {
+  return settings.auth.mode === "cloud" ? CLOUD_PROVIDER_ID : settings.agent.provider;
+}
 
 /** Fast mode trades depth for latency, so it wins over the stored level. */
 export function effectiveThinkingLevel(settings: AgentSettings | WileySettings): AgentThinkingLevel {

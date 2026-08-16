@@ -15,12 +15,15 @@ export interface MintRealtimeTokenOptions {
   voice?: string;
   apiKey?: string;
   signal?: AbortSignal;
+  /** Injected so a test can prove where this call goes without the network. */
+  fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 }
 
 export async function mintRealtimeToken(options: MintRealtimeTokenOptions = {}): Promise<RealtimeClientSecret> {
   const { model = DEFAULT_VOICE_MODEL, voice = DEFAULT_VOICE_NAME, apiKey, signal } = options;
   if (!apiKey) throw new Error("No OpenAI API key is configured. Add one in Settings, or set OPENAI_API_KEY.");
-  const response = await fetch(REALTIME_ENDPOINT, {
+  const request = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init));
+  const response = await request(REALTIME_ENDPOINT, {
     method: "POST",
     signal,
     headers: {

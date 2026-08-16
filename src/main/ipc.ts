@@ -9,7 +9,7 @@ import {
   type VoiceToolName,
 } from "../shared/contracts";
 import { assertSecretName, type SettingsService } from "./settings/settings-service";
-import { mintRealtimeToken } from "./voice-token";
+import { mintConfiguredVoiceToken } from "./cloud/cloud-mode";
 import { type RuntimeController } from "./runtime-controller";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
@@ -45,14 +45,11 @@ export function registerIpc(options: {
     handled.push(channel);
   };
 
-  handle(IPC.voiceToken, () => {
-    const voiceSettings = settings.settings.voice;
-    return mintRealtimeToken({
-      model: voiceSettings.model,
-      voice: voiceSettings.voice,
-      apiKey: settings.resolveApiKey().key,
-    });
-  });
+  handle(IPC.voiceToken, () => mintConfiguredVoiceToken({
+    settings: settings.settings,
+    secrets: settings.store.secrets,
+    apiKey: settings.resolveApiKey().key,
+  }));
   handle(IPC.setMicrophoneEnabled, (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") throw new Error("enabled must be boolean");
     return runtime.setMicrophoneEnabled(enabled);
