@@ -537,6 +537,12 @@ export function repairStraightRoute(
  * shallow enough that the arrowhead reads as pointing into the child's corner
  * rather than down onto its top. Turning in the gap makes every arrival square
  * to the side it lands on, which is what makes a tree read as a tree.
+ *
+ * The turn is drawn as a corner, not a curve. A rounded polyline does not pass
+ * through its bendpoints: it swings wide of them, and on the short legs a row
+ * gap leaves it swings far enough that the connector overshoots the child it
+ * is aiming at and dips below the top of its row before coming back. A bracket
+ * is the shape being asked for, so a bracket is what gets drawn.
  */
 export function flowRoute(
   from: Point,
@@ -554,7 +560,7 @@ export function flowRoute(
   const points = alongY
     ? [from, { x: from.x, y: turn }, { x: to.x, y: turn }, to]
     : [from, { x: turn, y: from.y }, { x: turn, y: to.y }, to];
-  return countBlockers(points, true, blockers) === 0 ? { points, rounded: true } : null;
+  return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
 }
 
 // ---------------------------------------------------------------------------
