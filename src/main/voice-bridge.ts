@@ -46,8 +46,8 @@ export class VoiceBridge {
   endWork(): void {
     this.#workStartedAt = 0;
     this.#lastProgressAt = 0;
-    // The task finished inside the instant window, so its opening line was
-    // never worth speaking and is dropped here rather than trailing the work.
+    // Whatever was still waiting describes work that is now over, and the
+    // report speaks for it, so it is dropped rather than trailing the task.
     this.#dropHeldProgress();
   }
 
@@ -58,26 +58,28 @@ export class VoiceBridge {
       interrupt: options.interrupt ?? false,
     };
     if (text.startsWith("[agent progress]")) {
-      // A coworker at a whiteboard narrates while working. Suppress only
-      // instant tasks and rapid-fire repetition.
-      const now = Date.now();
+      // A coworker at a whiteboard narrates while working. Narration is paced,
+      // never discarded: a line that arrives too early waits its turn, and only
+      // a newer line or the end of the work replaces it. The agent is told to
+      // narrate every time it extends the drawing, which on a real task lands
+      // inside the interval, so dropping those lines silenced exactly the
+      // commentary the board protocol asks for.
       if (this.#workStartedAt === 0) return;
-      const elapsed = now - this.#workStartedAt;
-      // The opening narration always lands inside the instant window, and it
-      // is the line that tells the user work has begun. Hold it instead of
-      // discarding it: an instant task ends first and stays silent, while a
-      // long one still announces itself.
-      if (elapsed < INSTANT_TASK_MS) {
-        this.#holdProgress(message, INSTANT_TASK_MS - elapsed);
+      const now = Date.now();
+      const readyAt = Math.max(
+        this.#workStartedAt + INSTANT_TASK_MS,
+        this.#lastProgressAt > 0 ? this.#lastProgressAt + PROGRESS_INTERVAL_MS : 0,
+      );
+      if (now < readyAt) {
+        this.#holdProgress(message, readyAt - now);
         return;
       }
-      if (this.#lastProgressAt > 0 && now - this.#lastProgressAt < PROGRESS_INTERVAL_MS) return;
       this.#lastProgressAt = now;
     }
     this.send(message);
   }
 
-  /** Waits out the instant-task window, keeping only the latest line. */
+  /** Waits until narration is due again, keeping only the latest line. */
   #holdProgress(message: VoiceInjection, delayMs: number): void {
     this.#dropHeldProgress();
     this.#progressTimer = setTimeout(() => {

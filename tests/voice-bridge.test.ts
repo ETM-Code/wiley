@@ -44,8 +44,34 @@ describe("voice question bridge", () => {
     expect(sent).toHaveLength(1);
 
     vi.advanceTimersByTime(10_000);
-    bridge.push("[agent progress] next useful milestone");
-    expect(sent).toHaveLength(2);
+    expect(sent.map((message) => message.text)).toEqual([
+      "[agent progress] starting",
+      "[agent progress] too soon",
+    ]);
+  });
+
+  it("paces a line that arrives inside the interval instead of losing it", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sent: Array<{ text: string }> = [];
+    const bridge = new VoiceBridge((payload) => sent.push(payload));
+
+    // The agent is told to narrate every time it extends the drawing, and on
+    // a real task those land closer together than the interval.
+    bridge.beginWork();
+    vi.advanceTimersByTime(6_000);
+    bridge.push("[agent progress] read the guard");
+    expect(sent).toHaveLength(1);
+
+    vi.advanceTimersByTime(8_000);
+    bridge.push("[agent progress] extended the diagram");
+    expect(sent).toHaveLength(1);
+
+    vi.advanceTimersByTime(2_000);
+    expect(sent.map((message) => message.text)).toEqual([
+      "[agent progress] read the guard",
+      "[agent progress] extended the diagram",
+    ]);
   });
 
   it("never speaks the opening line of a task that finishes instantly", () => {
