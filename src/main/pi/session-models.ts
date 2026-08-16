@@ -55,8 +55,19 @@ export function diffSessionModels(previous: SessionModelPlan, next: SessionModel
  * The allowlist is the user's answer to "what may Wiley spawn work on". A
  * model outside it is a misconfiguration, so say which one and where to fix it
  * rather than silently downgrading or silently widening the list.
+ *
+ * It governs in-process pi work only, because it is a list of models from the
+ * agent provider's catalog. A claude or codex worker runs on the user's own
+ * CLI, whose model names ("haiku", a codex slug) live in a different namespace
+ * entirely and are already governed by that CLI's own configuration, so
+ * checking them here would only ever produce a false refusal.
  */
-export function assertSpawnModelAllowed(settings: WileySettings, model: string): void {
+export function assertSpawnModelAllowed(
+  settings: WileySettings,
+  model: string,
+  kind: "pi" | "claude" | "codex" = "pi",
+): void {
+  if (kind !== "pi") return;
   if (settings.agent.allowedModels.includes(model)) return;
   throw new Error(
     `Cannot start background work on "${model}": it is not in the allowed models list `

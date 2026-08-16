@@ -57,16 +57,16 @@ describe("spawn gating", () => {
     })).toThrow(/not signed in/);
   });
 
-  it("refuses a model outside the allowlist, naming the model and the fix", () => {
+  it("takes an engine's own model name without consulting the agent allowlist", () => {
     expect(() => assertWorkerSpawnAllowed({
       kind: "claude",
       settings: settingsWith({ enabled: true }),
       probes: AVAILABLE,
       model: "opus",
-    })).toThrow(/"opus".*allowed models/s);
+    })).not.toThrow();
   });
 
-  it("allows an enabled, available, allowlisted spawn", () => {
+  it("allows an enabled, available spawn", () => {
     expect(() => assertWorkerSpawnAllowed({
       kind: "claude",
       settings: settingsWith({ enabled: true }),
@@ -78,8 +78,8 @@ describe("spawn gating", () => {
     expect(() => assertWorkerSpawnAllowed({ kind: "pi", settings: DEFAULT_SETTINGS })).toThrow(/Unknown worker kind/);
   });
 
-  it("gives claude a cheap floor and leaves codex on the user's own default", () => {
-    expect(resolveWorkerModel("claude", DEFAULT_SETTINGS)).toBe("haiku");
+  it("leaves both engines on the device's own default until a model is pinned", () => {
+    expect(resolveWorkerModel("claude", DEFAULT_SETTINGS)).toBeUndefined();
     expect(resolveWorkerModel("codex", DEFAULT_SETTINGS)).toBeUndefined();
     expect(resolveWorkerModel("claude", settingsWith({ model: "sonnet" }))).toBe("sonnet");
     expect(resolveWorkerModel("claude", DEFAULT_SETTINGS, "opus")).toBe("opus");

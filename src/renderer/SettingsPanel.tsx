@@ -166,13 +166,14 @@ function WorkerCard(
       <TextField
         label="Model"
         value={worker.model ?? ""}
-        placeholder="CLI default"
+        placeholder="device default"
+        hint="Blank sends no model flag, so the run uses whatever this machine's CLI defaults to. Pinning a cheap model can cost 7 to 17 times less per turn."
         onChange={(model) => onChange({ model: model.trim() ? model : undefined })}
       />
       <TextField
         label="Effort"
         value={worker.effort ?? ""}
-        placeholder="CLI default"
+        placeholder="device default"
         onChange={(effort) => onChange({ effort: effort.trim() ? effort : undefined })}
       />
       {kind === "claude" ? (
