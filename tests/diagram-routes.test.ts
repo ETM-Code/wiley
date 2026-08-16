@@ -220,6 +220,32 @@ describe("planRoutes", () => {
     expect(route.points[0]).toEqual({ x: 160, y: 40 });
   });
 
+  it("attaches a ring of spokes on their own bearings", () => {
+    const hub = box("hub", 0, 0, 200, 200);
+    const ring = new Map<string, ReturnType<typeof box>>([["hub", hub]]);
+    const spokes = [0, 60, 120, 180, 240, 300].map((degrees) => {
+      const radians = (degrees * Math.PI) / 180;
+      const id = `s${degrees}`;
+      ring.set(id, box(id, 100 + Math.cos(radians) * 400 - 50, 100 + Math.sin(radians) * 400 - 40, 100, 80));
+      return { id: `e${degrees}`, from: "hub", to: id };
+    });
+    const ports = assignPorts(ring, spokes, { radial: true });
+    for (const spoke of spokes) {
+      const start = ports.get(spoke.id)!.start;
+      const target = ring.get(spoke.to)!;
+      // The port sits on the hub's border, on the line to the spoke's centre.
+      expect(Math.min(
+        Math.abs(start.x - hub.x),
+        Math.abs(start.x - (hub.x + hub.width)),
+        Math.abs(start.y - hub.y),
+        Math.abs(start.y - (hub.y + hub.height)),
+      )).toBeLessThan(1e-6);
+      const to = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+      expect(Math.atan2(start.y - 100, start.x - 100))
+        .toBeCloseTo(Math.atan2(to.y - 100, to.x - 100), 9);
+    }
+  });
+
   it("turns a flow connector square onto the sides the caller named", () => {
     const tree = new Map([["p", box("p", 0, 0)], ["c", box("c", 600, 300)]]);
     const [route] = planRoutes(tree, [
