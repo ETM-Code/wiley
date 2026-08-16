@@ -2121,33 +2121,92 @@ export function starHub(nodes: readonly GraphNode[], edges: readonly GraphEdge[]
 /** The bearing the first spoke takes: straight up, the way a clock starts. */
 const RING_START_BEARING = -Math.PI / 2;
 
+/** How many times the ring is widened before the widest answer is taken. */
+const MAX_RING_STEPS = 40;
+/** How far around the ideal seat the grid is searched, in cells. */
+const RING_SEAT_SEARCH = 2;
+/** What a step across the bearing costs against a step along it. */
+const RING_BEARING_WEIGHT = 2;
+
+/** Half a box's extent along a bearing: where its outline stands. */
+function reachAlong(size: { width: number; height: number }, bearing: number): number {
+  const across = Math.abs(Math.cos(bearing));
+  const along = Math.abs(Math.sin(bearing));
+  return Math.min(
+    across > 1e-9 ? size.width / 2 / across : Number.POSITIVE_INFINITY,
+    along > 1e-9 ? size.height / 2 / along : Number.POSITIVE_INFINITY,
+  );
+}
+
 /**
- * Rings a star's spokes at even bearings.
+ * Rings a star's spokes at even bearings, one daylight apart from the hub.
  *
  * The radial algorithm places a general tree and its answer for a plain star
  * is a ring at whatever angles fall out of the order the spokes arrived in:
  * three of them bunched across the top and two corners left empty. A star has
- * one honest arrangement, which is every spoke a turn of the circle apart, and
- * a ring wide enough that no two neighbours touch.
+ * one honest arrangement, which is every spoke a turn of the circle apart.
+ *
+ * What a reader measures is not the radius but the daylight: how far each
+ * spoke stands off the hub, which is the length of the connector between them.
+ * A ring of one radius around a hub half as tall as it is wide leaves the two
+ * spokes beside it a hundred pixels of it and the one above it two hundred and
+ * twenty, and the ring reads as buckled. Each spoke is seated the same
+ * daylight off the hub's own outline instead, and the ring widens until no two
+ * spokes stand closer than anything else on the board does.
  */
 function starRing(input: GeometryInput, hub: string): Map<string, RoutePoint> {
   const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
-  const reach = (id: string) => Math.hypot(sizeOf(id).width, sizeOf(id).height) / 2;
   const spokes = input.params.nodes.map((node) => node.id).filter((id) => id !== hub);
-  let radius = Math.max(...spokes.map((id) => reach(hub) + reach(id) + input.nodeSpacing));
-  // Neighbours on the ring are a chord apart, so the ring has to be wide
-  // enough that the two widest of them still clear each other.
-  const chord = 2 * Math.sin(Math.PI / spokes.length);
-  if (chord > 1e-6) {
-    for (const [index, id] of spokes.entries()) {
-      const next = spokes[(index + 1) % spokes.length];
-      radius = Math.max(radius, (reach(id) + reach(next) + input.nodeSpacing) / chord);
+  const bearings = spokes.map((_, index) => RING_START_BEARING + (2 * Math.PI * index) / spokes.length);
+  // Every centre lands on the grid downstream, and the nearest grid point to
+  // the one the bearing asked for is up to half a cell off it in any
+  // direction. Off along the spoke that costs a few pixels of daylight; off
+  // across it that is the bearing itself, which at this radius is two degrees
+  // of a turn a reader is being asked to read as even. So the seat is chosen
+  // from the grid points around the ideal one, counting a step across the
+  // bearing for several times a step along it.
+  const seat = (ideal: RoutePoint, bearing: number): RoutePoint => {
+    const origin = { x: snapModelCoordinate(ideal.x), y: snapModelCoordinate(ideal.y) };
+    let best = origin;
+    let cost = Number.POSITIVE_INFINITY;
+    for (let dx = -RING_SEAT_SEARCH; dx <= RING_SEAT_SEARCH; dx++) {
+      for (let dy = -RING_SEAT_SEARCH; dy <= RING_SEAT_SEARCH; dy++) {
+        const point = { x: origin.x + dx * MODEL_GRID_SIZE, y: origin.y + dy * MODEL_GRID_SIZE };
+        const offX = point.x - ideal.x;
+        const offY = point.y - ideal.y;
+        const across = Math.abs(offX * -Math.sin(bearing) + offY * Math.cos(bearing));
+        const along = Math.abs(offX * Math.cos(bearing) + offY * Math.sin(bearing));
+        const score = across * RING_BEARING_WEIGHT + along;
+        if (score < cost) {
+          cost = score;
+          best = point;
+        }
+      }
     }
-  }
-  const centers = new Map<string, RoutePoint>([[hub, { x: 0, y: 0 }]]);
-  for (const [index, id] of spokes.entries()) {
-    const bearing = RING_START_BEARING + (2 * Math.PI * index) / spokes.length;
-    centers.set(id, { x: Math.cos(bearing) * radius, y: Math.sin(bearing) * radius });
+    return best;
+  };
+  const ring = (daylight: number) => {
+    const centers = new Map<string, RoutePoint>([[hub, { x: 0, y: 0 }]]);
+    for (const [index, id] of spokes.entries()) {
+      const bearing = bearings[index];
+      const radius = reachAlong(sizeOf(hub), bearing) + daylight + reachAlong(sizeOf(id), bearing);
+      centers.set(id, seat({ x: Math.cos(bearing) * radius, y: Math.sin(bearing) * radius }, bearing));
+    }
+    return centers;
+  };
+  const clears = (centers: ReadonlyMap<string, RoutePoint>) => {
+    const ids = [...centers.keys()];
+    return ids.every((first, index) => ids.slice(index + 1).every((second) => {
+      const here = centers.get(first)!;
+      const there = centers.get(second)!;
+      const gapX = Math.abs(here.x - there.x) - (sizeOf(first).width + sizeOf(second).width) / 2;
+      const gapY = Math.abs(here.y - there.y) - (sizeOf(first).height + sizeOf(second).height) / 2;
+      return Math.max(gapX, gapY) >= input.nodeSpacing;
+    }));
+  };
+  let centers = ring(input.nodeSpacing);
+  for (let step = 1; step <= MAX_RING_STEPS && !clears(centers); step++) {
+    centers = ring(input.nodeSpacing + step * MODEL_GRID_SIZE);
   }
   return centers;
 }
