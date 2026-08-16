@@ -584,6 +584,19 @@ export function flowRoute(
   blockers: readonly Box[],
 ): RepairedRoute | null {
   const alongY = sides.from === "top" || sides.from === "bottom";
+  // A connector that leaves and rejoins on the same side is a loop back or a
+  // branch past what the flow does next, and it runs in the margin beyond both
+  // of its ends: out of the box, along, and square back in. Turning halfway
+  // between two ends that face the same way turns inside one of them.
+  if (sides.from === sides.to) {
+    const outward = sides.from === "bottom" || sides.from === "right" ? 1 : -1;
+    const ends = alongY ? [from.y, to.y] : [from.x, to.x];
+    const lane = (outward > 0 ? Math.max(...ends) : Math.min(...ends)) + outward * CORRIDOR_GAP;
+    const points = alongY
+      ? [from, { x: from.x, y: lane }, { x: to.x, y: lane }, to]
+      : [from, { x: lane, y: from.y }, { x: lane, y: to.y }, to];
+    return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
+  }
   const offset = alongY ? to.x - from.x : to.y - from.y;
   // Two boxes meant to sit in one column can still land half a grid cell
   // apart, because a box is placed by its corner and centred by its width.
