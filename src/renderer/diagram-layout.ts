@@ -903,10 +903,78 @@ function elkSection(result: ElkNode, index: number) {
 }
 
 /**
- * The layered path, unchanged in behaviour: ELK routes orthogonally through
- * channels it reserved itself, and those routes stay exactly where it put
- * them. Snapping a 16px channel onto the 20px grid is what merges two
- * arrows into one line.
+ * Longest side over shortest, over the whole graph ELK reports: the boxes plus
+ * the channels and label room it reserved around them. That is the drawing a
+ * reader is handed, and a flow whose connectors need as much room as its boxes
+ * is not a ribbon however narrow the boxes are.
+ */
+function aspect(node: ElkNode): number {
+  const width = finiteNumber(node.width);
+  const height = finiteNumber(node.height);
+  if (width <= 0 || height <= 0) return 1;
+  return Math.max(width, height) / Math.min(width, height);
+}
+
+/**
+ * Past this the drawing is a ribbon rather than a picture: it has to be
+ * scrolled or shrunk to nothing before it can be read, and every reference
+ * board on the shelf sits well inside it.
+ */
+const RIBBON_ASPECT = 4;
+/**
+ * A flow shorter than this is narrow because it is short. Two boxes side by
+ * side are wider than they are tall and there is nothing to fold; stacking
+ * them would only break the direction the request asked for.
+ */
+const MIN_FOLD_LAYERS = 5;
+/** The shape a folded flow aims for; ELK treats it as a hint, not a promise. */
+const TARGET_ASPECT = "1.6";
+
+/** How many ranks the flow advanced through, read off the placed children. */
+function layerCount(node: ElkNode, direction: DiagramDirection): number {
+  const alongY = portsSpreadAlongWidth(direction);
+  return new Set((node.children ?? [])
+    .map((child) => Math.round(finiteNumber(alongY ? child.y : child.x)))).size;
+}
+
+/**
+ * Folds a flow that came out as a ribbon onto more than one row.
+ *
+ * A twelve-stage pipeline laid out RIGHT is fifteen times wider than it is
+ * tall, and nothing about the drawing survives being scaled to fit a page.
+ * ELK's wrapping splits the chain into rows that still read in order, which
+ * is exactly what a person drawing the same pipeline by hand would do. It
+ * only runs when the first attempt really is a ribbon, and the fold is kept
+ * only if it actually made the drawing squarer: on some graphs wrapping
+ * leaves a single node stranded on a row of its own, which is worse than the
+ * ribbon it replaced.
+ */
+async function foldLongFlow(
+  graph: GeometryInput,
+  laid: ElkNode,
+  options: Record<string, string>,
+): Promise<ElkNode> {
+  // A region is a column of the drawing and folding one is not a fold, it is
+  // a scramble, so a nested graph keeps the shape it was given.
+  if (graph.containers) return laid;
+  if (aspect(laid) <= RIBBON_ASPECT || layerCount(laid, graph.direction) < MIN_FOLD_LAYERS) return laid;
+  try {
+    const folded = await elk.layout(elkGraph(graph, {
+      ...options,
+      "elk.layered.wrapping.strategy": "MULTI_EDGE",
+      "elk.aspectRatio": TARGET_ASPECT,
+    }));
+    return aspect(folded) < aspect(laid) ? folded : laid;
+  } catch {
+    // Wrapping refuses some graphs outright. The ribbon is still a drawing.
+    return laid;
+  }
+}
+
+/**
+ * The layered path: ELK routes orthogonally through channels it reserved
+ * itself, and those routes stay exactly where it put them. Snapping a 16px
+ * channel onto the 20px grid is what merges two arrows into one line.
  */
 async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutcome): Promise<LayoutGeometry> {
   // A label only needs room of its own when it cannot fit in the channel the
@@ -922,31 +990,30 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     return measureText(text, EDGE_LABEL_FONT_SIZE).width + BOUND_LABEL_CLEARANCE <= input.layerSpacing;
   };
   const withheld = new Set(input.edges.filter(ridesTheArrow));
-  const result = await elk.layout(elkGraph(
-    { ...input, reserveLabel: (edge) => !withheld.has(edge) },
-    {
-      "elk.algorithm": "layered",
-      "elk.direction": input.direction,
-      "elk.edgeRouting": "ORTHOGONAL",
-      "elk.spacing.nodeNode": String(input.nodeSpacing),
-      "elk.layered.spacing.nodeNodeBetweenLayers": String(input.layerSpacing),
-      // Channel spacing stays above one grid cell so snapping can never merge
-      // two parallel routes or a route into a node border.
-      "elk.spacing.edgeNode": "40",
-      "elk.spacing.edgeEdge": "24",
-      "elk.layered.spacing.edgeNodeBetweenLayers": "32",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
-      "elk.spacing.edgeLabel": "10",
-      // A request lists its edges in the order the story is told, so the edge
-      // that closes a loop is the later one. ELK's default greedy cycle breaker
-      // ignores that and is free to reverse the forward edge instead, which
-      // turns a flow chart upside down and sends the retry edge the long way
-      // around the whole drawing. Model order breaks exactly the edges that
-      // point backwards against the declared order.
-      "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
-      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-    },
-  ));
+  const graph = { ...input, reserveLabel: (edge: GraphEdge) => !withheld.has(edge) };
+  const options = {
+    "elk.algorithm": "layered",
+    "elk.direction": input.direction,
+    "elk.edgeRouting": "ORTHOGONAL",
+    "elk.spacing.nodeNode": String(input.nodeSpacing),
+    "elk.layered.spacing.nodeNodeBetweenLayers": String(input.layerSpacing),
+    // Channel spacing stays above one grid cell so snapping can never merge
+    // two parallel routes or a route into a node border.
+    "elk.spacing.edgeNode": "40",
+    "elk.spacing.edgeEdge": "24",
+    "elk.layered.spacing.edgeNodeBetweenLayers": "32",
+    "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
+    "elk.spacing.edgeLabel": "10",
+    // A request lists its edges in the order the story is told, so the edge
+    // that closes a loop is the later one. ELK's default greedy cycle breaker
+    // ignores that and is free to reverse the forward edge instead, which
+    // turns a flow chart upside down and sends the retry edge the long way
+    // around the whole drawing. Model order breaks exactly the edges that
+    // point backwards against the declared order.
+    "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
+    "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+  };
+  const result = await foldLongFlow(graph, await elk.layout(elkGraph(graph, options)), options);
   const absolute = resolveAbsolute(result);
   const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
     const box = absolute.boxes.get(node.id);
