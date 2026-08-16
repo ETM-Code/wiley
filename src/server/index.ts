@@ -16,6 +16,7 @@ import {
   type VoiceToolName,
 } from "../shared/contracts";
 import { env } from "../shared/env";
+import { resolveProjectDir } from "../main/host-environment";
 import { SqliteRuntimeLedger } from "../main/ledger";
 import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";
@@ -33,8 +34,6 @@ import { isCliWorkerKind } from "../main/workers/worker-types";
 
 const host = env("HOST")?.trim() || "127.0.0.1";
 const port = Number(env("PORT")?.trim() || 5174);
-const projectDir = env("PROJECT_DIR")?.trim() || process.cwd();
-const dataDir = env("DATA_DIR")?.trim() || defaultDataDir(projectDir);
 
 /**
  * New workspaces get .wiley. One that already holds a .board-ai from before the
@@ -153,7 +152,6 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   return value as Record<string, unknown>;
 }
 
-await mkdir(dataDir, { recursive: true });
 const configDir = resolveConfigDir({ env: process.env, home: os.homedir() });
 const settingsStore = SettingsStore.open(
   configDir,
@@ -163,6 +161,15 @@ const settingsStore = SettingsStore.open(
     allowRemoteHost: process.env.WILEY_ALLOW_REMOTE_SECRETS === "1",
   }),
 );
+// The saved workspace is the same setting the Electron host reads, so the
+// panel's project folder means the same thing in a browser tab.
+const projectDir = resolveProjectDir({
+  packaged: false,
+  home: os.homedir(),
+  configured: settingsStore.get().projectDir,
+});
+const dataDir = env("DATA_DIR")?.trim() || defaultDataDir(projectDir);
+await mkdir(dataDir, { recursive: true });
 const hub = new EventHub();
 const ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
 await ledger.initialize();

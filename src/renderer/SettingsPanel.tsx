@@ -351,6 +351,8 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   // The relay URL has to be saved, not merely typed: the host reads it from
   // settings, so an unsaved draft would test an address it does not have.
   const cloudReady = view.auth.relayBaseUrl.trim().length > 0;
+  // A browser tab has no native folder picker, so there the path is typed.
+  const canPickFolder = bridge.canChooseDirectory();
 
   return (
     <aside className="settings-panel" aria-label="Settings">
@@ -573,6 +575,33 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
             />
           ))}
         </fieldset>
+      </section>
+
+      <section className="settings-section">
+        <h2>Workspace</h2>
+        <TextField
+          label="Project folder"
+          value={draft.projectDir ?? ""}
+          placeholder="~/Wiley"
+          hint="Everything Wiley reads, writes, and runs happens here. Blank means ~/Wiley in the app and the launch directory when run from a checkout. Applies the next time Wiley starts."
+          onChange={(projectDir) => setDraft({ ...draft, projectDir: projectDir.trim() ? projectDir : undefined })}
+        />
+        {canPickFolder ? (
+          <div className="settings-actions">
+            <button
+              type="button"
+              className="status-button"
+              disabled={busy}
+              onClick={() => void bridge.chooseDirectory(draft.projectDir).then((chosen) => {
+                if (chosen) setDraft((current) => (current ? { ...current, projectDir: chosen } : current));
+              }, (pickError: unknown) => {
+                setError(pickError instanceof Error ? pickError.message : String(pickError));
+              })}
+            >
+              Choose folder…
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="settings-section">

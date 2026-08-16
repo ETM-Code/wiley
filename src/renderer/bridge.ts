@@ -87,6 +87,7 @@ type PreloadApi = {
   setSecret?: (name: SecretName, value: string) => Promise<SettingsView>;
   clearSecret?: (name: SecretName) => Promise<SettingsView>;
   probeWorkers?: () => Promise<WorkerProbes>;
+  chooseDirectory?: (current?: string) => Promise<string | undefined>;
   testCloudConnection?: () => Promise<CloudAccount>;
   openWorkerTerminal?: (workerId: string) => Promise<TerminalHandoff>;
   newTerminalSession?: (kind: WorkerKind) => Promise<TerminalHandoff>;
@@ -292,6 +293,15 @@ export const bridge = {
 
   async probeWorkers(): Promise<WorkerProbes | undefined> {
     return preload()?.probeWorkers?.();
+  },
+
+  /** Only a host with a desktop can put a folder picker on screen. */
+  canChooseDirectory(): boolean {
+    return typeof preload()?.chooseDirectory === "function";
+  },
+
+  async chooseDirectory(current?: string): Promise<string | undefined> {
+    return preload()?.chooseDirectory?.(current);
   },
 
   /**

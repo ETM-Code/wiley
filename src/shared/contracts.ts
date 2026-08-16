@@ -37,6 +37,7 @@ export const IPC = {
   settingsSecretSet: "settings:secret-set",
   settingsSecretClear: "settings:secret-clear",
   settingsProbe: "settings:probe",
+  settingsChooseDirectory: "settings:choose-directory",
   cloudTestConnection: "cloud:test-connection",
   workersOpenTerminal: "workers:open-terminal",
   workersNewTerminalSession: "workers:new-terminal-session",
@@ -265,6 +266,8 @@ export interface BoardApi {
   setSecret(name: SecretName, value: string): Promise<SettingsView>;
   clearSecret(name: SecretName): Promise<SettingsView>;
   probeWorkers(): Promise<WorkerProbes>;
+  /** A native folder picker. Undefined when the user cancelled. */
+  chooseDirectory(current?: string): Promise<string | undefined>;
   testCloudConnection(): Promise<CloudAccount>;
   openWorkerTerminal(workerId: string): Promise<TerminalHandoff>;
   newTerminalSession(kind: WorkerKind): Promise<TerminalHandoff>;
