@@ -131,9 +131,12 @@ describe("planTerminalLaunch", () => {
     expect(plan.args.join(" ")).toContain(`do script "say \\"hi\\\\there\\""`);
   });
 
-  it("hands the launchable emulators an executable script on their own flag", () => {
+  it("passes Ghostty a config key, since its -e does nothing on macOS", () => {
     expect(planTerminalLaunch("Ghostty", "run me", () => SCRIPT).args)
-      .toEqual(["-na", "Ghostty", "--args", "-e", SCRIPT]);
+      .toEqual(["-na", "Ghostty.app", "--args", `--command=${SCRIPT}`]);
+  });
+
+  it("hands the launchable emulators an executable script on their own flag", () => {
     expect(planTerminalLaunch("Alacritty", "run me", () => SCRIPT).args)
       .toEqual(["-na", "Alacritty", "--args", "-e", SCRIPT]);
     expect(planTerminalLaunch("kitty", "run me", () => SCRIPT).args)

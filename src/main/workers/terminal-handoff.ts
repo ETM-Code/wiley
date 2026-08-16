@@ -176,9 +176,17 @@ export function planTerminalLaunch(
       ],
     };
   }
-  // Ghostty and Alacritty spell it `-e <program>`; kitty takes the program as
-  // its first positional argument. All three arrive through `open --args`.
-  if (app === "Ghostty" || app === "Alacritty") {
+  // Ghostty says it plainly in its own --help: launching the emulator from the
+  // CLI is unsupported on macOS, and arguments passed through `open --args`
+  // must be configuration keys. Its `-e` therefore does nothing here, and the
+  // command goes in as the `command` config key instead.
+  if (app === "Ghostty") {
+    const script = scriptFile(scriptPath(), command);
+    return { app, command: "open", args: ["-na", `${app}.app`, "--args", `--command=${script.path}`], script };
+  }
+  // Alacritty keeps its usual `-e <program>`; kitty takes the program as its
+  // first positional argument. Both arrive through `open --args`.
+  if (app === "Alacritty") {
     const script = scriptFile(scriptPath(), command);
     return { app, command: "open", args: ["-na", app, "--args", "-e", script.path], script };
   }
