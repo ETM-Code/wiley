@@ -732,23 +732,43 @@ describe("keeping the agent's drawing clear of the person's", () => {
     expect(placementCollisions(quality!)).toEqual([]);
   });
 
-  it("gives up after one shift rather than sliding forever", async () => {
+  it("keeps sliding past each thing it lands on next", async () => {
     const plan = await flowPlan();
-    const first = boxOf(plan, "queue");
     const here = planBounds(plan);
-    // Clear of the diagram now, squarely in its way once it has slid past the
-    // first obstacle. Text, so arriving on it is a placement problem rather
-    // than a crossed route.
-    const landing = {
-      x: here.maxX + 20,
-      y: here.minY,
-      width: 200,
-      height: here.maxY - here.minY,
-    };
-    expect(() => assertQualityClearOfHuman(plan, [
-      { id: "theirs", bounds: first, kind: "shape" },
-      { id: "their-note", bounds: landing, kind: "text" },
-    ], "right")).toThrow(/sit on the user's own drawing/);
+    // Three boxes in a row. Clearing only the first would stop on the second.
+    const obstacles = [0, 1, 2].map((step) => ({
+      id: `theirs-${step}`,
+      bounds: {
+        x: here.minX + step * 400,
+        y: here.minY,
+        width: 300,
+        height: here.maxY - here.minY,
+      },
+      kind: "text" as const,
+    }));
+    const { quality, shifted } = assertQualityClearOfHuman(plan, obstacles, "right");
+    expect(shifted!.dx).toBeGreaterThan(here.minX + 1_100 - here.minX);
+    expect(placementCollisions(quality!)).toEqual([]);
+  });
+
+  it("gives up rather than sliding forever", async () => {
+    const plan = await flowPlan();
+    const here = planBounds(plan);
+    const width = here.maxX - here.minX;
+    // A wall longer than the pass limit can walk: every pass clears one slab
+    // and arrives on the next, and after four the answer is no.
+    const obstacles = Array.from({ length: 8 }, (_, step) => ({
+      id: `theirs-${step}`,
+      bounds: {
+        x: here.minX + step * (width + 200),
+        y: here.minY,
+        width: width + 100,
+        height: here.maxY - here.minY,
+      },
+      kind: "text" as const,
+    }));
+    expect(() => assertQualityClearOfHuman(plan, obstacles, "right"))
+      .toThrow(/sit on the user's own drawing/);
   });
 
   it("slides past a stray doodle in the lane instead of failing the draw", async () => {
@@ -792,5 +812,54 @@ describe("keeping the agent's drawing clear of the person's", () => {
         && element.y < 200 && 0 < element.y + element.height;
       expect(overlaps).toBe(false);
     }
+  });
+});
+
+describe("drawing onto a board with a scattered sketch", () => {
+  it("clears every one of the person's boxes, not just the first it hit", async () => {
+    // Three boxes strung out along the lane the diagram is going to want.
+    const sketch: SceneRecord[] = [0, 1, 2].map((step) => ({
+      id: `theirs-${step}`,
+      type: "rectangle",
+      x: 260 + step * 520,
+      y: 0,
+      width: 200,
+      height: 220,
+    }));
+    const anchor: SceneRecord = { id: "anchor", type: "rectangle", x: 0, y: 0, width: 200, height: 120 };
+    const target = board([anchor, ...sketch]);
+    await drawFlow(target, { ...flow, anchor: "anchor", anchorDirection: "right" });
+
+    const drawn = target.elements().filter((element) => element.customData?.wiley);
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const theirs of sketch) {
+      for (const ours of drawn) {
+        const hits = ours.x < theirs.x + theirs.width && theirs.x < ours.x + ours.width
+          && ours.y < theirs.y + theirs.height && theirs.y < ours.y + ours.height;
+        expect(hits, `${ours.id} sits on ${theirs.id}`).toBe(false);
+      }
+      expect(target.elements().find((element) => element.id === theirs.id))
+        .toMatchObject({ x: theirs.x, y: theirs.y });
+    }
+  });
+
+  it("is not flung across the canvas by one long diagonal of theirs", async () => {
+    const anchor: SceneRecord = { id: "anchor", type: "rectangle", x: 0, y: 0, width: 200, height: 120 };
+    const stray: SceneRecord = { id: "stray", type: "rectangle", x: 300, y: 20, width: 80, height: 40 };
+    // Its bounding box covers a whole quadrant; reserving that would send the
+    // diagram thousands of pixels away.
+    const diagonal: SceneRecord = {
+      id: "diagonal",
+      type: "arrow",
+      x: 0,
+      y: 0,
+      width: 6_000,
+      height: 4_000,
+      points: [[0, 0], [6_000, 4_000]],
+    };
+    const target = board([anchor, stray, diagonal]);
+    await drawFlow(target, { ...flow, anchor: "anchor", anchorDirection: "right" });
+    const drawn = target.elements().filter((element) => element.customData?.wiley);
+    expect(Math.min(...drawn.map((element) => element.x))).toBeLessThan(2_000);
   });
 });

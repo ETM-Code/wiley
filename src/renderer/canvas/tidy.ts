@@ -362,9 +362,14 @@ async function relayoutBoxes(
     label: node.label ?? node.elementId,
     size: tidiedSize(node),
   }));
+  // Only edges between shapes ELK is actually laying out. An arrow onto a
+  // framing shape names a node that was deliberately held back, and naming a
+  // node the graph does not have fails validation before layout even starts.
+  const laidOut = new Set(nodes.map((node) => node.elementId));
   const graphEdges: GraphEdge[] = edges
     .filter((edge) => edge.fromElementId && edge.toElementId
-      && edge.fromElementId !== edge.toElementId)
+      && edge.fromElementId !== edge.toElementId
+      && laidOut.has(edge.fromElementId) && laidOut.has(edge.toElementId))
     .map((edge) => ({ from: edge.fromElementId!, to: edge.toElementId! }));
   const plan = await planDiagramLayout(
     { nodes: graphNodes, edges: graphEdges, layout: { direction } },
@@ -584,7 +589,9 @@ export function tidyPatches(input: {
     });
   }
 
-  // A half-connected arrow keeps pointing at the shape it did reach.
+  // A half-connected arrow keeps pointing at the shape it did reach, unless
+  // its other end is really bound to something this tidy is not moving:
+  // dragging it then would pull that end off a shape that stayed put.
   for (const edge of input.graph.edges) {
     if (routed.has(edge.elementId)) continue;
     const anchor = edge.fromElementId ?? edge.toElementId;
@@ -592,6 +599,10 @@ export function tidyPatches(input: {
     if (!delta || (delta.dx === 0 && delta.dy === 0)) continue;
     const element = byId.get(edge.elementId);
     if (!element) continue;
+    const anchored = [element.startBinding?.elementId, element.endBinding?.elementId]
+      .filter((id): id is string => Boolean(id))
+      .some((id) => id !== anchor && !deltas.has(id));
+    if (anchored) continue;
     merge(edge.elementId, {
       x: finiteNumber(element.x) + delta.dx,
       y: finiteNumber(element.y) + delta.dy,

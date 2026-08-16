@@ -310,12 +310,27 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
   // coordinates the layout never had a say over: only once the plan is
   // finally placed do both ends of such an arrow exist in the same space.
   const sketchBoxes = humanSketchBoxes(sketch);
+  // Everything else with a real footprint: the person's other shapes and any
+  // other diagram already on the board, so a connecting arrow reaching into
+  // the sketch does not cut straight through somebody else's work.
+  const otherWork = finiteGeometry(scene.filter((element) => !beforeIds.has(element.id)
+    && !sketchBoxes.has(humanNodeId(element.id))
+    && element.type !== "arrow"
+    && element.type !== "line"
+    && element.type !== "freedraw"))
+    .map((element) => ({
+      id: element.id,
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+    }));
   const humanEdges = planHumanEdges(plan, split.crossEdges, {
     agentBoxes: agentNodeBoxes(plan),
     humanBoxes: new Map([...split.humanNodes.keys()]
       .map((id) => [id, sketchBoxes.get(id)])
       .filter((entry): entry is [string, Box] => Boolean(entry[1]))),
-    blockers: [...sketchBoxes.values()],
+    blockers: [...sketchBoxes.values(), ...otherWork],
   });
   plan.skeletons.push(...humanEdges.skeletons);
   const boundAdditions = new Map<string, string[]>();

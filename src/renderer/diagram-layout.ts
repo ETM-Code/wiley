@@ -545,12 +545,6 @@ function validateGraph(params: LayoutParams): void {
     }
     requireMember(node.role, NODE_ROLES, `node ${node.id} role`);
     requireMember(node.emphasis, NODE_EMPHASES, `node ${node.id} emphasis`);
-    if (node.origin === "human" && !node.elementId) {
-      throw new Error(`Diagram node ${node.id} claims a human element without naming one`);
-    }
-    if (node.origin === "human" && node.container !== undefined) {
-      throw new Error(`Diagram node ${node.id} is the user's own and cannot join a container`);
-    }
     nodeIds.add(node.id);
   }
   validateContainers(params, nodeIds);

@@ -184,8 +184,19 @@ export function splitHumanSpec(spec: LayoutParams): HumanSpecSplit {
   const humanNodes = new Map<string, GraphNode>();
   const agentNodes: GraphNode[] = [];
   for (const node of spec.nodes) {
-    if (isHumanNode(node)) humanNodes.set(node.id, node);
-    else agentNodes.push(node);
+    if (!isHumanNode(node)) {
+      agentNodes.push(node);
+      continue;
+    }
+    // Checked here rather than in validateGraph, which only ever sees the
+    // agent's half of the split and so could never reach a human node.
+    if (!node.elementId) {
+      throw new Error(`Diagram node ${node.id} claims a shape of the user's without naming one`);
+    }
+    if (node.container !== undefined) {
+      throw new Error(`Diagram node ${node.id} is the user's own and cannot join a container`);
+    }
+    humanNodes.set(node.id, node);
   }
   const edges = spec.edges ?? [];
   // Cross edges never reach ELK, so this is the only place they are checked.

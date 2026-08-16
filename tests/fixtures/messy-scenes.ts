@@ -344,7 +344,7 @@ function groupedCluster(): MessyScene {
     expect: {
       nodes: 5,
       edges: 3,
-      loose: 1,
+      loose: 0,
       unattached: 0,
       attachments: [["g-a", "g-b"], ["g-b", "g-c"]],
       labels: [["g-ring", "Ingest"]],
@@ -359,8 +359,9 @@ function groupedCluster(): MessyScene {
       ...labelled("g-out", 300, 420, 150, 70, "Report"),
       line("g-1", [232, 155], [286, 163]),
       line("g-2", [442, 163], [496, 151]),
-      // Leaves the ring and reaches nothing.
-      line("g-3", [575, 190], [590, 360]),
+      // Drawn from the ring itself out to the box below it: an arrow onto
+      // something that is framing rather than a step.
+      line("g-3", [360, 282], [372, 418]),
     ],
   };
 }
