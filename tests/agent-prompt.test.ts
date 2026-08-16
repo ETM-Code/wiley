@@ -55,6 +55,15 @@ describe("shared canvas instructions", () => {
     expect(BOARD_AGENT_SYSTEM_PROMPT).toContain("ask_user");
   });
 
+  it("sends a settings request to the tool rather than to the panel", () => {
+    expect(BOARD_AGENT_SYSTEM_PROMPT).toContain("use update_settings instead of telling them to open the panel");
+  });
+
+  it("stays inside the root prompt's character budget", () => {
+    // Every line here is paid for on every single turn, so growth is deliberate.
+    expect(BOARD_AGENT_SYSTEM_PROMPT.length).toBeLessThan(10_000);
+  });
+
   it("tells subagents blocked calls escalate instead of retrying", () => {
     expect(SUBAGENT_SYSTEM_PROMPT).toContain("safety reviewer");
     expect(SUBAGENT_SYSTEM_PROMPT).toContain("never retry it or work around the block");
