@@ -2403,8 +2403,8 @@ const RING_START_BEARING = -Math.PI / 2;
 const MAX_RING_STEPS = 40;
 /** How far around the ideal seat the grid is searched, in cells. */
 const RING_SEAT_SEARCH = 2;
-/** What a step across the bearing costs against a step along it. */
-const RING_BEARING_WEIGHT = 2;
+/** What a step off the ring costs against a step round it. */
+const RING_RADIUS_WEIGHT = 2;
 
 /** Half a box's extent along a bearing: where its outline stands. */
 function reachAlong(size: { width: number; height: number }, bearing: number): number {
@@ -2417,59 +2417,85 @@ function reachAlong(size: { width: number; height: number }, bearing: number): n
 }
 
 /**
- * Rings a star's spokes at even bearings, one daylight apart from the hub.
+ * Rings a star's spokes at even bearings on one circle.
  *
  * The radial algorithm places a general tree and its answer for a plain star
  * is a ring at whatever angles fall out of the order the spokes arrived in:
  * three of them bunched across the top and two corners left empty. A star has
  * one honest arrangement, which is every spoke a turn of the circle apart.
  *
- * What a reader measures is not the radius but the daylight: how far each
- * spoke stands off the hub, which is the length of the connector between them.
- * A ring of one radius around a hub half as tall as it is wide leaves the two
- * spokes beside it a hundred pixels of it and the one above it two hundred and
- * twenty, and the ring reads as buckled. Each spoke is seated the same
- * daylight off the hub's own outline instead, and the ring widens until no two
- * spokes stand closer than anything else on the board does.
+ * The connector is not what a reader measures. Seating every spoke the same
+ * daylight off the hub's outline makes the connectors near enough one length,
+ * and three panels then read the board as satellites sitting at inconsistent
+ * radii -- which they were, because with boxes of different sizes equal
+ * connectors means unequal centres, and it is the centres that describe a
+ * circle. So one radius is taken, the widest any spoke needs to keep its
+ * daylight, and every centre stands on it. The connectors vary instead, which
+ * is the thing nobody is counting.
+ *
+ * The ring widens until no two spokes stand closer than anything else on the
+ * board does.
  */
 function starRing(input: GeometryInput, hub: string): Map<string, RoutePoint> {
   const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
   const spokes = input.params.nodes.map((node) => node.id).filter((id) => id !== hub);
   const bearings = spokes.map((_, index) => RING_START_BEARING + (2 * Math.PI * index) / spokes.length);
-  // Every centre lands on the grid downstream, and the nearest grid point to
-  // the one the bearing asked for is up to half a cell off it in any
-  // direction. Off along the spoke that costs a few pixels of daylight; off
-  // across it that is the bearing itself, which at this radius is two degrees
-  // of a turn a reader is being asked to read as even. So the seat is chosen
-  // from the grid points around the ideal one, counting a step across the
-  // bearing for several times a step along it.
-  const seat = (ideal: RoutePoint, bearing: number): RoutePoint => {
-    const origin = { x: snapModelCoordinate(ideal.x), y: snapModelCoordinate(ideal.y) };
+  // Every centre lands on the grid downstream, and a circle does not pass
+  // through grid points. Two errors follow from that: off the ring, which is
+  // the radius the whole arrangement is about, and round it, which is the
+  // bearing a reader is being asked to read as even. Both are measured in
+  // pixels here so they can be weighed against each other at all, and a step
+  // off the ring is counted for several times a step round it.
+  const seatCost = (point: RoutePoint, bearing: number, radius: number): number => {
+    const offRing = Math.abs(Math.hypot(point.x, point.y) - radius);
+    const roundRing = Math.abs(Math.atan2(
+      point.x * -Math.sin(bearing) + point.y * Math.cos(bearing),
+      point.x * Math.cos(bearing) + point.y * Math.sin(bearing),
+    )) * radius;
+    return offRing * RING_RADIUS_WEIGHT + roundRing;
+  };
+  const seat = (bearing: number, radius: number): RoutePoint => {
+    const origin = {
+      x: snapModelCoordinate(Math.cos(bearing) * radius),
+      y: snapModelCoordinate(Math.sin(bearing) * radius),
+    };
     let best = origin;
     let cost = Number.POSITIVE_INFINITY;
     for (let dx = -RING_SEAT_SEARCH; dx <= RING_SEAT_SEARCH; dx++) {
       for (let dy = -RING_SEAT_SEARCH; dy <= RING_SEAT_SEARCH; dy++) {
         const point = { x: origin.x + dx * MODEL_GRID_SIZE, y: origin.y + dy * MODEL_GRID_SIZE };
-        const offX = point.x - ideal.x;
-        const offY = point.y - ideal.y;
-        const across = Math.abs(offX * -Math.sin(bearing) + offY * Math.cos(bearing));
-        const along = Math.abs(offX * Math.cos(bearing) + offY * Math.sin(bearing));
-        const score = across * RING_BEARING_WEIGHT + along;
-        if (score < cost) {
-          cost = score;
-          best = point;
-        }
+        const score = seatCost(point, bearing, radius);
+        if (score >= cost) continue;
+        cost = score;
+        best = point;
       }
     }
     return best;
   };
   const ring = (daylight: number) => {
-    const centers = new Map<string, RoutePoint>([[hub, { x: 0, y: 0 }]]);
-    for (const [index, id] of spokes.entries()) {
-      const bearing = bearings[index];
-      const radius = reachAlong(sizeOf(hub), bearing) + daylight + reachAlong(sizeOf(id), bearing);
-      centers.set(id, seat({ x: Math.cos(bearing) * radius, y: Math.sin(bearing) * radius }, bearing));
+    // One radius, wide enough that the spoke reaching furthest along its own
+    // bearing still keeps its daylight. Every other spoke is given more of it.
+    const smallest = Math.max(...spokes.map((id, index) => reachAlong(sizeOf(hub), bearings[index])
+      + daylight
+      + reachAlong(sizeOf(id), bearings[index])));
+    // Which exact radius is free: anything wider still keeps the daylight. A
+    // circle does not pass through grid points, but some circles pass much
+    // nearer to seven of them than others, so two cells' worth of radii are
+    // tried a pixel at a time and the roundest ring wins. Taking the first
+    // radius that fits leaves whichever spoke drew the short straw a cell's
+    // diagonal off the circle the other six stand on, and that one spoke is
+    // what a reader finds.
+    let radius = smallest;
+    let cost = Number.POSITIVE_INFINITY;
+    for (let step = 0; step < MODEL_GRID_SIZE * 2; step++) {
+      const tried = smallest + step;
+      const total = bearings.reduce((sum, bearing) => sum + seatCost(seat(bearing, tried), bearing, tried), 0);
+      if (total >= cost) continue;
+      cost = total;
+      radius = tried;
     }
+    const centers = new Map<string, RoutePoint>([[hub, { x: 0, y: 0 }]]);
+    for (const [index, id] of spokes.entries()) centers.set(id, seat(bearings[index], radius));
     return centers;
   };
   const clears = (centers: ReadonlyMap<string, RoutePoint>) => {
