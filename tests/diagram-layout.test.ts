@@ -252,12 +252,13 @@ describe("diagram layout quality", () => {
     expect(second.skeletons).toEqual(first.skeletons);
   });
 
-  it("throws away a fold whose connectors cannot be drawn cleanly", async () => {
-    // Eight stages with a branch and a replay loop. Folded, the replay edge
-    // has to climb from the middle of one row to the middle of the one above
-    // it, through the box that shares its column, and there is no tidy way
-    // through. The ribbon it replaced at least had one.
+  it("draws a folded board with straight runs and square corners only", async () => {
+    // A branch and a replay loop as well as the chain. Folded, the replay edge
+    // has to climb from one row to the one above it, past the box that shares
+    // its column; the grid has a lane for that, and if it did not the fold
+    // would be thrown away rather than drawn with an arc across the board.
     const plan = await planDiagramLayout({
+      title: "Ingest pipeline",
       layout: { algorithm: "layered", direction: "RIGHT" },
       nodes: [
         { id: "src", label: "Source APIs" },
@@ -274,18 +275,27 @@ describe("diagram layout quality", () => {
         { from: "queue", to: "clean" },
         { from: "clean", to: "enrich" },
         { from: "enrich", to: "valid" },
-        { from: "valid", to: "load" },
-        { from: "valid", to: "dlq" },
-        { from: "dlq", to: "clean" },
+        { from: "valid", to: "load", label: "yes" },
+        { from: "valid", to: "dlq", label: "no" },
+        { from: "dlq", to: "clean", label: "replay", style: "dashed" },
         { from: "load", to: "dash" },
       ],
     }, ORIGIN, DIAGRAM_ID);
     const boxes = [...plan.elementIdByNode.values()]
       .map((id) => plan.skeletons.find((skeleton) => skeleton.id === id)!);
-    const spread = Math.max(...boxes.map((box) => Number(box.x))) - Math.min(...boxes.map((box) => Number(box.x)));
-    const depth = Math.max(...boxes.map((box) => Number(box.y))) - Math.min(...boxes.map((box) => Number(box.y)));
-    expect(spread).toBeGreaterThan(depth * 2);
-    expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
+    const spread = Math.max(...boxes.map((box) => Number(box.x) + Number(box.width)))
+      - Math.min(...boxes.map((box) => Number(box.x)));
+    const depth = Math.max(...boxes.map((box) => Number(box.y) + Number(box.height)))
+      - Math.min(...boxes.map((box) => Number(box.y)));
+    // The unfolded chain is better than eight times wider than it is deep.
+    expect(spread / depth).toBeLessThan(3);
+    for (const arrow of plan.skeletons.filter((skeleton) => skeleton.type === "arrow")) {
+      expect(arrow.roundness).toBeUndefined();
+    }
+    const report = evaluateDiagramPlan(plan);
+    expect(report.edgesThroughNodes).toEqual([]);
+    expect(report.labelCollisions).toEqual([]);
+    expect(report.nodeOverlaps).toEqual([]);
   });
 
   it.each(["force", "stress", "radial", "tree"] as const)(
