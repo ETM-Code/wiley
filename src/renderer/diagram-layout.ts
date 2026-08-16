@@ -1135,14 +1135,21 @@ function flowLayers(laid: ElkNode, alongY: boolean): FlowLayer[] {
   const stackStart = (child: ElkNode) => finiteNumber(alongY ? child.x : child.y);
   const flowSize = (child: ElkNode) => finiteNumber(alongY ? child.height : child.width);
   const stackSize = (child: ElkNode) => finiteNumber(alongY ? child.width : child.height);
-  const byRank = new Map<number, ElkNode[]>();
-  for (const child of laid.children ?? []) {
-    const rank = Math.round(flowStart(child));
-    byRank.set(rank, [...(byRank.get(rank) ?? []), child]);
+  // A rank is a band across the flow, not a coordinate. Layers never overlap
+  // along the flow axis, but ELK centres a narrow node inside the layer its
+  // widest neighbour asked for, so two nodes of one rank can start twenty
+  // pixels apart. Keying on the coordinate split them, and a rank counted
+  // twice is a rank the fold seats twice and the main path cannot reach.
+  const ordered = [...(laid.children ?? [])].sort((a, b) => flowStart(a) - flowStart(b));
+  const bands: ElkNode[][] = [];
+  for (const child of ordered) {
+    const band = bands[bands.length - 1];
+    const end = band ? Math.max(...band.map((node) => flowStart(node) + flowSize(node))) : Number.NaN;
+    if (band && flowStart(child) < end) band.push(child);
+    else bands.push([child]);
   }
-  return [...byRank.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, nodes]) => ({
+  return bands
+    .map((nodes) => ({
       nodes,
       flow: {
         start: Math.min(...nodes.map(flowStart)),
@@ -1426,9 +1433,14 @@ function alignMainPath(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
       sides.set(index, forward);
       return;
     }
+    // Within half a cell of the line is on the line: the snap moves a box that
+    // far anyway, and an end that came out a hundredth of a pixel off the
+    // centre would otherwise send a branch down the loop's own margin.
     const away = [offset(edge.from), offset(edge.to)]
       .reduce((worst, one) => (Math.abs(one) > Math.abs(worst) ? one : worst), 0);
-    const margin = away === 0 ? (to > from ? high : low) : (away > 0 ? high : low);
+    const margin = Math.abs(away) <= MODEL_GRID_SIZE / 2
+      ? (to > from ? high : low)
+      : (away > 0 ? high : low);
     sides.set(index, { from: margin, to: margin });
   });
   return { positions, sides, aspect: aspect(laid), rows: layers.map((layer) => layer.nodes.length), square: true };
