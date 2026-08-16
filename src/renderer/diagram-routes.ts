@@ -665,6 +665,12 @@ export function placeEdgeLabel(
   points: readonly Point[],
   size: { width: number; height: number },
   obstacles: readonly Box[],
+  /**
+   * A spot the caller rules out for a reason no box expresses, such as a
+   * connector running through it. A candidate has to clear the obstacles and
+   * satisfy this before it is taken.
+   */
+  forbids?: (box: Box) => boolean,
 ): Point {
   const anchor = points.length === 0
     ? { x: 0, y: 0 }
@@ -698,7 +704,11 @@ export function placeEdgeLabel(
       const down = Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y);
       if (across > 0 && down > 0) overlap += across * down;
     }
-    if (overlap === 0) return candidate;
+    // A clear spot the caller also accepts ends the search. One it rules out
+    // is still recorded, so a ring where every spot has a line through it
+    // falls back to the same answer it gave before there was a rule at all:
+    // standing somewhere is better than standing nowhere.
+    if (overlap === 0 && !forbids?.(box)) return candidate;
     if (overlap < bestOverlap) {
       bestOverlap = overlap;
       bestCandidate = candidate;

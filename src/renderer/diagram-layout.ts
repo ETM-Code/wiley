@@ -1739,11 +1739,29 @@ function assemblePlan(
       });
       continue;
     }
-    // A label the layout kept no room for still has to go somewhere: beside
-    // the route, clear of the boxes, the way every unlayered algorithm places
-    // one.
-    const spot = routed.label
+    // The room the layout reserved is room beside the route in principle, but
+    // it reserves it before it knows where the route finally went, so the spot
+    // it hands back sometimes sits astride a line. A caption with a connector
+    // ruled through it reads as struck out, so it is only taken when it is
+    // clear of every line on the board.
+    const reserved = routed.label
       ? { x: origin.x + routed.label.x, y: origin.y + routed.label.y }
+      : undefined;
+    // Judged against the caption's own box: a line that clips a glyph reads
+    // as a strike-through, and one that runs alongside it does not.
+    const onALine = (box: RouteBox): boolean => absoluteRoutes.some((other, otherIndex) =>
+      geometryIntersectsBox(
+        routeGeometry(other, geometry.edges[otherIndex].rounded),
+        box,
+        0,
+      ));
+    const struckThrough = reserved !== undefined
+      && onALine({ id: edgeLabelId, x: reserved.x, y: reserved.y, ...labelSize });
+    // A label the layout kept no room for, or put on a line, still has to go
+    // somewhere: beside the route, clear of the boxes, the way every unlayered
+    // algorithm places one.
+    const spot = reserved && !struckThrough
+      ? reserved
       : placeEdgeLabel(absoluteRoute, labelSize, [
         // A region the edge is not a member of is not a place its label may
         // land: inside one, it reads as belonging to that region.
@@ -1760,7 +1778,7 @@ function assemblePlan(
           width: box.width + LABEL_MIN_GAP * 2,
           height: box.height + LABEL_MIN_GAP * 2,
         })),
-      ]);
+      ], onALine);
     placedLabelBoxes.push({ id: edgeLabelId, x: spot.x, y: spot.y, ...labelSize });
     roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
     edgeLabelSkeletons.push({
