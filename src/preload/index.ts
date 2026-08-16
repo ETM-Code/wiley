@@ -36,6 +36,7 @@ const api: BoardApi = {
   setSecret: (name: SecretName, value: string) => ipcRenderer.invoke(IPC.settingsSecretSet, name, value),
   clearSecret: (name: SecretName) => ipcRenderer.invoke(IPC.settingsSecretClear, name),
   probeWorkers: () => ipcRenderer.invoke(IPC.settingsProbe),
+  testCloudConnection: () => ipcRenderer.invoke(IPC.cloudTestConnection),
   openWorkerTerminal: (workerId: string) => ipcRenderer.invoke(IPC.workersOpenTerminal, { workerId }),
   newTerminalSession: (kind: WorkerKind) => ipcRenderer.invoke(IPC.workersNewTerminalSession, { kind }),
   onSettingsChanged: (callback: (settings: SettingsView) => void) => subscribe(IPC.settingsChanged, callback),

@@ -24,6 +24,7 @@ export interface SettingsToolDeps {
 export async function readAgentSettings(service: SettingsService): Promise<SettingsView> {
   const view = await service.view();
   const key = view.secrets.openaiApiKey;
+  const token = view.secrets.cloudSessionToken;
   return {
     ...view,
     secrets: {
@@ -32,6 +33,10 @@ export async function readAgentSettings(service: SettingsService): Promise<Setti
         source: key.source,
         stored: key.stored,
         backend: key.backend,
+      },
+      cloudSessionToken: {
+        stored: token.stored,
+        backend: token.backend,
       },
     },
   };

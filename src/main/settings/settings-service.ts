@@ -60,6 +60,7 @@ export class SettingsService {
   async view(): Promise<SettingsView> {
     const settings = this.options.store.get();
     const key = this.resolveApiKey();
+    const backend = this.options.store.secrets.backend;
     return {
       ...settings,
       secrets: {
@@ -67,7 +68,11 @@ export class SettingsService {
           present: Boolean(key.key),
           source: key.source,
           stored: key.source === "store" || key.envOverride,
-          backend: this.options.store.secrets.backend,
+          backend,
+        },
+        cloudSessionToken: {
+          stored: Boolean(this.options.store.secrets.get("cloudSessionToken")),
+          backend,
         },
       },
       models: await this.models(settings),
@@ -88,11 +93,15 @@ export class SettingsService {
 
   async setSecret(name: SecretName, value: string): Promise<SettingsView> {
     this.options.store.secrets.set(name, value);
+    // A saved credential is a configuration change even though settings.json
+    // did not move, so the runtime re-reads which key it should be using.
+    this.options.store.notifyChanged();
     return this.view();
   }
 
   async clearSecret(name: SecretName): Promise<SettingsView> {
     this.options.store.secrets.clear(name);
+    this.options.store.notifyChanged();
     return this.view();
   }
 

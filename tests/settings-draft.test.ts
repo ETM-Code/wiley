@@ -22,7 +22,10 @@ describe("settingsOf", () => {
   it("strips the host-only decorations and detaches the copy", () => {
     const view: SettingsView = {
       ...base(),
-      secrets: { openaiApiKey: { present: true, source: "store", stored: true, backend: "file" } },
+      secrets: {
+        openaiApiKey: { present: true, source: "store", stored: true, backend: "file" },
+        cloudSessionToken: { stored: false, backend: "file" },
+      },
       models: [{ id: "m", provider: "openai" }],
       probes: { claude: { available: false }, codex: { available: false } },
       terminalApps: ["Terminal", "Ghostty"],

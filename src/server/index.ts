@@ -22,6 +22,7 @@ import { TranscriptStore } from "../main/transcript";
 import { VoiceBridge } from "../main/voice-bridge";
 import { callVoiceTool } from "../main/voice-tools";
 import { mintConfiguredVoiceToken } from "../main/cloud/cloud-mode";
+import { testCloudConnection } from "../main/cloud/cloud-account";
 import { createSecretStore, isLoopbackHost } from "../main/settings/secret-store";
 import { assertSecretName, SettingsService } from "../main/settings/settings-service";
 import { resolveConfigDir, SettingsStore } from "../main/settings/settings-store";
@@ -298,6 +299,11 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/settings/probe") {
       return sendJson(response, 200, await settings.probeWorkers());
+    }
+    // The relay is reached from here, never from the tab: the renderer's
+    // connect-src stays pinned to OpenAI and knows nothing about a relay.
+    if (request.method === "POST" && url.pathname === "/api/cloud/test") {
+      return sendJson(response, 200, await testCloudConnection(settings));
     }
     // The backend runs on the same machine as the browser tab, so opening a
     // terminal from here puts it on the user's own desktop, as it should.
