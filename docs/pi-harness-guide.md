@@ -2,7 +2,7 @@
 
 How to wire the [pi agent](https://github.com/earendil-works/pi) into the Wiley Electron app as the working agent behind the voice model and the Excalidraw canvas.
 
-This maps directly onto `Plan.excalidraw`:
+The shape of the stack, end to end:
 
 ```
 Human ──voice──▶ Voice Model (gpt-realtime-2.1) ──tool calling──▶ Pi Agent ──▶ Subagents
