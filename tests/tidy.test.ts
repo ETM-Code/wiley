@@ -158,6 +158,24 @@ describe("tidyTargets", () => {
       .toThrow(/not the user's own elements/);
     expect(tidyTargets(withAgent, {})).not.toContain("agent-node");
   });
+
+  it("refuses to move the agent's own loose annotations either", () => {
+    const withAnnotation = [
+      ...scene,
+      {
+        id: "agent-callout",
+        type: "rectangle",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+        customData: { wiley: { role: "annotation" } },
+      },
+    ] as unknown as SketchElement[];
+    expect(() => tidyTargets(withAnnotation, { elementIds: ["agent-callout"] }))
+      .toThrow(/not the user's own elements/);
+    expect(tidyTargets(withAnnotation, {})).not.toContain("agent-callout");
+  });
 });
 
 describe("tidy-diagram", () => {
@@ -179,6 +197,50 @@ describe("tidy-diagram", () => {
         expect(value % MODEL_GRID_SIZE).toBe(0);
       }
     }
+  });
+
+  it("counts none of its own annotations as the person's, but moves the bound ones with them", async () => {
+    const withAnnotations = [
+      ...scene.elements,
+      {
+        id: "agent-callout",
+        type: "rectangle",
+        x: 1_400,
+        y: 1_400,
+        width: 120,
+        height: 60,
+        version: 1,
+        customData: { wiley: { role: "annotation" } },
+      },
+      {
+        id: "agent-pointer",
+        type: "arrow",
+        x: 1_380,
+        y: 1_420,
+        width: 20,
+        height: 0,
+        points: [[0, 0], [20, 0]] as Array<[number, number]>,
+        version: 1,
+        startBinding: { elementId: scene.elements[0].id },
+        endBinding: { elementId: "agent-callout" },
+        customData: { wiley: { role: "annotation" } },
+      },
+    ] as unknown as MessyElement[];
+    const target = board(withAnnotations);
+    const before = withAnnotations.find((element) => element.id === "agent-pointer")!;
+    const result = await tidy(target);
+
+    // The person's own shapes are the whole of the graph; the callout is the
+    // agent's and is never counted or rearranged as if it were theirs.
+    expect(result.nodes).toBe(scene.expect.nodes);
+    const after = target.elements();
+    const callout = after.find((element) => element.id === "agent-callout")!;
+    expect(callout.x).toBe(1_400);
+    expect(callout.y).toBe(1_400);
+    // The pointer is attached to one of their shapes, so it travels with it
+    // rather than staying behind pointing at where the shape used to be.
+    const pointer = after.find((element) => element.id === "agent-pointer")!;
+    expect([pointer.x, pointer.y]).not.toEqual([before.x, before.y]);
   });
 
   it("never stamps the person's work as its own", async () => {

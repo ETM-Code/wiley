@@ -27,7 +27,7 @@ import {
   type DiagramObstacle,
   type DiagramQualityReport,
 } from "../diagram-quality";
-import { readDiagramStamp } from "../../shared/diagram-stamp";
+import { agentAnnotationStamp, readDiagramStamp } from "../../shared/diagram-stamp";
 import { deriveDiagramId, titleElementId } from "../diagram-spec";
 import {
   asRecord,
@@ -80,6 +80,7 @@ export async function addShape(api: ExcalidrawImperativeAPI, value: unknown) {
     height,
     strokeColor: params.strokeColor ?? "#1e1e1e",
     backgroundColor: params.backgroundColor ?? "transparent",
+    customData: agentAnnotationStamp(),
     ...(params.label?.trim() ? { label: { text: params.label.trim() } } : {}),
   };
   const created = convertToExcalidrawElements(

@@ -18,7 +18,7 @@
  * plan work against the sketch.
  */
 
-import { readDiagramStamp } from "../../shared/diagram-stamp";
+import { isAgentDrawn } from "../../shared/diagram-stamp";
 
 /** The element fields the reading actually touches. */
 export type SketchElement = {
@@ -141,14 +141,16 @@ export function enclosesBounds(outer: HumanBounds, inner: HumanBounds): boolean 
 }
 
 /**
- * Everything the person drew: on the board, not deleted, and unstamped. A
- * label bound into a stamped shape carries no stamp of its own, so it has to
- * be excluded by its owner rather than by its own customData.
+ * Everything the person drew: on the board, not deleted, and not the agent's.
+ * The agent's own work is either part of a diagram or an annotation it drew
+ * loose, and both say so in their customData. A label bound into one of those
+ * carries no stamp of its own, so it has to be excluded by its owner rather
+ * than by its own customData.
  */
 export function humanElements(elements: readonly SketchElement[]): SketchElement[] {
   const stamped = new Set<string>();
   for (const element of elements) {
-    if (readDiagramStamp(element) !== undefined) stamped.add(element.id);
+    if (isAgentDrawn(element)) stamped.add(element.id);
   }
   return elements.filter((element) => !element.isDeleted
     && !stamped.has(element.id)

@@ -148,6 +148,28 @@ describe("inferHumanGraph nodes", () => {
     expect(graph.nodes.map((node) => node.elementId)).toEqual(["mine"]);
   });
 
+  it("counts the agent's own loose annotations as the agent's, not the person's", () => {
+    const graph = inferHumanGraph([
+      box("mine", 0, 0),
+      { ...box("callout", 300, 0), customData: { wiley: { role: "annotation" } } },
+      {
+        id: "connector",
+        type: "arrow",
+        x: 120,
+        y: 20,
+        width: 180,
+        height: 0,
+        points: [[0, 0], [180, 0]],
+        startBinding: { elementId: "mine" },
+        endBinding: { elementId: "callout" },
+        customData: { wiley: { role: "annotation" } },
+      },
+    ]);
+    expect(graph.nodes.map((node) => node.elementId)).toEqual(["mine"]);
+    expect(graph.edges).toEqual([]);
+    expect(graph.unattached).toEqual([]);
+  });
+
   it("honours an element-id scope and pulls bound labels in with their shape", () => {
     const graph = inferHumanGraph([
       box("shape-a", 0, 0),

@@ -22,7 +22,7 @@
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-import { readDiagramStamp } from "../../shared/diagram-stamp";
+import { isAgentDrawn } from "../../shared/diagram-stamp";
 import {
   MODEL_GRID_SIZE,
   finiteNumber,
@@ -758,8 +758,10 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
     }
   }
   const foreign = humanObstacles(sketch.filter((element) => !inside.has(element.id)));
+  // The agent's own work, diagram or loose annotation: something it may move
+  // itself, so landing on it is reported rather than refused.
   const stamped: DiagramObstacle[] = scene
-    .filter((element) => readDiagramStamp(element) !== undefined)
+    .filter((element) => isAgentDrawn(element))
     .map((element) => ({
       id: element.id,
       bounds: { x: element.x, y: element.y, width: element.width, height: element.height },

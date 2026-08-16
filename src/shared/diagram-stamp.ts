@@ -100,6 +100,40 @@ const ROLES = new Set<string>([
 ]);
 const THEMES = new Set<string>(DIAGRAM_THEME_NAMES);
 
+/**
+ * The mark on something the agent drew that belongs to no diagram: a
+ * connector between two of the person's shapes, a callout, a free-hand
+ * addition. It carries no diagram id because there is no graph to rebuild it
+ * from, and it is deliberately the whole of the stamp, so nothing downstream
+ * can mistake an annotation for part of a diagram.
+ *
+ * Semantics, once and for all: an annotation is the agent's, never the
+ * person's. It is never counted as a node or an edge of the human graph, it
+ * is never a target tidy may rearrange, and it is never a foreign obstacle
+ * the agent's next drawing has to respect. An annotation bound into one of
+ * the person's shapes still travels with that shape when tidy moves it, by
+ * the same binding rule that moves any other arrow: it is attached to their
+ * work, so it goes where their work goes.
+ */
+export const AGENT_ANNOTATION_ROLE = "annotation";
+
+export function agentAnnotationStamp(): { wiley: { role: typeof AGENT_ANNOTATION_ROLE } } {
+  return { wiley: { role: AGENT_ANNOTATION_ROLE } };
+}
+
+export function isAgentAnnotation(element: unknown): boolean {
+  const customData = (element as { customData?: unknown } | null)?.customData;
+  const wiley = (customData as { wiley?: unknown } | null | undefined)?.wiley as
+    | { diagram?: unknown; role?: unknown }
+    | undefined;
+  return Boolean(wiley) && wiley!.role === AGENT_ANNOTATION_ROLE && wiley!.diagram === undefined;
+}
+
+/** Anything the agent put on the board: part of a diagram, or an annotation. */
+export function isAgentDrawn(element: unknown): boolean {
+  return readDiagramStamp(element) !== undefined || isAgentAnnotation(element);
+}
+
 export function readDiagramStamp(element: unknown): DiagramStamp | undefined {
   const customData = (element as { customData?: unknown } | null)?.customData;
   const wiley = (customData as { wiley?: unknown } | null | undefined)?.wiley as
