@@ -63,6 +63,13 @@ export function isObstacleFinding(finding: string): boolean {
 /** How far inside a container's border its members have to stay. */
 export const CONTAINER_INSET = 12;
 
+/**
+ * Clear space two labels owe each other. Below this the reader stops seeing
+ * two captions and starts seeing one run of text, which is what the pairs
+ * sitting ten pixels apart at the top of a diagram looked like.
+ */
+const LABEL_MIN_GAP = 10;
+
 /** Two ports nearer than this on one node read as a single attachment. */
 const MIN_PORT_SEPARATION = 14;
 
@@ -384,7 +391,10 @@ export function evaluateDiagramPlan(
     }
     for (const other of labels) {
       if (other.id <= label.id) continue;
-      if (boxesOverlap(label, other)) report.labelCollisions.push(`${label.id} x ${other.id}`);
+      // Two labels a few pixels apart read as one smudge of text even though
+      // neither box touches the other, so labels owe each other a gap rather
+      // than merely staying off one another.
+      if (boxesOverlap(label, other, LABEL_MIN_GAP)) report.labelCollisions.push(`${label.id} x ${other.id}`);
     }
     // A bound label sits on its own arrow by construction; landing on anyone
     // else's is a genuine collision.
