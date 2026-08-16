@@ -77,10 +77,12 @@ describe("diagram themes", () => {
     }
   });
 
-  it("draws edges in the theme's muted stroke rather than a hardcoded ink", () => {
+  it("draws every connector in one receding ink rather than a node colour", () => {
     for (const name of THEME_NAMES) {
       const theme = THEMES[name];
-      expect(theme.edgeColor).toBe(theme.entries.muted.stroke);
+      // Wiring is not a role. Taking it from a role's stroke made a warm
+      // board's connectors compete with its boxes for the same attention.
+      expect(theme.edgeColor).toBe(HUES.gray.stroke);
       expect(theme.edgeColor).not.toBe("#1e1e1e");
     }
   });
@@ -109,8 +111,12 @@ describe("diagram themes", () => {
         ? HUES.gray.fill
         : theme.entries[theme.defaultRole].soft;
       expect(quiet.fill, name).toBe(expected);
-      expect(quiet.stroke, name).toBe(theme.edgeColor);
+      // Border from the same hue as the fill. A gray-outlined shape on a warm
+      // board reads as one the drawing forgot to finish.
+      const family = Object.values(HUES).find((hue) => hue.soft === quiet.soft);
+      expect(quiet.stroke, name).toBe(family?.stroke);
     }
+    expect(THEMES.sunset.entries.muted.stroke).toBe(HUES.orange.stroke);
     expect(THEMES.sunset.entries.muted.fill).toBe(HUES.orange.soft);
     expect(THEMES.grape.entries.muted.fill).toBe(HUES.grape.soft);
     // The grayscale themes were already speaking gray, so nothing moves.
