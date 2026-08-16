@@ -35,9 +35,11 @@ import {
 } from "./pi/session-models";
 import { readAgentSettings, updateAgentSettings } from "./pi/settings-tools";
 import { createPiTools, type CanvasMutation, type PiToolHost } from "./pi/tools";
+import { cloudSessionToken, isCloudMode } from "./cloud/cloud-mode";
+import { cloudProviderFingerprint, cloudProviderRegistration } from "./cloud/cloud-provider";
 import { resolveOpenAiKey } from "./settings/secret-store";
 import { type SettingsService } from "./settings/settings-service";
-import { DEFAULT_SETTINGS, type WileySettings } from "./settings/settings-schema";
+import { CLOUD_PROVIDER_ID, DEFAULT_SETTINGS, type WileySettings } from "./settings/settings-schema";
 import { type SettingsStore } from "./settings/settings-store";
 import { WorkerCursors } from "./workers/worker-context";
 import type { WorkerManager } from "./workers/worker-manager";
@@ -103,7 +105,8 @@ export class PiRuntime {
   /** A model change that arrived mid-turn, applied at the next quiet point. */
   #pendingRootPlan?: SessionModelPlan;
   #unsubscribeSettings?: () => void;
-  #apiKey?: string;
+  /** What the provider is currently authenticated with, to skip redundant work. */
+  #providerAuth?: string;
   #workers?: WorkerManager;
   /** Per-worker transcript cursors; the root's is never touched by these. */
   #workerCursors = new WorkerCursors();
@@ -134,7 +137,7 @@ export class PiRuntime {
   async initialize(): Promise<void> {
     this.#modelRuntime = await ModelRuntime.create();
     this.#plan = resolveSessionModels(this.#settings());
-    await this.#applyApiKey();
+    await this.#applyProviderAuth();
     if (!resolveModel(this.#modelRuntime, this.#plan.provider, this.#plan.rootModel)) {
       throw new Error(`Pi model not found: ${this.#plan.provider}/${this.#plan.rootModel}`);
     }
@@ -313,17 +316,32 @@ export class PiRuntime {
       enabled: this.#plan.approvalEnabled,
       provider: this.#plan.provider,
       model: this.#plan.approvalModel,
+      // Without this the judge cannot see a runtime-registered provider, so a
+      // hosted account would run with the soft approval layer silently off.
+      modelRuntime: this.#modelRuntime,
     });
   }
 
   /**
-   * A key typed into Settings has to reach the SDK, but the environment still
-   * wins so a developer's .env keeps behaving the way it always has.
+   * Whichever credential this account actually runs on. In cloud mode that is
+   * the relay, registered as an ordinary OpenAI-compatible provider so no
+   * other part of the runtime has to know it exists; otherwise it is the
+   * user's own key, with the environment still winning so a developer's .env
+   * keeps behaving the way it always has.
    */
-  async #applyApiKey(): Promise<void> {
+  async #applyProviderAuth(): Promise<void> {
+    const settings = this.#settings();
+    if (isCloudMode(settings)) {
+      const input = { settings, token: cloudSessionToken({ settings, secrets: this.settings?.secrets }) };
+      const fingerprint = cloudProviderFingerprint(input);
+      if (fingerprint === this.#providerAuth) return;
+      this.#providerAuth = fingerprint;
+      this.#modelRuntime?.registerProvider(CLOUD_PROVIDER_ID, cloudProviderRegistration(input));
+      return;
+    }
     const resolved = resolveOpenAiKey({ env: process.env, store: this.settings?.secrets });
-    if (!resolved.key || resolved.key === this.#apiKey) return;
-    this.#apiKey = resolved.key;
+    if (!resolved.key || resolved.key === this.#providerAuth) return;
+    this.#providerAuth = resolved.key;
     await this.#modelRuntime?.setRuntimeApiKey(this.#plan.provider, resolved.key);
   }
 
@@ -338,8 +356,8 @@ export class PiRuntime {
     const next = resolveSessionModels(settings);
     this.#plan = next;
     const changed = diffSessionModels(previous, next);
-    void this.#applyApiKey().catch((error: unknown) =>
-      console.error("Could not apply the configured API key", error));
+    void this.#applyProviderAuth().catch((error: unknown) =>
+      console.error("Could not apply the configured account credentials", error));
     if (changed.approval) this.#approvalJudge = this.#buildApprovalJudge();
     if (changed.subagent) {
       // The warm worker was built on the old model, so it is no longer the

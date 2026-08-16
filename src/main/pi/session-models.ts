@@ -1,4 +1,5 @@
 import {
+  effectiveProvider,
   effectiveThinkingLevel,
   subagentModelFor,
   type AgentThinkingLevel,
@@ -21,7 +22,9 @@ export interface SessionModelPlan {
 
 export function resolveSessionModels(settings: WileySettings): SessionModelPlan {
   return {
-    provider: settings.agent.provider,
+    // Derived, not stored: a hosted account runs on the relay provider even
+    // though agent.provider still records what the local path would use.
+    provider: effectiveProvider(settings),
     rootModel: settings.agent.model,
     thinkingLevel: effectiveThinkingLevel(settings),
     subagentModel: subagentModelFor(settings),
