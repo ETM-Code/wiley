@@ -188,8 +188,11 @@ export class WorkerManager implements WorkerRegistry {
     return this.options.settings().workers[kind];
   }
 
+  /**
+   * Pi subagents never reach the manager: the runtime routes those to their
+   * own in-process path, and only the two CLI kinds are registered here.
+   */
   #cliKind(worker: ManagedWorker): CliWorkerKind {
-    // Pi subagents never reach the manager; the registry adapter owns those.
     return worker.spec.kind === "codex" ? "codex" : "claude";
   }
 
