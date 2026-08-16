@@ -20,7 +20,7 @@
     "test:e2e:worker": "node scripts/e2e-worker.mjs",
     "start": "electron-vite preview",
     "package:mac": "npm run build && electron-builder --mac dmg --arm64",
-    "package:mac:notarized": "npm run build && WILEY_NOTARIZE=1 electron-builder --mac dmg --arm64 -c.mac.notarize=true",
+    "package:mac:notarized": "npm run build && WILEY_NOTARIZE=1 electron-builder --mac dmg --arm64 -c.mac.notarize=true && bash scripts/staple-dmg.sh",
     "package:mac:unsigned": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64",
     "icon": "bash scripts/make-icon.sh",
     "sync:skill": "tsx scripts/sync-skill.ts",
@@ -107,7 +107,8 @@
       ]
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "sign": true
     }
   },
   "engines": {
