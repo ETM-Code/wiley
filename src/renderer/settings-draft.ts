@@ -12,6 +12,7 @@ export function settingsOf(view: SettingsView): WileySettings {
   delete settings.secrets;
   delete settings.models;
   delete settings.probes;
+  delete settings.terminalApps;
   return settings as WileySettings;
 }
 

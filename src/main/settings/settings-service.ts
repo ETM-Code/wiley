@@ -1,4 +1,5 @@
 import type { SettingsView, WorkerProbes } from "../../shared/contracts";
+import { createTerminalAppDetector } from "../workers/terminal-handoff";
 import { listAvailableModels, type ModelCatalogRuntime, type ModelOption } from "./model-catalog";
 import { resolveOpenAiKey, type SecretName } from "./secret-store";
 import { type SettingsPatch, type WileySettings, WORKER_KINDS } from "./settings-schema";
@@ -21,6 +22,8 @@ export interface SettingsServiceOptions {
   modelRuntime?: () => ModelCatalogRuntime | undefined;
   env?: Record<string, string | undefined>;
   probeWorkers?: () => WorkerProbes | Promise<WorkerProbes>;
+  /** Injected so a test can describe a machine without owning one. */
+  terminalApps?: () => string[];
 }
 
 /**
@@ -29,6 +32,7 @@ export interface SettingsServiceOptions {
  */
 export class SettingsService {
   #models?: ModelOption[];
+  readonly #detectTerminalApps = createTerminalAppDetector();
 
   constructor(private readonly options: SettingsServiceOptions) {}
 
@@ -67,7 +71,13 @@ export class SettingsService {
       },
       models: await this.models(settings),
       probes: await this.probeWorkers(),
+      terminalApps: this.terminalApps(),
     };
+  }
+
+  /** Cheap enough to answer on every view: a handful of existsSync calls. */
+  terminalApps(): string[] {
+    return (this.options.terminalApps ?? this.#detectTerminalApps)();
   }
 
   async update(patch: SettingsPatch): Promise<SettingsView> {

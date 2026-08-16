@@ -143,6 +143,8 @@ export interface SettingsView extends WileySettings {
   };
   models: ModelOption[];
   probes: WorkerProbes;
+  /** Terminal emulators found on this machine, for the handoff picker. */
+  terminalApps: string[];
 }
 
 export interface BoardSnapshot {
