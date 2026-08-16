@@ -2074,14 +2074,20 @@ function assemblePlan(
   ]);
 
   const title = params.title?.trim();
-  // Top-left, its own measured width, and one clear band of headroom: a title
-  // centered across the graph sits exactly where inbound arrows and
-  // neighboring clusters land. The band is measured from the top of what was
-  // actually drawn rather than from the origin, so a graph whose first row
-  // starts low does not leave the title stranded in white space.
+  // A title names the drawing, so it is measured against the drawing and not
+  // against the origin the layout happened to start from. Centred over what
+  // was actually drawn, with one clear band of headroom above the topmost
+  // thing on the board: a title pinned to the origin of a tree ends up in the
+  // far corner with the apex it names a third of the board away, which is the
+  // marooned caption a reader notices before they read anything else.
   const titleSize = title ? measureText(title, TITLE_FONT_SIZE) : { width: 0, height: 0 };
-  const drawnTop = Math.min(origin.y, ...[...regionSkeletons, ...nodeSkeletons, ...edgeLabelSkeletons]
-    .map((skeleton) => finiteNumber(skeleton.y, origin.y)));
+  const drawn = [...regionSkeletons, ...nodeSkeletons, ...edgeLabelSkeletons];
+  const drawnTop = Math.min(origin.y, ...drawn.map((skeleton) => finiteNumber(skeleton.y, origin.y)));
+  const drawnLeft = Math.min(origin.x, ...drawn.map((skeleton) => finiteNumber(skeleton.x, origin.x)));
+  const drawnRight = Math.max(
+    origin.x,
+    ...drawn.map((skeleton) => finiteNumber(skeleton.x, origin.x) + finiteNumber(skeleton.width)),
+  );
   const titleId = titleElementId(diagramId);
   if (title) roles.set(titleId, { role: "title" });
   const skeletons: JsonObject[] = [
@@ -2089,7 +2095,7 @@ function assemblePlan(
       id: titleId,
       type: "text",
       ...stamp("title"),
-      x: origin.x,
+      x: snapModelCoordinate((drawnLeft + drawnRight - titleSize.width) / 2),
       y: snapModelCoordinate(drawnTop - TITLE_HEADROOM - titleSize.height),
       width: titleSize.width,
       height: titleSize.height,
