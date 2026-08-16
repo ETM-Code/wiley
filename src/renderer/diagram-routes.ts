@@ -799,18 +799,6 @@ export function routeDefects(
   return guilty;
 }
 
-/**
- * Where an edge label goes when the layout engine refuses to say. ELK's
- * mrtree and radial algorithms return every edge label at the origin, so the
- * label has to be placed against the route we ended up drawing.
- *
- * Candidates ring the route's midpoint in a fixed order, near before far, and
- * the first one clear of every obstacle wins. When the midpoint's ring is
- * blocked the search slides along the route the way a person would, and if
- * every spot is blocked the least covered one is used: a label grazing a line
- * still beats one parked squarely on a node, which is what taking the first
- * candidate blind used to do.
- */
 /** The point a given fraction of the way along a polyline. */
 function pointAlong(points: readonly Point[], at: number): Point {
   if (points.length === 0) return { x: 0, y: 0 };
@@ -833,6 +821,43 @@ function pointAlong(points: readonly Point[], at: number): Point {
   return points[points.length - 1];
 }
 
+/**
+ * The daylight a caption keeps between its own box and the line it names.
+ * Wide enough to survive the zoom a long board is exported at: the evaluator
+ * fails a caption under CAPTION_DAYLIGHT_MIN, and placing at that floor left
+ * nothing for a bend a pixel or two off where the anchor said it was.
+ */
+export const CAPTION_DAYLIGHT = 12;
+
+/** Which way the route runs where a caption is about to sit beside it. */
+function headingNear(points: readonly Point[], at: Point): Point {
+  let best = { x: 1, y: 0 };
+  let nearest = Number.POSITIVE_INFINITY;
+  for (const segment of pointsToSegments(points)) {
+    const dx = segment.x2 - segment.x1;
+    const dy = segment.y2 - segment.y1;
+    const run = Math.hypot(dx, dy);
+    if (run === 0) continue;
+    const t = Math.max(0, Math.min(1, ((at.x - segment.x1) * dx + (at.y - segment.y1) * dy) / (run * run)));
+    const gap = Math.hypot(segment.x1 + dx * t - at.x, segment.y1 + dy * t - at.y);
+    if (gap >= nearest) continue;
+    nearest = gap;
+    best = { x: dx / run, y: dy / run };
+  }
+  return best;
+}
+
+/**
+ * Where an edge label goes: beside its line, never on it.
+ *
+ * A caption is offset square to the run it names, on the side a reader looks
+ * for it: above a horizontal run, right of a vertical one. Every such seat is
+ * tried, near before far and along the whole route, before the search will
+ * consider pushing the caption out past one end of the run instead, which is
+ * what a caption far too long for what it names has to do. The first spot
+ * clear of every obstacle the caller also accepts wins; when every spot is
+ * spoken for, one merely grazing a line beats one parked squarely on a node.
+ */
 export function placeEdgeLabel(
   points: readonly Point[],
   size: { width: number; height: number },
@@ -849,25 +874,35 @@ export function placeEdgeLabel(
     : points.length % 2 === 1
       ? points[(points.length - 1) / 2]
       : midpoint(points[points.length / 2 - 1], points[points.length / 2]);
-  const gap = 8;
+  const upward = { x: 0, y: -1 };
+  const downward = { x: 0, y: 1 };
+  const rightward = { x: 1, y: 0 };
+  const leftward = { x: -1, y: 0 };
+  const seats = [anchor, ...[0.3, 0.7, 0.15, 0.85].map((at) => pointAlong(points, at))]
+    .map((along) => {
+      const heading = headingNear(points, along);
+      // Square to the run, reader's side first; then the two ways out past it.
+      return Math.abs(heading.x) >= Math.abs(heading.y)
+        ? { along, beside: [upward, downward], past: [rightward, leftward] }
+        : { along, beside: [rightward, leftward], past: [upward, downward] };
+    });
   const candidates: Point[] = [];
-  for (const along of [anchor, ...[0.3, 0.7, 0.15, 0.85].map((at) => pointAlong(points, at))]) {
-    for (const scale of [1, 2, 3, 4]) {
-      for (const offset of [
-        { x: 0, y: -(size.height / 2 + gap) * scale },
-        { x: 0, y: (size.height / 2 + gap) * scale },
-        { x: (size.width / 2 + gap) * scale, y: 0 },
-        { x: -(size.width / 2 + gap) * scale, y: 0 },
-      ]) {
-        candidates.push({
-          x: along.x + offset.x - size.width / 2,
-          y: along.y + offset.y - size.height / 2,
-        });
+  for (const directions of ["beside", "past"] as const) {
+    for (const seat of seats) {
+      for (const scale of [1, 2, 3, 4]) {
+        for (const side of seat[directions]) {
+          const reach = (side.x === 0 ? size.height : size.width) / 2 + CAPTION_DAYLIGHT;
+          candidates.push({
+            x: seat.along.x + side.x * reach * scale - size.width / 2,
+            y: seat.along.y + side.y * reach * scale - size.height / 2,
+          });
+        }
       }
     }
   }
   let bestCandidate = candidates[0];
   let bestOverlap = Number.POSITIVE_INFINITY;
+  let bestAllowed = false;
   for (const candidate of candidates) {
     const box: Box = { id: "label", ...candidate, width: size.width, height: size.height };
     let overlap = 0;
@@ -876,13 +911,14 @@ export function placeEdgeLabel(
       const down = Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y);
       if (across > 0 && down > 0) overlap += across * down;
     }
-    // A clear spot the caller also accepts ends the search. One it rules out
-    // is still recorded, so a ring where every spot has a line through it
-    // falls back to the same answer it gave before there was a rule at all:
-    // standing somewhere is better than standing nowhere.
-    if (overlap === 0 && !forbids?.(box)) return candidate;
-    if (overlap < bestOverlap) {
+    const allowed = !forbids?.(box);
+    if (overlap === 0 && allowed) return candidate;
+    // A spot the caller rules out is the last resort, not merely one more
+    // candidate: a caption with a line through it reads as struck out, which
+    // is worse than one sitting nearer a box than it would like.
+    if (allowed === bestAllowed ? overlap < bestOverlap : allowed) {
       bestOverlap = overlap;
+      bestAllowed = allowed;
       bestCandidate = candidate;
     }
   }

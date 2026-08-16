@@ -1002,12 +1002,11 @@ describe("diagram layout quality", () => {
     expect(boundLabelRoom(bent)).toBe(60);
   });
 
-  it("binds a label the route can carry and stands a long one beside it", async () => {
+  it("stands a caption beside its line even where the line could carry it", async () => {
     const plan = await planDiagramLayout({
-      // The layered engine widens a layer to fit an edge label, so the route
-      // that cannot carry one is a straight run between fixed placements. On
-      // a run this short only a caption of two or three characters leaves the
-      // arrowhead room at each end.
+      // A run this short would carry "ok" with room to spare, which is exactly
+      // the case that used to be bound. It is not the caption's length that
+      // decides now; a word cut into the line reads as part of it.
       layout: { algorithm: "stress" },
       nodes: [
         { id: "a", label: "Source" },
@@ -1020,23 +1019,42 @@ describe("diagram layout quality", () => {
       ],
     }, ORIGIN, DIAGRAM_ID);
 
-    const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
-    expect(arrows[0].label).toEqual({
-      text: "ok",
-      strokeColor: "#1e1e1e",
-      fontSize: 16,
-      fontFamily: 5,
-    });
-    expect(arrows[1].label).toBeUndefined();
-    // The standalone label keeps its own element; the bound one keeps only an
-    // identity, and both are counted.
+    expect(plan.skeletons.filter((skeleton) => skeleton.type === "arrow" && skeleton.label)).toEqual([]);
     const standalone = plan.skeletons.filter(
       (skeleton) => plan.roles.get(String(skeleton.id))?.role === "edgeLabel",
     );
-    expect(standalone).toHaveLength(1);
-    expect(standalone[0].text).toBe("every accepted revision with its author and timestamp");
+    expect(standalone.map((skeleton) => skeleton.text)).toEqual([
+      "ok",
+      "every accepted revision with its author and timestamp",
+    ]);
     expect(plan.edgeLabelCount).toBe(2);
-    expect([...plan.roles.values()].filter((entry) => entry.bound)).toHaveLength(1);
+    expect([...plan.roles.values()].filter((entry) => entry.bound)).toEqual([]);
+    // And each one keeps daylight from every line on the board, its own first.
+    expect(evaluateDiagramPlan(plan).labelCollisions).toEqual([]);
+  });
+
+  it("rides the line only where a fan leaves a caption nowhere to stand", async () => {
+    // Eight labelled edges converging on one node: the channels between them
+    // are narrower than a caption plus the daylight it owes on both sides, so
+    // there is no seat beside any of them. A gap cut in one run says which
+    // connector the word belongs to; a word with three lines through it does
+    // not.
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      nodes: [
+        ...Array.from({ length: 8 }, (_, index) => ({ id: `source-${index}`, label: `Source ${index}` })),
+        { id: "sink", label: "Sink" },
+      ],
+      edges: Array.from({ length: 8 }, (_, index) => ({
+        from: `source-${index}`,
+        to: "sink",
+        label: index % 2 === 0 ? "emit" : "flush",
+      })),
+    }, ORIGIN, DIAGRAM_ID);
+
+    const bound = [...plan.roles.values()].filter((entry) => entry.bound);
+    expect(bound.length).toBeGreaterThan(0);
+    expect(evaluateDiagramPlan(plan).labelCollisions).toEqual([]);
   });
 
   it("honours an explicit label mode over what the route would choose", async () => {
