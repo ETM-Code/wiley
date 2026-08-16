@@ -442,6 +442,54 @@ describe("diagram layout quality", () => {
     }
   });
 
+  it("fans a tree's children off one trunk rather than three stubs", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "tree", direction: "DOWN" },
+      nodes: [
+        { id: "ceo", label: "Ada Whitlock" },
+        { id: "cto", label: "Ravi Menon" },
+        { id: "cpo", label: "Jo Kim" },
+        { id: "crev", label: "Sam Ortiz" },
+      ],
+      edges: [
+        { from: "ceo", to: "cto" },
+        { from: "ceo", to: "cpo" },
+        { from: "ceo", to: "crev" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const parent = byId.get(plan.elementIdByNode.get("ceo")!)!;
+    const arrows = plan.skeletons.filter((skeleton) => plan.roles.get(String(skeleton.id))?.role === "edge");
+    expect(arrows).toHaveLength(3);
+    const exits = arrows.map((arrow) => {
+      const [dx, dy] = (arrow.points as Array<[number, number]>)[0];
+      return { x: (arrow.x as number) + dx, y: (arrow.y as number) + dy };
+    });
+    // One point, in the middle of the parent's underside: the connector out
+    // of the box is one line that splits, which is what a hierarchy looks
+    // like on every org chart on the shelf.
+    for (const exit of exits) {
+      expect(exit.x).toBe((parent.x as number) + (parent.width as number) / 2);
+      expect(exit.y).toBe((parent.y as number) + (parent.height as number));
+    }
+    // Every child of one parent turns on the same line, so the fan reads as
+    // one bus rather than three brackets at three depths. The child standing
+    // directly under the parent needs no turn and takes the bus in a straight
+    // run through it.
+    const turns = arrows
+      .filter((arrow) => (arrow.points as Array<[number, number]>).length > 2)
+      .map((arrow) => (arrow.y as number) + (arrow.points as Array<[number, number]>)[1][1]);
+    expect(turns.length).toBeGreaterThan(0);
+    expect(new Set(turns).size).toBe(1);
+    expect(turns[0]).toBeGreaterThan(exits[0].y);
+    // And the trunk it shares is not reported as a doubled line or a
+    // collision of ports, because it is neither.
+    const report = evaluateDiagramPlan(plan);
+    expect(report.sharedPorts).toEqual([]);
+    expect(report.overlappingParallelSegments).toEqual([]);
+    expect(report.edgesThroughNodes).toEqual([]);
+  });
+
   it("keeps a tree's bare-text leaves in tight rows", async () => {
     const plan = await planDiagramLayout({
       layout: { algorithm: "tree", direction: "RIGHT" },

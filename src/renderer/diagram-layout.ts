@@ -194,6 +194,12 @@ export type DiagramElementRoleEntry = {
   container?: string;
   /** Set on an edge label the converter attaches to the arrow itself. */
   bound?: boolean;
+  /**
+   * The parent whose fan this connector belongs to, when a tree's children
+   * leave their parent by one shared trunk. Siblings overlap on the run they
+   * share, and that run is the drawing, not a defect in it.
+   */
+  trunk?: string;
 };
 
 /** A container as it was actually drawn, keyed by its semantic id. */
@@ -700,6 +706,13 @@ type EdgeGeometry = {
    * label onto the arrow even when it does not fit.
    */
   placeLabel?: boolean;
+  /**
+   * The parent whose fan this connector belongs to, when it leaves by a
+   * shared trunk. Two siblings running over each other on the way out of one
+   * box is the shape, so the checks that would otherwise call it a doubled
+   * line need to know which pairs are deliberate.
+   */
+  trunk?: string;
 };
 
 type LayoutGeometry = {
@@ -2064,6 +2077,57 @@ const NON_LAYERED_OPTIONS: Record<Exclude<DiagramAlgorithm, "layered">, Record<s
   stress: { "elk.algorithm": "stress", "elk.randomSeed": "1" },
 };
 
+/**
+ * The line each parent's fan of children splits on, by parent.
+ *
+ * Every child of one parent leaves by the middle of the parent's side and
+ * runs to this line before it turns, so what a reader sees is one connector
+ * out of the box that divides, rather than one stub per child spread along
+ * the side. The line sits halfway between the parent's own edge and the
+ * nearest child's, which is the middle of the gap between the two ranks and
+ * therefore the same line for every fan hanging off that rank.
+ */
+function trunkLines(
+  boxes: ReadonlyMap<string, RouteBox>,
+  edges: readonly GraphEdge[],
+  sides: { from: Side; to: Side },
+): Map<string, number> {
+  const leaves = (box: RouteBox) => {
+    if (sides.from === "bottom") return box.y + box.height;
+    if (sides.from === "top") return box.y;
+    if (sides.from === "right") return box.x + box.width;
+    return box.x;
+  };
+  const arrives = (box: RouteBox) => {
+    if (sides.to === "top") return box.y;
+    if (sides.to === "bottom") return box.y + box.height;
+    if (sides.to === "left") return box.x;
+    return box.x + box.width;
+  };
+  const children = new Map<string, RouteBox[]>();
+  for (const edge of edges) {
+    const child = boxes.get(edge.to);
+    if (!boxes.has(edge.from) || !child) continue;
+    children.set(edge.from, [...(children.get(edge.from) ?? []), child]);
+  }
+  const lines = new Map<string, number>();
+  for (const [parent, kids] of children) {
+    const exit = leaves(boxes.get(parent)!);
+    const nearest = kids
+      .map(arrives)
+      .reduce((best, at) => (Math.abs(at - exit) < Math.abs(best - exit) ? at : best));
+    // Half a rank gap is not always a whole grid cell, and a bus off the grid
+    // draws the one connector on the board that does not line up with the
+    // rest. Both ends of the gap are on the grid, so the middle is on it or
+    // on its half; taking the nearer cell keeps every fan on one line.
+    const line = snapModelCoordinate((exit + nearest) / 2);
+    if ((line - exit) * (nearest - exit) > 0 && Math.abs(line - exit) < Math.abs(nearest - exit)) {
+      lines.set(parent, line);
+    }
+  }
+  return lines;
+}
+
 /** Only the tree algorithm reads a flow direction; the rest are undirected. */
 export function algorithmUsesDirection(algorithm: DiagramAlgorithm): boolean {
   return algorithm === "layered" || algorithm === "tree";
@@ -2310,20 +2374,27 @@ async function nonLayeredGeometry(
   // side of it. Letting each edge pick the nearest border instead lands the
   // arrow on a child's flank and the chart reads as a web.
   const flowSides = algorithm === "tree" ? TREE_PORT_SIDES[input.direction] : undefined;
+  const trunkAt = flowSides ? trunkLines(boxes, input.edges, flowSides) : null;
   const requests: RouteRequest[] = input.edges.map((edge, index) => {
     const { section } = elkSection(result, index);
     const raw = section && !hub
       ? dedupeNearPoints([section.startPoint, ...(section.bendPoints ?? []), section.endPoint])
       : undefined;
+    const trunk = trunkAt?.get(edge.from);
     return {
       id: `edge-${index}`,
       from: edge.from,
       to: edge.to,
       ...(flowSides ? { sides: flowSides } : {}),
-      ...(raw ? { route: raw } : {}),
+      ...(trunk !== undefined ? { trunk } : {}),
+      // A trunk is drawn against the bus, not re-anchored off ELK's channel.
+      ...(raw && trunk === undefined ? { route: raw } : {}),
     };
   });
-  const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
+  const attachments = new Map(requests.map((request) => [
+    request.id,
+    { from: request.from, to: request.to, ...(request.trunk !== undefined ? { trunk: true } : {}) },
+  ]));
 
   const minSteps = new Map<string, number>();
   // A ringed hub attaches on bearings, not on side slots, so the fan of
@@ -2345,14 +2416,15 @@ async function nonLayeredGeometry(
   const placed: RouteBox[] = [...boxes.values()];
   const edgeGeometry: EdgeGeometry[] = input.edges.map((edge, index) => {
     const route = routes[index];
+    const trunk = trunkAt?.has(edge.from) ? { trunk: edge.from } : {};
     const text = edge.label?.trim();
-    if (!text) return { points: route.points, rounded: route.rounded };
+    if (!text) return { points: route.points, rounded: route.rounded, ...trunk };
     // ELK hands back (0,0) for every edge label under mrtree and radial, so
     // the label is placed against the route we actually drew.
     const size = measureText(text, EDGE_LABEL_FONT_SIZE);
     const label = placeEdgeLabel(route.points, size, placed);
     placed.push({ id: `label-${index}`, x: label.x, y: label.y, ...size });
-    return { points: route.points, rounded: route.rounded, label };
+    return { points: route.points, rounded: route.rounded, label, ...trunk };
   });
 
   return {
@@ -2669,7 +2741,13 @@ function assemblePlan(
     }
     const ownerGroups = owner && boxes.has(owner) ? groupsFor(owner) : [];
     const edgeGroups: JsonObject = ownerGroups.length ? { groupIds: ownerGroups } : {};
-    roles.set(edgeId, { role: "edge", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
+    roles.set(edgeId, {
+      role: "edge",
+      key,
+      edgeIndex: index,
+      ...(owner ? { container: owner } : {}),
+      ...(routed?.trunk ? { trunk: routed.trunk } : {}),
+    });
     const text = edge.label?.trim();
     const labelSize = text ? measureText(text, EDGE_LABEL_FONT_SIZE) : { width: 0, height: 0 };
     // A label rides the arrow when the middle of the route is long enough to

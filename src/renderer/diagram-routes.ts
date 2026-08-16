@@ -431,13 +431,28 @@ export function portSlots(box: Box, side: Side, count: number): Point[] {
   });
 }
 
+/** The middle of one side: where a fan of siblings shares its single exit. */
+export function sideCentre(box: Box, side: Side): Point {
+  const centre = boxCenter(box);
+  if (side === "top") return { x: centre.x, y: box.y };
+  if (side === "bottom") return { x: centre.x, y: box.y + box.height };
+  if (side === "left") return { x: box.x, y: centre.y };
+  return { x: box.x + box.width, y: centre.y };
+}
+
 /**
  * Places every edge endpoint on a port slot. Returns start and end points per
  * edge id, in absolute coordinates.
  */
 export function assignPorts(
   nodes: ReadonlyMap<string, Box>,
-  edges: ReadonlyArray<{ id: string; from: string; to: string; sides?: { from: Side; to: Side } }>,
+  edges: ReadonlyArray<{
+    id: string;
+    from: string;
+    to: string;
+    sides?: { from: Side; to: Side };
+    trunk?: number;
+  }>,
   options: PortOptions = {},
 ): Map<string, { start: Point; end: Point }> {
   const requests = new Map<string, PortRequest[]>();
@@ -458,7 +473,16 @@ export function assignPorts(
     requests.set(bucket, list);
   };
   for (const edge of edges) {
-    request(`${edge.id}|start`, edge.from, edge.to, "right", edge.sides?.from);
+    const parent = nodes.get(edge.from);
+    // A fan that shares a trunk shares the port it leaves by: one line out of
+    // the parent that splits at the bus, rather than one stub per child
+    // spread along the side, which is what makes three children read as three
+    // unrelated departures.
+    if (edge.trunk !== undefined && edge.sides && parent && !options.radial) {
+      points.set(`${edge.id}|start`, sideCentre(parent, edge.sides.from));
+    } else {
+      request(`${edge.id}|start`, edge.from, edge.to, "right", edge.sides?.from);
+    }
     request(`${edge.id}|end`, edge.to, edge.from, "left", edge.sides?.to);
   }
 
@@ -582,6 +606,8 @@ export function flowRoute(
   to: Point,
   sides: { from: Side; to: Side },
   blockers: readonly Box[],
+  /** Where the connector turns, when a fan of siblings shares one bus. */
+  turnAt?: number,
 ): RepairedRoute | null {
   const alongY = sides.from === "top" || sides.from === "bottom";
   // A connector that leaves and rejoins on the same side is a loop back or a
@@ -613,7 +639,7 @@ export function flowRoute(
       : [{ x: from.x, y: shared }, { x: to.x, y: shared }];
     return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
   }
-  const turn = alongY ? (from.y + to.y) / 2 : (from.x + to.x) / 2;
+  const turn = turnAt ?? (alongY ? (from.y + to.y) / 2 : (from.x + to.x) / 2);
   const points = alongY
     ? [from, { x: from.x, y: turn }, { x: to.x, y: turn }, to]
     : [from, { x: turn, y: from.y }, { x: turn, y: to.y }, to];
@@ -714,7 +740,7 @@ function compareRoutes(a: readonly Point[], b: readonly Point[]): number {
 export function routeDefects(
   nodes: ReadonlyMap<string, Box>,
   routes: readonly PlannedRoute[],
-  attachments: ReadonlyMap<string, { from: string; to: string }>,
+  attachments: ReadonlyMap<string, { from: string; to: string; trunk?: boolean }>,
 ): Set<string> {
   const guilty = new Set<string>();
   for (const route of routes) {
@@ -727,6 +753,12 @@ export function routeDefects(
   }
   for (let a = 0; a < routes.length; a++) {
     for (let b = a + 1; b < routes.length; b++) {
+      const one = attachments.get(routes[a].id);
+      const other = attachments.get(routes[b].id);
+      // Two siblings sharing a trunk run over each other by design: the run
+      // they share is the one line out of their parent, and drawing it once
+      // is the whole point of the shape.
+      if (one?.trunk && other?.trunk && one.from === other.from) continue;
       const first = pointsToSegments(routes[a].points);
       const second = pointsToSegments(routes[b].points);
       if (first.some((one) => second.some((other) => segmentsVisuallyMerge(one, other)))) {
@@ -847,6 +879,14 @@ export type RouteRequest = {
    * the edges it holds, and only the caller knows which is which.
    */
   blockers?: readonly Box[];
+  /**
+   * The flow coordinate of the bus a fan of siblings shares. Every child of
+   * one parent leaves by the middle of the parent's side, runs to this line,
+   * and splits along it. It is the shape every org chart on the shelf is
+   * drawn in, and the reason is that a reader following one line back up
+   * arrives at the parent rather than at one of three unrelated stubs.
+   */
+  trunk?: number;
 };
 
 export type PlannedRoute = { id: string; points: Point[]; rounded: boolean };
@@ -899,7 +939,7 @@ export function planRoutes(
     // loop raises minStep on an edge that is still in trouble, and that is the
     // signal to stop insisting on the tidy shape and go looking for any shape.
     if (edge.sides && minStep <= 1) {
-      const flow = flowRoute(start, end, edge.sides, blockers);
+      const flow = flowRoute(start, end, edge.sides, blockers, edge.trunk);
       if (flow) return { id: edge.id, ...flow };
     }
     if (!options.square) {
