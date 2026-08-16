@@ -216,6 +216,10 @@ async function main() {
   const textsBefore = boardBefore.elements
     .filter((element) => element.type === "text")
     .map((element) => element.text);
+  const diagramIds = (board) => [...new Set(board.elements
+    .map((element) => element.customData?.wiley?.diagram)
+    .filter(Boolean))].sort();
+  const diagramsBefore = diagramIds(boardBefore);
 
   // ── 2. Correction: stale content must be fixed on the board ──
   const eventsBefore = agentEvents.length;
@@ -223,20 +227,31 @@ async function main() {
     "One thing on the current safety diagram is wrong or missing: the approval reviewer runs a separate cheap model (gpt-5.4-mini by default via WILEY_APPROVAL_MODEL), it is NOT the main luna model, and read-only bash commands skip it entirely. Verify against src/main/safety.ts and correct the existing diagram in place: fix or erase only the wrong parts, do not clear the board, do not draw a second diagram.",
     "The judge model part looks wrong, fix the diagram in place",
   );
-  const correctionCalls = agentEvents.slice(eventsBefore).filter((event) =>
-    event.type === "tool_started"
-    && ["edit_canvas", "draw_on_canvas", "connect_shapes"].includes(event.payload?.toolName));
-  const clearCalls = agentEvents.slice(eventsBefore).filter((event) =>
-    event.type === "tool_started" && event.payload?.toolName === "clear_canvas");
+  const startedTools = (names) => agentEvents.slice(eventsBefore).filter((event) =>
+    event.type === "tool_started" && names.includes(event.payload?.toolName));
+  // A diagram the agent owns is corrected by evolving it: update_diagram for
+  // the graph itself, the patch tools for anything hand-placed around it.
+  const correctionCalls = startedTools(
+    ["update_diagram", "edit_canvas", "draw_on_canvas", "connect_shapes"],
+  );
+  const clearCalls = startedTools(["clear_canvas"]);
+  const redrawCalls = startedTools(["draw_diagram"]);
   check("corrected in place with edits", correctionCalls.length >= 1,
     correctionCalls.map((event) => event.payload.toolName).join(", ") || "no edit tools used");
   check("did not clear the board to correct", clearCalls.length === 0);
+  check("did not redraw a second diagram to correct", redrawCalls.length === 0,
+    `${redrawCalls.length} draw_diagram calls`);
   const boardAfter = await api("/api/board-state");
   const textsAfter = boardAfter.elements
     .filter((element) => element.type === "text")
     .map((element) => element.text);
   check("board text actually changed", JSON.stringify(textsBefore) !== JSON.stringify(textsAfter),
     `${textsBefore.length} -> ${textsAfter.length} texts`);
+  // Evolving the diagram keeps its identity; replacing it would mint a new id.
+  check("corrected the same diagram rather than replacing it",
+    diagramsBefore.length > 0
+    && JSON.stringify(diagramIds(boardAfter)) === JSON.stringify(diagramsBefore),
+    `${diagramsBefore.join(", ")} -> ${diagramIds(boardAfter).join(", ")}`);
 
   // ── 3. Status reflects the session ──
   const status = await api("/api/tool", {
