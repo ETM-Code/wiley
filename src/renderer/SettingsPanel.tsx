@@ -605,7 +605,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           label="Project folder"
           value={draft.projectDir ?? ""}
           placeholder="~/Wiley"
-          hint="Everything Wiley reads, writes, and runs happens here. Blank means ~/Wiley in the app and the launch directory when run from a checkout. Applies the next time Wiley starts."
+          hint="A fallback for hosts with no picker, and for naming a folder rather than choosing one. The app opens the last project you opened and takes this only when there is none; the browser shell uses it directly. Applies the next time Wiley starts."
           onChange={(projectDir) => setDraft({ ...draft, projectDir: projectDir.trim() ? projectDir : undefined })}
         />
         {canPickFolder ? (

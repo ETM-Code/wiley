@@ -22,7 +22,7 @@ Chat windows made AI feel like a ticketing system: type a request, wait, read a 
 
 One voice, one board, real hands.
 
-Said plainly before the pitch: Wiley runs shell commands and edits files in a workspace on your machine, and it holds an open Realtime voice session for as long as it is listening. Both cost you something. Both are guarded, and the guards are described below rather than assumed.
+Said plainly before the pitch: Wiley runs shell commands and edits files in a project folder on your machine, and it holds an open Realtime voice session for as long as it is listening. Both cost you something. Both are guarded, and the guards are described below rather than assumed.
 
 <p align="center">
   <img src="assets/board.png" alt="A Wiley board: an architecture diagram Wiley drew, a hand-drawn wireframe Wiley labelled, and the screenshot of the website it then built" width="920" />
@@ -95,6 +95,8 @@ npm run dev:web        # browser shell at http://localhost:5173
 
 For the Electron shell, run `npm run dev` instead of the last line. For a real app bundle rather than a dev server, see the packaging table below.
 
+**Wiley opens a project.** Launching it means choosing a folder: the first launch shows a picker with a native Open Folder button and the projects you have opened before, and every launch after that reopens the last one without asking. Switch at any time from File → Open Project (⌘O), File → Open Recent, or the project chip in the top-right of the board; the switch happens in place, with no restart. Everything Wiley reads, writes and runs stays inside the folder, and the folder carries its own history: boards, sessions and transcripts live in `<project>/.wiley/runtime.sqlite`, so reopening a project brings its board back with it. The first project opened after upgrading from a version that kept one shared ledger adopts that history, and the original is left renamed beside it rather than deleted. The browser shell still serves the single project it was started in.
+
 Your OpenAI API key never leaves the main process. The renderer receives only a short-lived Realtime client secret scoped to the voice session. Keys entered in the settings panel are stored through the OS keychain when it is available, and a `0600` file otherwise. Pi can also use credentials already configured in `~/.pi/agent/auth.json`.
 
 A word on signing: `package.json` pins the Developer ID identity to the maintainer's certificate, so `npm run package:mac` only works on a machine holding it. Build with `npm run package:mac:unsigned`, or point `CSC_NAME` at your own identity. Notarizing needs your own Apple credentials either way.
@@ -105,8 +107,8 @@ Optional settings, for the cases the panel does not cover:
 
 | Variable | Effect |
 | --- | --- |
-| `WILEY_PROJECT_DIR` | Workspace the coding tools may edit (default: launch directory, `~/Wiley` when packaged) |
-| `WILEY_DATA_DIR` | Directory for the SQLite ledger |
+| `WILEY_PROJECT_DIR` | Project folder the coding tools may edit; overrides the picker and the last project opened |
+| `WILEY_DATA_DIR` | Directory for the SQLite ledger (default: `<project>/.wiley`) |
 | `WILEY_CONFIG_DIR` | Where `settings.json` and the secret store live |
 | `VOICE_DISABLED=1` | Keeps Realtime offline and shows a text input for harness testing |
 | `WILEY_APPROVAL_MODEL` | Reviewer model for risky tool calls (default `gpt-5.6-luna`; `gpt-5.6` family only) |
@@ -115,7 +117,7 @@ Optional settings, for the cases the panel does not cover:
 
 The full list, including the end-to-end and packaging variables, is in [`.env.example`](.env.example).
 
-Everything else is in the settings panel. The persistent controls on the board are the microphone button in the bottom-right, the music toggle beside it, and the settings and new-session buttons. Muting stops capture only; playback and background work continue.
+Everything else is in the settings panel. The persistent controls on the board are the microphone button in the bottom-right, the music toggle beside it, and the project chip, settings and new-session buttons in the top-right. Muting stops capture only; playback and background work continue.
 
 **Wiley Cloud.** The app supports a relay mode: point it at a relay base URL, sign in with a token, and models are proxied instead of billed to your own key. The relay service itself is a separate piece of infrastructure and still in progress. Bring-your-own key is the default and the supported path, and cloud mode never silently falls back to your own key when the relay fails.
 
