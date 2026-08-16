@@ -24,7 +24,31 @@ describe("voice question bridge", () => {
     await expect(answer).resolves.toMatch(/aborted/i);
   });
 
-  it("suppresses early and repetitive progress narration", () => {
+  it("holds the opening line past the instant-task window, then rations the rest", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sent: Array<{ text: string }> = [];
+    const bridge = new VoiceBridge((payload) => sent.push(payload));
+
+    // The opening narration always lands immediately, so it is held rather
+    // than dropped; the work here outlives the window, so it gets spoken.
+    bridge.beginWork();
+    bridge.push("[agent progress] starting");
+    expect(sent).toHaveLength(0);
+
+    vi.advanceTimersByTime(3_000);
+    expect(sent.map((message) => message.text)).toEqual(["[agent progress] starting"]);
+
+    // Then narration repeats no more often than every 10s.
+    bridge.push("[agent progress] too soon");
+    expect(sent).toHaveLength(1);
+
+    vi.advanceTimersByTime(10_000);
+    bridge.push("[agent progress] next useful milestone");
+    expect(sent).toHaveLength(2);
+  });
+
+  it("never speaks the opening line of a task that finishes instantly", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const sent: unknown[] = [];
@@ -32,21 +56,37 @@ describe("voice question bridge", () => {
 
     bridge.beginWork();
     bridge.push("[agent progress] starting");
+    vi.advanceTimersByTime(500);
+    bridge.endWork();
+
+    vi.advanceTimersByTime(10_000);
     expect(sent).toHaveLength(0);
+  });
 
-    // Narration starts after the instant-task window (3s), then repeats no
-    // more often than every 10s.
+  it("keeps only the latest line still waiting out the window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sent: Array<{ text: string }> = [];
+    const bridge = new VoiceBridge((payload) => sent.push(payload));
+
+    bridge.beginWork();
+    bridge.push("[agent progress] reading the guard");
+    vi.advanceTimersByTime(500);
+    bridge.push("[agent progress] now drawing it");
+
     vi.advanceTimersByTime(3_000);
-    bridge.push("[agent progress] useful milestone");
-    expect(sent).toHaveLength(1);
+    expect(sent.map((message) => message.text)).toEqual(["[agent progress] now drawing it"]);
+  });
 
-    vi.advanceTimersByTime(5_000);
-    bridge.push("[agent progress] too soon");
-    expect(sent).toHaveLength(1);
+  it("still ignores narration when no work is running", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sent: unknown[] = [];
+    const bridge = new VoiceBridge((payload) => sent.push(payload));
 
-    vi.advanceTimersByTime(5_000);
-    bridge.push("[agent progress] next useful milestone");
-    expect(sent).toHaveLength(2);
+    bridge.push("[agent progress] unprompted");
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toHaveLength(0);
   });
 
   it("debounces board updates into one silent context injection", () => {

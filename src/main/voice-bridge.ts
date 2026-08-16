@@ -7,12 +7,18 @@ interface PendingAnswer {
   removeAbort?: () => void;
 }
 
+/** Below this a task is over before narrating it would be worth the interruption. */
+const INSTANT_TASK_MS = 3_000;
+/** How often narration may repeat once it has started. */
+const PROGRESS_INTERVAL_MS = 10_000;
+
 export class VoiceBridge {
   #pendingAnswers: PendingAnswer[] = [];
   #workStartedAt = 0;
   #lastProgressAt = 0;
   #boardUpdateTimer?: NodeJS.Timeout;
   #pendingBoardUpdate?: string;
+  #progressTimer?: NodeJS.Timeout;
 
   constructor(private readonly send: (message: VoiceInjection) => void) {}
 
@@ -40,23 +46,51 @@ export class VoiceBridge {
   endWork(): void {
     this.#workStartedAt = 0;
     this.#lastProgressAt = 0;
+    // The task finished inside the instant window, so its opening line was
+    // never worth speaking and is dropped here rather than trailing the work.
+    this.#dropHeldProgress();
   }
 
   push(text: string, options: { interrupt?: boolean } = {}): void {
-    if (text.startsWith("[agent progress]")) {
-      // A coworker at a whiteboard narrates while working. Suppress only
-      // instant tasks (under three seconds) and rapid-fire repetition.
-      const now = Date.now();
-      if (this.#workStartedAt === 0 || now - this.#workStartedAt < 3_000) return;
-      if (this.#lastProgressAt > 0 && now - this.#lastProgressAt < 10_000) return;
-      this.#lastProgressAt = now;
-    }
     const message: VoiceInjection = {
       id: crypto.randomUUID(),
       text,
       interrupt: options.interrupt ?? false,
     };
+    if (text.startsWith("[agent progress]")) {
+      // A coworker at a whiteboard narrates while working. Suppress only
+      // instant tasks and rapid-fire repetition.
+      const now = Date.now();
+      if (this.#workStartedAt === 0) return;
+      const elapsed = now - this.#workStartedAt;
+      // The opening narration always lands inside the instant window, and it
+      // is the line that tells the user work has begun. Hold it instead of
+      // discarding it: an instant task ends first and stays silent, while a
+      // long one still announces itself.
+      if (elapsed < INSTANT_TASK_MS) {
+        this.#holdProgress(message, INSTANT_TASK_MS - elapsed);
+        return;
+      }
+      if (this.#lastProgressAt > 0 && now - this.#lastProgressAt < PROGRESS_INTERVAL_MS) return;
+      this.#lastProgressAt = now;
+    }
     this.send(message);
+  }
+
+  /** Waits out the instant-task window, keeping only the latest line. */
+  #holdProgress(message: VoiceInjection, delayMs: number): void {
+    this.#dropHeldProgress();
+    this.#progressTimer = setTimeout(() => {
+      this.#progressTimer = undefined;
+      if (this.#workStartedAt === 0) return;
+      this.#lastProgressAt = Date.now();
+      this.send(message);
+    }, delayMs);
+  }
+
+  #dropHeldProgress(): void {
+    if (this.#progressTimer) clearTimeout(this.#progressTimer);
+    this.#progressTimer = undefined;
   }
 
   ask(question: string, signal?: AbortSignal, timeoutMs = 120_000): Promise<string> {
@@ -91,6 +125,7 @@ export class VoiceBridge {
   close(): void {
     if (this.#boardUpdateTimer) clearTimeout(this.#boardUpdateTimer);
     this.#boardUpdateTimer = undefined;
+    this.#dropHeldProgress();
     while (this.#pendingAnswers.length) {
       this.#pendingAnswers[0]?.resolve("Application is closing.");
     }
