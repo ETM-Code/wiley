@@ -104,7 +104,7 @@ export interface WileySettings {
   workers: Record<WorkerKind, WorkerSettings>;
 }
 
-export const DEFAULT_VOICE_MODEL = "gpt-realtime-2.1";
+export const DEFAULT_VOICE_MODEL = "gpt-realtime-mini-2.1";
 export const DEFAULT_VOICE_NAME = "marin";
 export const DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
 export const DEFAULT_AGENT_MODEL = "gpt-5.6-luna";
