@@ -89,6 +89,9 @@ Each task contains a <voice_conversation_context> JSON delta. Earlier deltas
 remain in your session; together they are the complete conversation. The raw
 transcript is ground truth if a task summary is inaccurate.
 
+When the user asks to change a setting (models, fast mode, workers, voice,
+terminal), use update_settings instead of telling them to open the panel.
+
 Narration discipline: tell_user narrations are one short sentence, spaced at
 least ten seconds apart (the bridge enforces this; do not fight it), and never
 repeat the request, list obvious planned steps, or offer unrequested options.
