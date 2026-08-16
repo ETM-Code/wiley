@@ -32,6 +32,37 @@ type PatchableElement = SceneElement & {
   points?: Array<[number, number]>;
 };
 
+/** How far each end of a bound arrow has to travel with the shapes it holds. */
+export type ArrowShift = { sdx: number; sdy: number; edx: number; edy: number };
+
+/**
+ * A bound arrow's geometry after the shapes at its ends have moved. The whole
+ * element travels with its start, so every later point is corrected by that
+ * same amount and the last one takes its own end's movement on top. Writing a
+ * scene without this leaves an arrow pointing at where a box used to be:
+ * updateScene does not re-derive binding geometry.
+ */
+export function shiftedArrowGeometry(
+  arrow: { x: number; y: number; points?: unknown },
+  shift: ArrowShift,
+): { x: number; y: number; points: Array<[number, number]> } | undefined {
+  const points = arrow.points;
+  if (!Array.isArray(points) || points.length < 2) return undefined;
+  if (!shift.sdx && !shift.sdy && !shift.edx && !shift.edy) return undefined;
+  return {
+    x: arrow.x + shift.sdx,
+    y: arrow.y + shift.sdy,
+    points: (points as Array<[number, number]>).map((point, index) => {
+      if (index === 0) return [0, 0];
+      const last = index === points.length - 1;
+      return [
+        point[0] - shift.sdx + (last ? shift.edx : 0),
+        point[1] - shift.sdy + (last ? shift.edy : 0),
+      ] as [number, number];
+    }),
+  };
+}
+
 function remeasuredTextBox(element: PatchableElement, text: string, fontSize: number) {
   const family = FONT_FAMILY_CSS[element.fontFamily ?? 5] ?? "Excalifont";
   const lineHeight = typeof element.lineHeight === "number" ? element.lineHeight : 1.25;
@@ -280,19 +311,8 @@ export function applyPatch(api: ExcalidrawImperativeAPI, value: unknown) {
 
   for (const [arrowId, shift] of arrowShifts) {
     const arrow = byId.get(arrowId);
-    const points = arrow?.points;
-    if (!arrow || !Array.isArray(points) || points.length < 2) continue;
-    const nextPoints = points.map((point, index) => {
-      if (index === 0) return [0, 0];
-      const endDx = index === points.length - 1 ? shift.edx : 0;
-      const endDy = index === points.length - 1 ? shift.edy : 0;
-      return [point[0] - shift.sdx + endDx, point[1] - shift.sdy + endDy];
-    });
-    mergeSecondary(arrowId, {
-      x: arrow.x + shift.sdx,
-      y: arrow.y + shift.sdy,
-      points: nextPoints,
-    });
+    const moved = arrow ? shiftedArrowGeometry(arrow, shift) : undefined;
+    if (moved) mergeSecondary(arrowId, moved);
   }
 
   // Arrows must not keep bindings to elements that no longer exist.

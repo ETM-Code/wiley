@@ -81,6 +81,14 @@ export const HUMAN_ENDPOINT_SHAPE_FRACTION = 0.1;
 /** How near an arrow's midpoint a floating text has to sit to be its label. */
 export const HUMAN_EDGE_LABEL_TOLERANCE = 24;
 
+/**
+ * Above this the proximity passes stop paying for themselves. They are
+ * quadratic, and this runs on every turn of the conversation and on every
+ * scene read, so a board that big gets the cheap reading: real bindings only,
+ * no caption matching and no enclosure detection.
+ */
+export const HUMAN_INFERENCE_LIMIT = 600;
+
 export type HumanGraphOptions = {
   /**
    * Restrict the reading to these elements. A bound label is pulled in with
@@ -91,6 +99,8 @@ export type HumanGraphOptions = {
   endpointTolerance?: number;
   endpointShapeFraction?: number;
   edgeLabelTolerance?: number;
+  /** Overrides where the reading falls back to bindings alone. */
+  inferenceLimit?: number;
 };
 
 /** Shapes a person draws to mean "a thing". Freedraw is never one of them. */
@@ -226,7 +236,10 @@ export function inferHumanGraph(
   const shapeById = new Map(shapes.map((shape) => [shape.id, shape]));
   const connectors = mine.filter((element) => EDGE_TYPES.has(element.type));
 
+  const connectorById = new Map(connectors.map((connector) => [connector.id, connector]));
   const boundLabels = new Map<string, SketchElement>();
+  /** Captions Excalidraw already attached to one of the person's arrows. */
+  const boundEdgeLabels = new Map<string, SketchElement>();
   const freeTexts: SketchElement[] = [];
   for (const element of mine) {
     if (element.type !== "text") continue;
@@ -234,15 +247,24 @@ export function inferHumanGraph(
       boundLabels.set(element.containerId, element);
       continue;
     }
+    if (typeof element.containerId === "string" && connectorById.has(element.containerId)) {
+      boundEdgeLabels.set(element.containerId, element);
+      continue;
+    }
     if (typeof element.containerId === "string") continue;
     freeTexts.push(element);
   }
+
+  // Past the limit the reading stops guessing and reports only what the
+  // editor already knows, so a board nobody could take in at a glance cannot
+  // cost a quadratic sweep on every single turn.
+  const cheap = mine.length > (options.inferenceLimit ?? HUMAN_INFERENCE_LIMIT);
 
   // A ring drawn round a cluster contains everything inside it, so it wins
   // every proximity test it is allowed to enter. It only gets a look once the
   // shapes it holds have had theirs.
   const enclosedBy = new Map<string, string[]>();
-  for (const outer of shapes) {
+  for (const outer of cheap ? [] : shapes) {
     const held = shapes
       .filter((inner) => inner.id !== outer.id
         && enclosesBounds(boundsOf(outer), boundsOf(inner)))
@@ -265,12 +287,16 @@ export function inferHumanGraph(
     }
     return pairs;
   };
-  const captionByShape = claimNearest(captionPairs(unlabelled.filter((shape) => !framing(shape)), new Set()));
+  const captionByShape = cheap
+    ? new Map<string, string>()
+    : claimNearest(captionPairs(unlabelled.filter((shape) => !framing(shape)), new Set()));
   const claimed = new Set(captionByShape.values());
-  for (const [ownerId, textId] of claimNearest(
-    captionPairs(unlabelled.filter(framing), claimed),
-  )) {
-    captionByShape.set(ownerId, textId);
+  if (!cheap) {
+    for (const [ownerId, textId] of claimNearest(
+      captionPairs(unlabelled.filter(framing), claimed),
+    )) {
+      captionByShape.set(ownerId, textId);
+    }
   }
   const textById = new Map(freeTexts.map((text) => [text.id, text]));
 
@@ -310,8 +336,9 @@ export function inferHumanGraph(
     return best?.id;
   };
   const held = nodes.filter((node) => !node.encloses);
-  const attach = (point: { x: number; y: number }): string | undefined => nearestIn(held, point)
-    ?? nearestIn(nodes, point);
+  const attach = (point: { x: number; y: number }): string | undefined => cheap
+    ? undefined
+    : nearestIn(held, point) ?? nearestIn(nodes, point);
 
   const edges: HumanEdge[] = connectors.map((connector) => {
     const points = connectorPoints(connector);
@@ -321,10 +348,15 @@ export function inferHumanGraph(
     const to = endBound && shapeById.has(endBound)
       ? endBound
       : attach(points[points.length - 1]);
+    // A caption the editor already bound to this arrow is its label; nothing
+    // has to be inferred, and it must not be read as a stray mark.
+    const carried = boundEdgeLabels.get(connector.id);
+    const text = carried?.text?.trim();
     return {
       elementId: connector.id,
       ...(from ? { fromElementId: from } : {}),
       ...(to ? { toElementId: to } : {}),
+      ...(text ? { label: text } : {}),
       bound: {
         start: Boolean(startBound && shapeById.has(startBound)),
         end: Boolean(endBound && shapeById.has(endBound)),
@@ -334,7 +366,7 @@ export function inferHumanGraph(
 
   const takenTexts = new Set(captionByShape.values());
   const edgeLabelPairs: Array<{ textId: string; ownerId: string; distance: number }> = [];
-  for (const connector of connectors) {
+  for (const connector of cheap ? [] : connectors) {
     const midpoint = polylineMidpoint(connectorPoints(connector));
     for (const text of freeTexts) {
       if (takenTexts.has(text.id)) continue;
@@ -349,6 +381,7 @@ export function inferHumanGraph(
   }
   const captionByEdge = claimNearest(edgeLabelPairs);
   for (const edge of edges) {
+    if (edge.label) continue;
     const captionId = captionByEdge.get(edge.elementId);
     const caption = captionId ? textById.get(captionId) : undefined;
     const label = caption?.text?.trim();
@@ -362,6 +395,7 @@ export function inferHumanGraph(
     ...nodes.map((node) => node.elementId),
     ...nodes.map((node) => node.labelElementId).filter((id): id is string => Boolean(id)),
     ...[...boundLabels.values()].map((label) => label.id),
+    ...[...boundEdgeLabels.values()].map((label) => label.id),
     ...edges.map((edge) => edge.elementId),
     ...edges.map((edge) => edge.labelElementId).filter((id): id is string => Boolean(id)),
   ]);

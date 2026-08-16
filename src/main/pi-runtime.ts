@@ -871,12 +871,17 @@ export class PiRuntime {
     params: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    // A tidy rewrites the user's own elements, so the ones it names are held
+    // for the same reason a patch holds them. Its region forms take no lease:
+    // the set is only known once the renderer has read the scene.
     const ids = operation === "apply-patch"
       ? [
           ...((params.updates as Array<{ id?: string }> | undefined) ?? []).map((update) => update.id),
           ...((params.deletes as string[] | undefined) ?? []),
         ].filter((id): id is string => Boolean(id))
-      : [];
+      : operation === "tidy-diagram"
+        ? ((params.elementIds as string[] | undefined) ?? []).filter(Boolean)
+        : [];
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (signal?.aborted) throw signal.reason ?? new Error("Canvas mutation aborted");

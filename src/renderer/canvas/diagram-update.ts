@@ -275,6 +275,12 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     humanElementIdOf(edge.from),
     humanElementIdOf(edge.to),
   ]).filter((id): id is string => Boolean(id)));
+  // A frame the person drew around the target has to be crossed to reach it,
+  // so treating it as forbidden would make every framed shape unreachable and
+  // no shift could ever fix it.
+  for (const node of sketch.nodes) {
+    if (node.encloses?.some((id) => attached.has(id))) attached.add(node.elementId);
+  }
   // A caption bound to an attached shape lives inside it and is exempt with it.
   for (const element of scene as Labelled[]) {
     if (typeof element.containerId === "string" && attached.has(element.containerId)) {
@@ -330,7 +336,9 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     humanBoxes: new Map([...split.humanNodes.keys()]
       .map((id) => [id, sketchBoxes.get(id)])
       .filter((entry): entry is [string, Box] => Boolean(entry[1]))),
-    blockers: [...sketchBoxes.values(), ...otherWork],
+    // A frame the arrow has to enter is not something to route around.
+    blockers: [...sketchBoxes.values(), ...otherWork]
+      .filter((box) => !attached.has(box.id) && !attached.has(humanElementIdOf(box.id) ?? box.id)),
   });
   plan.skeletons.push(...humanEdges.skeletons);
   const boundAdditions = new Map<string, string[]>();
