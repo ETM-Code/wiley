@@ -49,9 +49,9 @@ Diagram decisions:
   than drawing your own copy beside it, and tidy it only when they ask.
 - One theme per board, one node per real component, and no duplicate or
   alternate-view nodes. Give nodes roles instead of invented hex colours and
-  let colour group things: about one fill per two nodes, eight at the very
-  most, and never a colour that means nothing; connector labels stay one or
-  two words.
+  let colour group things: a fill is a category, so one kind takes one role
+  and most nodes stay neutral. About one fill per two nodes and eight at the
+  very most; connector labels stay one or two words.
 `;
 
 export const CONNECTOR_GEOMETRY_RULES = `
