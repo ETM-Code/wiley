@@ -27,6 +27,8 @@ export const IPC = {
   settingsSecretSet: "settings:secret-set",
   settingsSecretClear: "settings:secret-clear",
   settingsProbe: "settings:probe",
+  workersOpenTerminal: "workers:open-terminal",
+  workersNewTerminalSession: "workers:new-terminal-session",
 } as const;
 
 export type TranscriptRole = "user" | "assistant" | "system";
@@ -147,6 +149,17 @@ export interface SettingsView extends WileySettings {
   terminalApps: string[];
 }
 
+/** What happened when a session was handed over to the user's terminal. */
+export interface TerminalHandoff {
+  /** The emulator that actually opened, which a fallback may change. */
+  app: string;
+  command: string;
+  /** Present when an existing worker was handed over rather than a new one. */
+  workerId?: string;
+  /** Why the requested emulator was not the one used. */
+  fallbackReason?: string;
+}
+
 export interface BoardSnapshot {
   revision: number;
   elements: Array<Record<string, unknown>>;
@@ -234,6 +247,8 @@ export interface BoardApi {
   setSecret(name: SecretName, value: string): Promise<SettingsView>;
   clearSecret(name: SecretName): Promise<SettingsView>;
   probeWorkers(): Promise<WorkerProbes>;
+  openWorkerTerminal(workerId: string): Promise<TerminalHandoff>;
+  newTerminalSession(kind: WorkerKind): Promise<TerminalHandoff>;
   onSettingsChanged(callback: (settings: SettingsView) => void): () => void;
   onVoiceMessage(callback: (message: VoiceInjection) => void): () => void;
   onCanvasRequest(callback: (request: CanvasRequest) => void): () => void;

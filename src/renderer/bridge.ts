@@ -7,9 +7,11 @@ import type {
   SecretName,
   SettingsPatch,
   SettingsView,
+  TerminalHandoff,
   TranscriptDraft,
   VoiceInjection,
   WileySettings,
+  WorkerKind,
   WorkerProbes,
 } from "../shared/contracts";
 
@@ -22,9 +24,11 @@ export type {
   SecretName,
   SettingsPatch,
   SettingsView,
+  TerminalHandoff,
   TranscriptDraft,
   VoiceInjection,
   WileySettings,
+  WorkerKind,
   WorkerProbes,
 };
 
@@ -81,6 +85,8 @@ type PreloadApi = {
   setSecret?: (name: SecretName, value: string) => Promise<SettingsView>;
   clearSecret?: (name: SecretName) => Promise<SettingsView>;
   probeWorkers?: () => Promise<WorkerProbes>;
+  openWorkerTerminal?: (workerId: string) => Promise<TerminalHandoff>;
+  newTerminalSession?: (kind: WorkerKind) => Promise<TerminalHandoff>;
   onSettingsChanged?: (listener: (settings: SettingsView) => void) => Unsubscribe | void;
 };
 
@@ -153,6 +159,10 @@ function createBrowserApi(): PreloadApi {
     clearSecret: (name) =>
       fetchJson<SettingsView>("/api/settings/secret", { method: "POST", body: JSON.stringify({ name, clear: true }) }),
     probeWorkers: () => fetchJson<WorkerProbes>("/api/settings/probe", { method: "POST", body: "{}" }),
+    openWorkerTerminal: (workerId) =>
+      fetchJson<TerminalHandoff>("/api/workers/open-terminal", { method: "POST", body: JSON.stringify({ workerId }) }),
+    newTerminalSession: (kind) =>
+      fetchJson<TerminalHandoff>("/api/workers/new-terminal-session", { method: "POST", body: JSON.stringify({ kind }) }),
     onSettingsChanged: (listener) => subscribe("settings:changed", listener),
   };
 }
@@ -278,6 +288,18 @@ export const bridge = {
 
   async probeWorkers(): Promise<WorkerProbes | undefined> {
     return preload()?.probeWorkers?.();
+  },
+
+  async openWorkerTerminal(workerId: string): Promise<TerminalHandoff> {
+    const open = preload()?.openWorkerTerminal;
+    if (!open) throw new Error("This host cannot open a terminal");
+    return open(workerId);
+  },
+
+  async newTerminalSession(kind: WorkerKind): Promise<TerminalHandoff> {
+    const open = preload()?.newTerminalSession;
+    if (!open) throw new Error("This host cannot open a terminal");
+    return open(kind);
   },
 
   onSettingsChanged(listener: (settings: SettingsView) => void): Unsubscribe {

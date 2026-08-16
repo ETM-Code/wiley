@@ -132,12 +132,14 @@ function Toggle(
 }
 
 function WorkerCard(
-  { kind, worker, probe, onChange }:
+  { kind, worker, probe, onChange, onNewTerminalSession, busy }:
   {
     kind: WorkerKind;
     worker: WorkerSettings;
     probe: { available: boolean; reason?: string; version?: string };
     onChange: (patch: Partial<WorkerSettings>) => void;
+    onNewTerminalSession: () => void;
+    busy: boolean;
   },
 ) {
   return (
@@ -151,6 +153,16 @@ function WorkerCard(
       {probe.available ? null : (
         <p className="settings-hint">{probe.reason ?? "This CLI was not found on this machine."}</p>
       )}
+      <div className="settings-actions">
+        <button
+          type="button"
+          className="status-button"
+          disabled={busy || !probe.available}
+          onClick={onNewTerminalSession}
+        >
+          New terminal session
+        </button>
+      </div>
       <Toggle
         label="Let Wiley delegate work to this CLI"
         checked={worker.enabled}
@@ -530,7 +542,15 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
             kind={kind}
             worker={draft.workers[kind]}
             probe={view.probes[kind]}
+            busy={busy}
             onChange={(patch) => patchWorker(kind, patch)}
+            onNewTerminalSession={() => void run(async () => {
+              const handoff = await bridge.newTerminalSession(kind);
+              // A fallback is worth saying out loud: the window that opened is
+              // not the one the setting asked for.
+              if (handoff.fallbackReason) throw new Error(handoff.fallbackReason);
+              return undefined;
+            }, `Opened ${kind} in ${draft.terminalApp}`)}
           />
         ))}
       </section>

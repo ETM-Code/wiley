@@ -102,9 +102,28 @@ function GearIcon() {
   );
 }
 
+/** Statuses whose session is still there to be picked up in a terminal. */
+const HANDOFF_STATUSES = new Set(["running", "awaiting_input", "done", "failed", "cancelled"]);
+
 function AgentSidebar(
   { status, activity, onClose }: { status: AgentStatus; activity: AgentEvent[]; onClose: () => void },
 ) {
+  const [handingOver, setHandingOver] = useState<string | null>(null);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+
+  const handOff = async (workerId: string) => {
+    setHandingOver(workerId);
+    setHandoffError(null);
+    try {
+      const result = await bridge.openWorkerTerminal(workerId);
+      if (result.fallbackReason) setHandoffError(result.fallbackReason);
+    } catch (error) {
+      setHandoffError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setHandingOver(null);
+    }
+  };
+
   return (
     <aside className="agent-sidebar" aria-label="Wiley status">
       <header className="agent-sidebar__header">
@@ -121,21 +140,35 @@ function AgentSidebar(
         <h2>Background work</h2>
         {status.subagents?.length ? (
           <ul>
-            {status.subagents.map((worker) => (
-              <li key={worker.id}>
-                <span>{worker.task || "Working"}</span>
-                <small>
-                  {worker.kind && worker.kind !== "pi"
-                    ? <span className="worker-chip">{worker.kind}</span>
-                    : null}
-                  {worker.status.replace("_", " ")}
-                </small>
-              </li>
-            ))}
+            {status.subagents.map((worker) => {
+              const external = Boolean(worker.kind && worker.kind !== "pi");
+              return (
+                <li key={worker.id}>
+                  <span>{worker.task || "Working"}</span>
+                  <small>
+                    {external ? <span className="worker-chip">{worker.kind}</span> : null}
+                    {worker.status.replace("_", " ")}
+                  </small>
+                  {external && HANDOFF_STATUSES.has(worker.status) ? (
+                    <button
+                      type="button"
+                      className="status-button"
+                      // Winding down means the session has two owners for a
+                      // moment; handing it over then would make that three.
+                      disabled={handingOver !== null || worker.status === "winding_down"}
+                      onClick={() => void handOff(worker.id)}
+                    >
+                      {handingOver === worker.id ? "Handing over…" : "Open in terminal"}
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="agent-sidebar__empty">Nothing running</p>
         )}
+        {handoffError ? <p className="agent-sidebar__empty" role="alert">{handoffError}</p> : null}
       </div>
       <div className="agent-sidebar__section">
         <h2>Recent activity</h2>

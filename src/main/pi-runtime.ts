@@ -10,7 +10,7 @@ import {
   INTERRUPT_NOTE,
   SUBAGENT_SYSTEM_PROMPT,
 } from "./agent-prompt";
-import type { AgentEvent, AgentSummary, JobSummary, WorkerProbes } from "../shared/contracts";
+import type { AgentEvent, AgentSummary, JobSummary, TerminalHandoff, WorkerProbes } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
@@ -40,8 +40,16 @@ import { type SettingsStore } from "./settings/settings-store";
 import { WorkerCursors } from "./workers/worker-context";
 import type { WorkerManager } from "./workers/worker-manager";
 import { createWorkerManager, createWorkerProbes, reapStaleWorkerProcesses } from "./workers/worker-runtime";
+import { buildHandoffCommand, launchInTerminal } from "./workers/terminal-handoff";
 import { assertWorkerSpawnAllowed, resolveWorkerModel } from "./workers/worker-spawn";
-import { isCliWorkerKind, type WorkerEvent, type WorkerHandle, type WorkerKind } from "./workers/worker-types";
+import {
+  isActiveWorkerStatus,
+  isCliWorkerKind,
+  type CliWorkerKind,
+  type WorkerEvent,
+  type WorkerHandle,
+  type WorkerKind,
+} from "./workers/worker-types";
 
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
@@ -207,6 +215,61 @@ export class PiRuntime {
 
   #worker(id: string): WorkerHandle | undefined {
     return this.#workers?.get(id);
+  }
+
+  /**
+   * Hands a worker's session to the user in their own terminal.
+   *
+   * The worker is wound down first and waited out, because two drivers on one
+   * session is the failure this is meant to avoid: the CLI would be answering
+   * Wiley's prompts and the user's at once. Winding down leaves the session
+   * resumable, so nothing of the work is lost in the handover.
+   */
+  async openWorkerTerminal(workerId: string): Promise<TerminalHandoff> {
+    const worker = this.#worker(workerId);
+    if (!worker) throw new Error(`There is no worker called ${workerId}.`);
+    const kind = worker.spec.kind;
+    if (!isCliWorkerKind(kind)) {
+      throw new Error("Only claude and codex workers have a session a terminal can pick up.");
+    }
+    const sessionId = worker.externalSessionId;
+    if (isActiveWorkerStatus(worker.status)) {
+      await worker.interrupt("The user is taking this session over in a terminal.", { windDown: true });
+      await this.#waitUntilWorkerSettles(workerId);
+    }
+    if (!sessionId) {
+      throw new Error(
+        `${workerId} never reported a session id, so there is nothing to resume. `
+        + "Start a new terminal session instead.",
+      );
+    }
+    return { ...this.#handOff(kind, { [kind === "claude" ? "sessionId" : "threadId"]: sessionId }), workerId };
+  }
+
+  /** A terminal session of the user's own, with no worker behind it. */
+  async startTerminalSession(kind: WorkerKind): Promise<TerminalHandoff> {
+    if (!isCliWorkerKind(kind)) throw new Error(`There is no terminal session for a ${String(kind)} worker.`);
+    return this.#handOff(kind, {});
+  }
+
+  #handOff(kind: CliWorkerKind, session: { sessionId?: string; threadId?: string }): TerminalHandoff {
+    const settings = this.#settings();
+    const command = buildHandoffCommand(kind, { ...session, projectDir: this.projectDir, settings });
+    const launched = launchInTerminal(settings.terminalApp, command, this.projectDir);
+    return { ...launched, command };
+  }
+
+  /** Polls rather than waits on an event: a settle has no callback of its own. */
+  async #waitUntilWorkerSettles(workerId: string, timeoutMs = 30_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const worker = this.#worker(workerId);
+      if (!worker || !isActiveWorkerStatus(worker.status)) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    // The wind-down grace is shorter than this, so a worker still holding the
+    // session here is stuck. Say so rather than opening a second driver.
+    throw new Error(`${workerId} did not let go of its session in time, so it was not handed over.`);
   }
 
   /**
