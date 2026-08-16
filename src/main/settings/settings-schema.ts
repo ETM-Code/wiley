@@ -370,3 +370,17 @@ export function loadSettings(raw: unknown): WileySettings {
 export function applyPatch(base: WileySettings, patch: SettingsPatch): WileySettings {
   return normalizeSettings(deepMerge(base as unknown as Record<string, unknown>, patch));
 }
+
+/**
+ * The dotted paths that actually differ, which is not the same as the paths a
+ * patch named: normalization clamps, coerces, and drops, so what the caller
+ * asked for and what landed can differ. Reporting the difference is what makes
+ * "it did not take" visible instead of silent.
+ */
+export function changedSettingsPaths(before: unknown, after: unknown, prefix = ""): string[] {
+  if (isPlainObject(before) && isPlainObject(after)) {
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .flatMap((key) => changedSettingsPaths(before[key], after[key], prefix ? `${prefix}.${key}` : key));
+  }
+  return JSON.stringify(before ?? null) === JSON.stringify(after ?? null) ? [] : [prefix];
+}

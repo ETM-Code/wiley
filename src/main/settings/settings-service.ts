@@ -105,6 +105,35 @@ export class SettingsService {
   }
 }
 
+/**
+ * Key names a settings patch must never carry. Settings hold no secret values
+ * at all (those live in the secret store, behind their own calls), so a patch
+ * naming one is either a mistake or an attempt, and both deserve a refusal
+ * rather than a silent drop during normalization.
+ */
+const SECRET_PATCH_KEYS: ReadonlySet<string> = new Set([
+  "secrets",
+  "secret",
+  "openaiapikey",
+  "cloudsessiontoken",
+  "apikey",
+  "token",
+  "password",
+]);
+
+export function assertNoSecretPaths(patch: unknown, path = "settings"): void {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return;
+  for (const [key, value] of Object.entries(patch)) {
+    if (SECRET_PATCH_KEYS.has(key.toLowerCase())) {
+      throw new Error(
+        `${path}.${key} cannot be changed this way. API keys and tokens are entered by the user `
+        + "in Settings and never travel through a settings patch.",
+      );
+    }
+    assertNoSecretPaths(value, `${path}.${key}`);
+  }
+}
+
 /** Rejects anything that is not a known secret name before it reaches the store. */
 export function assertSecretName(value: unknown): SecretName {
   if (value === "openaiApiKey" || value === "cloudSessionToken") return value;

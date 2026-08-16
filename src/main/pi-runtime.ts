@@ -33,8 +33,10 @@ import {
   resolveSessionModels,
   type SessionModelPlan,
 } from "./pi/session-models";
+import { readAgentSettings, updateAgentSettings } from "./pi/settings-tools";
 import { createPiTools, type CanvasMutation, type PiToolHost } from "./pi/tools";
 import { resolveOpenAiKey } from "./settings/secret-store";
+import { type SettingsService } from "./settings/settings-service";
 import { DEFAULT_SETTINGS, type WileySettings } from "./settings/settings-schema";
 import { type SettingsStore } from "./settings/settings-store";
 import { WorkerCursors } from "./workers/worker-context";
@@ -105,6 +107,7 @@ export class PiRuntime {
   #workers?: WorkerManager;
   /** Per-worker transcript cursors; the root's is never touched by these. */
   #workerCursors = new WorkerCursors();
+  #settingsService?: SettingsService;
   #probes?: WorkerProbes;
   #probedAt = 0;
   #probeWorkers = createWorkerProbes(() => this.#settings());
@@ -642,7 +645,43 @@ export class PiRuntime {
         this.#pendingSubQuestions.delete(qid);
         resolve(answer);
       },
+      readSettings: () => this.readSettings(),
+      writeSettings: (patch, summary) => this.writeSettings(patch, summary),
     };
+  }
+
+  /** The panel's own view of settings, with no secret value anywhere in it. */
+  readSettings(): Promise<unknown> {
+    return readAgentSettings(this.#requireSettingsService());
+  }
+
+  /**
+   * Goes through the same service the panel uses, so a change the agent makes
+   * normalizes, persists, and reaches every open window exactly as a change
+   * the user made by hand does.
+   */
+  writeSettings(patch: unknown, summary?: string): Promise<string[]> {
+    return updateAgentSettings(
+      {
+        service: this.#requireSettingsService(),
+        announce: (message) => this.voice.push(`[agent progress] ${message}`, {}),
+      },
+      patch,
+      summary,
+    );
+  }
+
+  #requireSettingsService(): SettingsService {
+    if (!this.#settingsService) throw new Error("Settings are not available in this session.");
+    return this.#settingsService;
+  }
+
+  /**
+   * Wired after construction because the service needs the model runtime this
+   * runtime only has once it has initialized.
+   */
+  useSettingsService(service: SettingsService): void {
+    this.#settingsService = service;
   }
 
   #askRoot(subId: string, question: string, signal?: AbortSignal): Promise<string> {
