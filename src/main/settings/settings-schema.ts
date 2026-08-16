@@ -72,6 +72,13 @@ export interface WorkerSettings {
   allowedTools?: string[];
   disallowedTools?: string[];
   denyRules: string[];
+  /**
+   * Whether a worker's tool calls also get the approval judge's opinion.
+   * "canUseTool" asks it for anything the engine would have prompted about;
+   * "hook" and "none" skip the model. The hard floor (deny rules, the
+   * catastrophic-command guard, the write scope) is not configurable and runs
+   * on every call regardless.
+   */
   approvalBridge: WorkerApprovalBridge;
   maxConcurrent: number;
   turnTimeoutMs: number;

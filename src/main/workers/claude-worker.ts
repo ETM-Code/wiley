@@ -10,7 +10,14 @@
  * same stream, and an interrupt aborts the turn without ending the session.
  */
 
-import { query, type Options, type PermissionMode, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type HookJSONOutput,
+  type Options,
+  type PermissionMode,
+  type Query,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 
 import type { WileySettings, WorkerSettings } from "../settings/settings-schema";
 import { ClaudeStreamParser } from "./claude-protocol";
@@ -98,17 +105,25 @@ export interface ToolReview {
   reason?: string;
 }
 
+export interface ToolReviewInput {
+  spec: WorkerSpec;
+  toolName: string;
+  input: Record<string, unknown>;
+  cwd: string;
+  signal: AbortSignal;
+}
+
 export interface ClaudeWorkerDeps {
   projectDir: string;
   settings: () => WileySettings;
-  /** Wiley's own safety layer, wired straight into the SDK's canUseTool. */
-  reviewTool: (input: {
-    spec: WorkerSpec;
-    toolName: string;
-    input: Record<string, unknown>;
-    cwd: string;
-    signal: AbortSignal;
-  }) => Promise<ToolReview>;
+  /** The full review, wired into the SDK's canUseTool. */
+  reviewTool: (input: ToolReviewInput) => Promise<ToolReview>;
+  /**
+   * The hard floor, wired into the PreToolUse hook. canUseTool is only
+   * reached for calls the CLI would have prompted about, so this is the only
+   * path that sees a command the engine considers safe on its own.
+   */
+  reviewFloor?: (input: ToolReviewInput) => Promise<ToolReview>;
   env?: NodeJS.ProcessEnv;
   home?: string;
   executable?: string;
@@ -194,11 +209,16 @@ class ClaudeWorker implements WorkerTransport {
       home: this.deps.home ?? (this.deps.env ?? process.env).HOME ?? "",
       executable: this.deps.executable,
     });
+    const bridge = settings.workers.claude.approvalBridge;
     this.#query = query({
       prompt: this.#stream,
       options: {
         ...options,
-        canUseTool: async (toolName, input, { signal }) => {
+        // The floor is installed whatever the configured bridge is: it is the
+        // guard against destroying things, not a review preference.
+        hooks: { PreToolUse: [{ hooks: [(input, _toolUseId, { signal }) => this.#floor(input, signal)] }] },
+        // "hook" and "none" both mean no model round-trip per tool call.
+        canUseTool: bridge === "canUseTool" ? async (toolName, input, { signal }) => {
           const verdict = await this.deps.reviewTool({
             spec: this.spec,
             toolName,
@@ -212,12 +232,32 @@ class ClaudeWorker implements WorkerTransport {
             message: `${verdict.reason ?? "Blocked by Wiley's safety reviewer."} `
               + "Do not retry this or work around the block.",
           };
-        },
+        } : undefined,
         stderr: (data) => this.#raw?.(`[stderr] ${data.trimEnd()}`),
       },
     });
     this.#stream.push(claudeUserMessage(spec.prompt ?? spec.task));
     void this.#pump();
+  }
+
+  async #floor(input: { hook_event_name: string; tool_name?: string; tool_input?: unknown }, signal: AbortSignal): Promise<HookJSONOutput> {
+    const review = this.deps.reviewFloor;
+    if (!review || input.hook_event_name !== "PreToolUse" || !input.tool_name) return {};
+    const verdict = await review({
+      spec: this.spec,
+      toolName: input.tool_name,
+      input: (input.tool_input ?? {}) as Record<string, unknown>,
+      cwd: this.deps.projectDir,
+      signal,
+    });
+    if (verdict.allow) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: `${verdict.reason ?? "Blocked by Wiley."} Do not retry or work around this.`,
+      },
+    };
   }
 
   async #pump(): Promise<void> {
