@@ -1,6 +1,99 @@
+/*
+ * Every colour in the shell comes from a token below. Light is the base, and
+ * the dark block redefines the same names so no rule further down needs to
+ * know which appearance is active. The app follows the system setting; there
+ * is no in-app switch to keep in sync.
+ */
 :root {
   color-scheme: light dark;
   font-family: "Assistant", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Ground the window sits on before the canvas paints. */
+  --wiley-app-bg: #fff;
+
+  /* Panels, cards and the insets inside them. */
+  --wiley-surface: #fff;
+  --wiley-surface-sunken: #f7f7f9;
+  --wiley-surface-raised: #e6e5ea;
+  --wiley-border: #d6d6db;
+  --wiley-border-subtle: #e3e3e8;
+
+  /* Text tiers: body, secondary, placeholder. */
+  --wiley-text: #1b1b1f;
+  --wiley-text-muted: #6f6e77;
+  --wiley-text-faint: #85818f;
+
+  /* Wiley's violet, plus the tinted resting state its buttons use. */
+  --wiley-accent: #6965db;
+  --wiley-accent-hover: #5b57c9;
+  --wiley-on-accent: #fff;
+  --wiley-accent-ring: rgb(105 101 219 / 18%);
+  --wiley-accent-soft: #f1f0ff;
+  --wiley-accent-soft-hover: #e6e4ff;
+  --wiley-focus: #6965db;
+
+  /* Status hues: idle, working, finished, failed. */
+  --wiley-idle: #a2a0a8;
+  --wiley-warning: #f08c00;
+  --wiley-success: #2f9e44;
+  --wiley-success-text: #1a7f37;
+  --wiley-success-ring: rgb(47 158 68 / 15%);
+  --wiley-success-tint: rgb(47 158 68 / 14%);
+  --wiley-danger: #d6336c;
+
+  /* Floating pieces that invert against the page rather than sit on it. */
+  --wiley-toast-bg: #1b1b1f;
+  --wiley-toast-text: #fff;
+  --wiley-pill-bg: rgb(255 255 255 / 96%);
+  --wiley-chip-bg: rgb(0 0 0 / 6%);
+
+  --wiley-shadow-panel: 0 8px 28px rgb(0 0 0 / 14%);
+  --wiley-shadow-float: 0 3px 12px rgb(0 0 0 / 12%);
+  --wiley-shadow-button: 0 2px 8px rgb(0 0 0 / 10%);
+  --wiley-shadow-pill: 0 2px 10px rgb(0 0 0 / 12%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Matches the near-black Excalidraw's dark canvas resolves to, so the
+       window never shows a lighter frame around the board. */
+    --wiley-app-bg: #121212;
+
+    --wiley-surface: #26252c;
+    --wiley-surface-sunken: #34333f;
+    --wiley-surface-raised: #3f3d4b;
+    --wiley-border: #4b4855;
+    --wiley-border-subtle: #3b3945;
+
+    --wiley-text: #f4f2fa;
+    --wiley-text-muted: #bbb7c7;
+    --wiley-text-faint: #9a95a8;
+
+    /* The violet stays put so filled buttons keep their identity and their
+       contrast against white labels; only the tinted rest state moves. */
+    --wiley-accent-hover: #7b77e4;
+    --wiley-accent-soft: #34333f;
+    --wiley-accent-soft-hover: #403e4d;
+    --wiley-focus: #a5a1ff;
+
+    /* Lightened so status text and rules clear 4.5:1 on the dark surface. */
+    --wiley-warning: #ffa94d;
+    --wiley-success: #51cf66;
+    --wiley-success-text: #69db7c;
+    --wiley-success-ring: rgb(81 207 102 / 20%);
+    --wiley-success-tint: rgb(81 207 102 / 18%);
+    --wiley-danger: #f783ac;
+
+    --wiley-toast-bg: #f5f5f7;
+    --wiley-toast-text: #17171b;
+    --wiley-pill-bg: rgb(38 37 44 / 96%);
+    --wiley-chip-bg: rgb(255 255 255 / 10%);
+
+    --wiley-shadow-panel: 0 8px 28px rgb(0 0 0 / 55%);
+    --wiley-shadow-float: 0 3px 12px rgb(0 0 0 / 45%);
+    --wiley-shadow-button: 0 2px 8px rgb(0 0 0 / 40%);
+    --wiley-shadow-pill: 0 2px 10px rgb(0 0 0 / 45%);
+  }
 }
 
 * {
@@ -17,9 +110,13 @@ body,
   overflow: hidden;
 }
 
+body {
+  background: var(--wiley-app-bg);
+}
+
 .app-shell {
   position: relative;
-  background: var(--color-surface-lowest, #fff);
+  background: var(--wiley-app-bg);
 }
 
 button {
@@ -44,11 +141,11 @@ button {
   height: 48px;
   padding: 0;
   place-items: center;
-  color: #1b1b1f;
-  background: #f1f0ff;
+  color: var(--wiley-text);
+  background: var(--wiley-accent-soft);
   border: 0;
   border-radius: 13px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
+  box-shadow: var(--wiley-shadow-button);
   cursor: pointer;
   pointer-events: auto;
   transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
@@ -62,11 +159,11 @@ button {
   min-height: 48px;
   width: min(430px, calc(100vw - 104px));
   padding: 8px 14px;
-  color: #25232d;
-  background: rgb(255 255 255 / 96%);
-  border: 1px solid #dedce7;
+  color: var(--wiley-text);
+  background: var(--wiley-pill-bg);
+  border: 1px solid var(--wiley-border);
   border-radius: 13px;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+  box-shadow: var(--wiley-shadow-pill);
   backdrop-filter: blur(8px);
 }
 
@@ -74,7 +171,7 @@ button {
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  color: #625e72;
+  color: var(--wiley-text-muted);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -83,23 +180,23 @@ button {
 .dictation-pill__state::before {
   width: 7px;
   height: 7px;
-  background: #a2a0a8;
+  background: var(--wiley-idle);
   border-radius: 50%;
   content: "";
 }
 
 .dictation-pill--listening .dictation-pill__state::before {
-  background: #6965db;
-  box-shadow: 0 0 0 3px rgb(105 101 219 / 14%);
+  background: var(--wiley-accent);
+  box-shadow: 0 0 0 3px var(--wiley-accent-ring);
   animation: dictation-pulse 1.5s ease-in-out infinite;
 }
 
 .dictation-pill--processing .dictation-pill__state::before {
-  background: #f08c00;
+  background: var(--wiley-warning);
 }
 
 .dictation-pill--heard .dictation-pill__state::before {
-  background: #2f9e44;
+  background: var(--wiley-success);
 }
 
 .dictation-pill__text {
@@ -112,7 +209,7 @@ button {
 }
 
 .dictation-pill__text--empty {
-  color: #85818f;
+  color: var(--wiley-text-faint);
 }
 
 @keyframes dictation-pulse {
@@ -129,7 +226,7 @@ button {
 }
 
 .microphone-button:hover {
-  background: #e6e4ff;
+  background: var(--wiley-accent-soft-hover);
 }
 
 .microphone-button:active {
@@ -140,22 +237,23 @@ button {
 .status-button:focus-visible,
 .icon-button:focus-visible,
 .debug-task :focus-visible {
-  outline: 2px solid #6965db;
+  outline: 2px solid var(--wiley-focus);
   outline-offset: 2px;
 }
 
 .microphone-button--active {
-  color: #fff;
-  background: #6965db;
+  color: var(--wiley-on-accent);
+  background: var(--wiley-accent);
 }
 
 .microphone-button--active:hover {
-  background: #5b57c9;
+  background: var(--wiley-accent-hover);
 }
 
 .microphone-button--starting,
 .microphone-button--starting:hover {
-  background: #6965db;
+  background: var(--wiley-accent);
+  color: var(--wiley-on-accent);
   cursor: wait;
   opacity: 0.82;
   animation: microphone-starting 1.2s ease-in-out infinite;
@@ -163,7 +261,7 @@ button {
 
 @keyframes microphone-starting {
   50% {
-    box-shadow: 0 0 0 5px rgb(105 101 219 / 18%);
+    box-shadow: 0 0 0 5px var(--wiley-accent-ring);
   }
 }
 
@@ -179,19 +277,19 @@ button {
 }
 
 .music-button--playing {
-  color: #fff;
-  background: #6965db;
+  color: var(--wiley-on-accent);
+  background: var(--wiley-accent);
   animation: music-playing 1.94s ease-in-out infinite;
 }
 
 .music-button--playing:hover {
-  background: #5b57c9;
+  background: var(--wiley-accent-hover);
 }
 
 @keyframes music-playing {
   25%,
   75% {
-    box-shadow: 0 0 0 5px rgb(105 101 219 / 18%);
+    box-shadow: 0 0 0 5px var(--wiley-accent-ring);
   }
 }
 
@@ -201,11 +299,15 @@ button {
   align-items: center;
   min-height: 36px;
   padding: 0 12px;
-  color: var(--color-on-surface, #1b1b1f);
-  background: var(--color-surface-low, #f1f0ff);
+  color: var(--wiley-text);
+  background: var(--wiley-accent-soft);
   border: 0;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.status-button:hover:not(:disabled) {
+  background: var(--wiley-accent-soft-hover);
 }
 
 .agent-dot {
@@ -213,13 +315,13 @@ button {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  background: #a2a0a8;
+  background: var(--wiley-idle);
   border-radius: 50%;
 }
 
 .agent-dot--active {
-  background: #2f9e44;
-  box-shadow: 0 0 0 3px rgb(47 158 68 / 15%);
+  background: var(--wiley-success);
+  box-shadow: 0 0 0 3px var(--wiley-success-ring);
 }
 
 .agent-sidebar {
@@ -230,11 +332,11 @@ button {
   z-index: 19;
   width: min(330px, calc(100vw - 32px));
   padding: 16px;
-  color: var(--color-on-surface, #1b1b1f);
-  background: var(--color-surface-lowest, #fff);
-  border: 1px solid var(--color-border, #d6d6db);
+  color: var(--wiley-text);
+  background: var(--wiley-surface);
+  border: 1px solid var(--wiley-border);
   border-radius: 12px;
-  box-shadow: 0 8px 28px rgb(0 0 0 / 14%);
+  box-shadow: var(--wiley-shadow-panel);
   overflow: auto;
 }
 
@@ -266,7 +368,7 @@ button {
 }
 
 .icon-button:hover {
-  background: var(--color-surface-low, #f1f0ff);
+  background: var(--wiley-surface-sunken);
 }
 
 .agent-sidebar__summary {
@@ -276,7 +378,7 @@ button {
 
 .agent-sidebar__section {
   padding-top: 16px;
-  border-top: 1px solid var(--color-border, #e3e3e8);
+  border-top: 1px solid var(--wiley-border-subtle);
 }
 
 .agent-sidebar__section h2 {
@@ -298,7 +400,7 @@ button {
   display: grid;
   gap: 3px;
   padding: 10px;
-  background: var(--color-surface-low, #f7f7f9);
+  background: var(--wiley-surface-sunken);
   border-radius: 8px;
 }
 
@@ -310,14 +412,14 @@ button {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-on-surface, #1c1b1f);
-  background: var(--color-surface-high, #e6e5ea);
+  color: var(--wiley-text);
+  background: var(--wiley-surface-raised);
   border-radius: 999px;
 }
 
 .agent-sidebar__section small,
 .agent-sidebar__empty {
-  color: var(--color-on-surface-muted, #6f6e77);
+  color: var(--wiley-text-muted);
 }
 
 .agent-sidebar__empty {
@@ -333,11 +435,11 @@ button {
 }
 
 .agent-activity__item--error {
-  border-left-color: #d6336c;
+  border-left-color: var(--wiley-danger);
 }
 
 .agent-activity__item--completed {
-  border-left-color: #2f9e44;
+  border-left-color: var(--wiley-success);
 }
 
 .agent-activity__label {
@@ -348,7 +450,7 @@ button {
 
 .agent-activity__detail {
   overflow: hidden;
-  color: var(--color-on-surface-muted, #6f6e77);
+  color: var(--wiley-text-muted);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -360,10 +462,10 @@ button {
   z-index: 30;
   max-width: min(540px, calc(100vw - 160px));
   padding: 10px 14px;
-  color: #fff;
-  background: #1b1b1f;
+  color: var(--wiley-toast-text);
+  background: var(--wiley-toast-bg);
   border-radius: 8px;
-  box-shadow: 0 3px 12px rgb(0 0 0 / 22%);
+  box-shadow: var(--wiley-shadow-float);
   transform: translateX(-50%);
 }
 
@@ -375,10 +477,11 @@ button {
   display: flex;
   width: min(620px, calc(100vw - 190px));
   padding: 6px;
-  background: var(--color-surface-lowest, #fff);
-  border: 1px solid var(--color-border, #d6d6db);
+  color: var(--wiley-text);
+  background: var(--wiley-surface);
+  border: 1px solid var(--wiley-border);
   border-radius: 10px;
-  box-shadow: 0 3px 12px rgb(0 0 0 / 12%);
+  box-shadow: var(--wiley-shadow-float);
   transform: translateX(-50%);
 }
 
@@ -392,10 +495,14 @@ button {
   outline: 0;
 }
 
+.debug-task input::placeholder {
+  color: var(--wiley-text-faint);
+}
+
 .debug-task button {
   padding: 0 14px;
-  color: #fff;
-  background: #6965db;
+  color: var(--wiley-on-accent);
+  background: var(--wiley-accent);
   border: 0;
   border-radius: 7px;
   cursor: pointer;
@@ -404,34 +511,6 @@ button {
 .debug-task button:disabled {
   cursor: default;
   opacity: 0.55;
-}
-
-@media (prefers-color-scheme: dark) {
-  .dictation-pill {
-    color: #f4f2fa;
-    background: rgb(38 37 44 / 96%);
-    border-color: #4b4855;
-  }
-
-  .dictation-pill__state,
-  .dictation-pill__text--empty {
-    color: #bbb7c7;
-  }
-
-  .microphone-button {
-    color: #f3f2ff;
-    background: #34333f;
-  }
-
-  .microphone-button--active {
-    color: #fff;
-    background: #6965db;
-  }
-
-  .app-toast {
-    color: #17171b;
-    background: #f5f5f7;
-  }
 }
 
 .status-button--icon {
@@ -461,11 +540,11 @@ button {
   gap: 18px;
   width: min(400px, calc(100vw - 32px));
   padding: 16px;
-  color: var(--color-on-surface, #1b1b1f);
-  background: var(--color-surface-lowest, #fff);
-  border: 1px solid var(--color-border, #d6d6db);
+  color: var(--wiley-text);
+  background: var(--wiley-surface);
+  border: 1px solid var(--wiley-border);
   border-radius: 12px;
-  box-shadow: 0 8px 28px rgb(0 0 0 / 14%);
+  box-shadow: var(--wiley-shadow-panel);
   overflow: auto;
 }
 
@@ -478,14 +557,14 @@ button {
   z-index: 1;
   margin: -16px -16px 0;
   padding: 16px;
-  background: var(--color-surface-lowest, #fff);
+  background: var(--wiley-surface);
 }
 
 .settings-section {
   display: grid;
   gap: 12px;
   padding-top: 16px;
-  border-top: 1px solid var(--color-border, #e3e3e8);
+  border-top: 1px solid var(--wiley-border-subtle);
 }
 
 .settings-section h2 {
@@ -512,9 +591,14 @@ button {
   padding: 7px 9px;
   color: inherit;
   font: inherit;
-  background: var(--color-surface-low, #f7f7f9);
-  border: 1px solid var(--color-border, #d6d6db);
+  background: var(--wiley-surface-sunken);
+  border: 1px solid var(--wiley-border);
   border-radius: 7px;
+}
+
+.settings-field input::placeholder,
+.settings-field textarea::placeholder {
+  color: var(--wiley-text-faint);
 }
 
 .settings-field textarea {
@@ -525,7 +609,7 @@ button {
 
 .settings-hint {
   display: block;
-  color: var(--color-on-surface-muted, #6f6e77);
+  color: var(--wiley-text-muted);
   font-size: 12px;
   line-height: 1.4;
   margin: 0;
@@ -533,7 +617,7 @@ button {
 
 .settings-error {
   margin: 0;
-  color: #d6336c;
+  color: var(--wiley-danger);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -551,6 +635,7 @@ button {
 .settings-radio input {
   margin: 2px 0 0;
   flex: 0 0 auto;
+  accent-color: var(--wiley-accent);
 }
 
 .settings-radio-row {
@@ -563,7 +648,7 @@ button {
   gap: 7px;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid var(--color-border, #e3e3e8);
+  border: 1px solid var(--wiley-border-subtle);
   border-radius: 8px;
 }
 
@@ -577,7 +662,7 @@ button {
   display: grid;
   gap: 10px;
   padding: 12px;
-  background: var(--color-surface-low, #f7f7f9);
+  background: var(--wiley-surface-sunken);
   border-radius: 9px;
 }
 
@@ -589,15 +674,15 @@ button {
 
 .settings-chip {
   padding: 2px 8px;
-  color: #6f6e77;
+  color: var(--wiley-text-muted);
   font-size: 11px;
-  background: rgb(0 0 0 / 6%);
+  background: var(--wiley-chip-bg);
   border-radius: 999px;
 }
 
 .settings-chip--ok {
-  color: #1a7f37;
-  background: rgb(47 158 68 / 14%);
+  color: var(--wiley-success-text);
+  background: var(--wiley-success-tint);
 }
 
 .settings-actions {
@@ -613,40 +698,20 @@ button {
   bottom: -16px;
   margin: auto -16px -16px;
   padding: 12px 16px 16px;
-  background: var(--color-surface-lowest, #fff);
-  border-top: 1px solid var(--color-border, #e3e3e8);
+  background: var(--wiley-surface);
+  border-top: 1px solid var(--wiley-border-subtle);
 }
 
 .settings-save:not(:disabled) {
-  color: #fff;
-  background: #6965db;
+  color: var(--wiley-on-accent);
+  background: var(--wiley-accent);
+}
+
+.settings-save:not(:disabled):hover {
+  background: var(--wiley-accent-hover);
 }
 
 .status-button:disabled {
   cursor: default;
   opacity: 0.55;
-}
-
-@media (prefers-color-scheme: dark) {
-  .settings-panel,
-  .settings-panel__header,
-  .settings-panel__footer {
-    color: #f4f2fa;
-    background: #26252c;
-    border-color: #4b4855;
-  }
-
-  .settings-field input,
-  .settings-field select,
-  .settings-field textarea,
-  .settings-card {
-    color: #f4f2fa;
-    background: #34333f;
-    border-color: #4b4855;
-  }
-
-  .settings-hint,
-  .settings-chip {
-    color: #bbb7c7;
-  }
 }

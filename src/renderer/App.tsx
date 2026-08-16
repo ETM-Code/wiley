@@ -8,6 +8,7 @@ import {
   subscribeToCanvasRequests,
   withoutDiagramPreviewElements,
 } from "./canvas-handlers";
+import { useColorScheme } from "./color-scheme";
 import { HouseMusicPlayer } from "./house-music";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
 import SettingsPanel from "./SettingsPanel";
@@ -238,6 +239,7 @@ export default function App() {
   const lastSubmittedElementsRef = useRef("");
   const snapshotPendingRef = useRef(false);
   const canvasMutationActiveRef = useRef(false);
+  const colorScheme = useColorScheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<AgentStatus>({ agentRunning: false, subagents: [] });
@@ -479,6 +481,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <Excalidraw
+        theme={colorScheme}
         excalidrawAPI={captureApi}
         onChange={(elements, appState, files) =>
           submitCanvasSnapshot(

@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, dialog, net, protocol, safeStorage, session } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, net, protocol, safeStorage, session } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SqliteRuntimeLedger } from "./ledger";
@@ -89,13 +89,23 @@ function installSecurityPolicy(): void {
   });
 }
 
+/**
+ * The renderer picks up the system appearance from prefers-color-scheme on its
+ * own. This is only the colour the frame shows before the first paint, so it
+ * has to be set here or a dark desktop gets a white flash on launch. Keep it in
+ * step with --wiley-app-bg in the renderer stylesheet.
+ */
+function windowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? "#121212" : "#ffffff";
+}
+
 async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
     height: 960,
     minWidth: 900,
     minHeight: 620,
-    backgroundColor: "#ffffff",
+    backgroundColor: windowBackgroundColor(),
     title: "Wiley",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
@@ -106,6 +116,11 @@ async function createWindow(): Promise<BrowserWindow> {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const followSystemAppearance = () => {
+    if (!win.isDestroyed()) win.setBackgroundColor(windowBackgroundColor());
+  };
+  nativeTheme.on("updated", followSystemAppearance);
+  win.on("closed", () => nativeTheme.off("updated", followSystemAppearance));
   if (env("DEBUG_RENDERER") === "1") {
     win.webContents.on("console-message", (details) => {
       const log = details.level === "error" ? console.error : details.level === "warning" ? console.warn : console.log;
