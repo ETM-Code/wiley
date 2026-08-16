@@ -71,8 +71,8 @@ describe("SettingsStore.update", () => {
 
   it("survives a reopen", () => {
     const dir = tempDir();
-    SettingsStore.open(dir).update({ voice: { model: "gpt-realtime-mini-2.1" } });
-    expect(SettingsStore.open(dir).get().voice.model).toBe("gpt-realtime-mini-2.1");
+    SettingsStore.open(dir).update({ voice: { model: "gpt-realtime-2.1" } });
+    expect(SettingsStore.open(dir).get().voice.model).toBe("gpt-realtime-2.1");
   });
 
   it("leaves no temp file behind", () => {

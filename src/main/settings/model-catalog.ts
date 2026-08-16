@@ -58,10 +58,12 @@ export const FALLBACK_MODELS: readonly ModelOption[] = [
 ];
 
 /**
- * Known realtime models. The picker also accepts free text, because OpenAI
- * ships new realtime ids faster than this list can be updated.
+ * Known realtime models, cheapest first: the mini is the default because it
+ * holds a conversation well enough for dispatch duty at a fraction of the
+ * price. The picker also accepts free text, because OpenAI ships new realtime
+ * ids faster than this list can be updated.
  */
-export const VOICE_MODEL_OPTIONS: readonly string[] = [DEFAULT_VOICE_MODEL, "gpt-realtime-mini-2.1"];
+export const VOICE_MODEL_OPTIONS: readonly string[] = [DEFAULT_VOICE_MODEL, "gpt-realtime-2.1"];
 
 export const VOICE_NAME_OPTIONS: readonly string[] = ["marin", "cedar", "alloy", "shimmer", "verse"];
 
