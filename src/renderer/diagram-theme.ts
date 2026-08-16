@@ -126,7 +126,7 @@ export type DiagramTheme = {
   entries: Record<NodeRole, PaletteEntry>;
   /** Applied to nodes that name no role. */
   defaultRole: NodeRole;
-  /** Connector lines, from the theme's own muted stroke. */
+  /** Connector lines: one neutral ink, so the wiring never competes with a node. */
   edgeColor: string;
   titleColor: string;
   /** Dark and light extremes, used for whichever reads on a given fill. */
@@ -143,6 +143,11 @@ export type DiagramTheme = {
  * whether it means something or was forgotten. Naming a hue per theme and
  * dropping it to the wash keeps "this is background" legible without leaving
  * the palette. Grayscale themes name gray and stay exactly where they were.
+ *
+ * The border has to come from the same hue as the fill. A pale orange ellipse
+ * outlined in gray on a board of orange-outlined boxes is read as an outlier
+ * the drawing forgot to finish, which is the exact opposite of "this one is
+ * background".
  */
 type QuietSpec = { hue: HueName; weight: "fill" | "soft" };
 
@@ -242,8 +247,15 @@ function entryFor(name: HueName | "neutral"): PaletteEntry {
 
 function quietEntry(spec: QuietSpec): PaletteEntry {
   const hue = HUES[spec.hue];
-  return { fill: hue[spec.weight], soft: hue.soft, stroke: HUES.gray.stroke };
+  return { fill: hue[spec.weight], soft: hue.soft, stroke: hue.stroke };
 }
+
+/**
+ * The one ink every connector is drawn in. Wiring is not a role: it has to
+ * recede behind whatever it joins, on a warm board and a cold one alike, and
+ * gray is the only value that does that everywhere.
+ */
+const LINE_COLOR = HUES.gray.stroke;
 
 function buildTheme(name: ThemeName): DiagramTheme {
   const spec = THEME_SPECS[name];
@@ -257,7 +269,7 @@ function buildTheme(name: ThemeName): DiagramTheme {
     name,
     entries,
     defaultRole: spec.defaultRole,
-    edgeColor: entries.muted.stroke,
+    edgeColor: LINE_COLOR,
     titleColor: entryFor(spec.title).stroke,
     inkColor: NEUTRAL_ENTRY.stroke,
     paperColor: "#ffffff",
