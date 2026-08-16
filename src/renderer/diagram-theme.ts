@@ -134,8 +134,21 @@ export type DiagramTheme = {
   paperColor: string;
 };
 
+/**
+ * The theme's quiet register: the surface a node takes when the request said
+ * it does not matter.
+ *
+ * It cannot simply be gray. On a warm board a cold gray fill is the one thing
+ * on the page that belongs to no family, and a reader has no way to tell
+ * whether it means something or was forgotten. Naming a hue per theme and
+ * dropping it to the wash keeps "this is background" legible without leaving
+ * the palette. Grayscale themes name gray and stay exactly where they were.
+ */
+type QuietSpec = { hue: HueName; weight: "fill" | "soft" };
+
 type ThemeSpec = {
-  roles: Record<NodeRole, HueName | "neutral">;
+  roles: Record<Exclude<NodeRole, "muted">, HueName | "neutral">;
+  quiet: QuietSpec;
   defaultRole: NodeRole;
   title: HueName | "neutral";
 };
@@ -149,9 +162,9 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       warning: "orange",
       danger: "red",
       accent: "grape",
-      muted: "gray",
       neutral: "neutral",
     },
+    quiet: { hue: "gray", weight: "fill" },
     defaultRole: "neutral",
     title: "neutral",
   },
@@ -162,9 +175,9 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       warning: "yellow",
       danger: "red",
       accent: "cyan",
-      muted: "gray",
       neutral: "neutral",
     },
+    quiet: { hue: "blue", weight: "soft" },
     defaultRole: "primary",
     title: "blue",
   },
@@ -175,9 +188,9 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       warning: "yellow",
       danger: "red",
       accent: "teal",
-      muted: "gray",
       neutral: "neutral",
     },
+    quiet: { hue: "green", weight: "soft" },
     defaultRole: "primary",
     title: "green",
   },
@@ -188,9 +201,9 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       warning: "yellow",
       danger: "red",
       accent: "pink",
-      muted: "gray",
       neutral: "neutral",
     },
+    quiet: { hue: "orange", weight: "soft" },
     defaultRole: "primary",
     title: "orange",
   },
@@ -201,9 +214,9 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       warning: "yellow",
       danger: "pink",
       accent: "violet",
-      muted: "gray",
       neutral: "neutral",
     },
+    quiet: { hue: "grape", weight: "soft" },
     defaultRole: "primary",
     title: "grape",
   },
@@ -215,9 +228,9 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       warning: "graphite",
       danger: "graphite",
       accent: "gray",
-      muted: "gray",
       neutral: "neutral",
     },
+    quiet: { hue: "gray", weight: "fill" },
     defaultRole: "neutral",
     title: "neutral",
   },
@@ -227,10 +240,18 @@ function entryFor(name: HueName | "neutral"): PaletteEntry {
   return name === "neutral" ? NEUTRAL_ENTRY : HUES[name];
 }
 
+function quietEntry(spec: QuietSpec): PaletteEntry {
+  const hue = HUES[spec.hue];
+  return { fill: hue[spec.weight], soft: hue.soft, stroke: HUES.gray.stroke };
+}
+
 function buildTheme(name: ThemeName): DiagramTheme {
   const spec = THEME_SPECS[name];
   const entries = Object.fromEntries(
-    NODE_ROLES.map((role) => [role, entryFor(spec.roles[role])]),
+    NODE_ROLES.map((role) => [
+      role,
+      role === "muted" ? quietEntry(spec.quiet) : entryFor(spec.roles[role]),
+    ]),
   ) as Record<NodeRole, PaletteEntry>;
   return {
     name,

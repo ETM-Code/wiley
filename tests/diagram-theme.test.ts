@@ -97,6 +97,27 @@ describe("diagram themes", () => {
     }
   });
 
+  it("keeps the quiet register inside each theme's own family", () => {
+    // A cold gray on a warm board is the one fill that belongs to no family,
+    // and a reader cannot tell whether it means something or was forgotten.
+    for (const name of THEME_NAMES) {
+      const theme = THEMES[name];
+      const quiet = theme.entries.muted;
+      // A colour-forward theme drops its own hue to the wash; a neutral one is
+      // already speaking gray, so gray is its family.
+      const expected = theme.entries[theme.defaultRole].fill === "transparent"
+        ? HUES.gray.fill
+        : theme.entries[theme.defaultRole].soft;
+      expect(quiet.fill, name).toBe(expected);
+      expect(quiet.stroke, name).toBe(theme.edgeColor);
+    }
+    expect(THEMES.sunset.entries.muted.fill).toBe(HUES.orange.soft);
+    expect(THEMES.grape.entries.muted.fill).toBe(HUES.grape.soft);
+    // The grayscale themes were already speaking gray, so nothing moves.
+    expect(THEMES.slate.entries.muted.fill).toBe(HUES.gray.fill);
+    expect(THEMES.mono.entries.muted.fill).toBe(HUES.gray.fill);
+  });
+
   it("falls back to slate for an unknown or missing theme name", () => {
     expect(resolveTheme(undefined).name).toBe("slate");
     expect(resolveTheme("chartreuse").name).toBe("slate");

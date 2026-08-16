@@ -1304,12 +1304,23 @@ function assemblePlan(
     return groupIds.length ? { groupIds } : {};
   };
 
+  // A neutral-forward theme leaves an unroled node unfilled, which is right on
+  // a board where nothing is coloured and wrong on one where most things are:
+  // beside six fills the two bare boxes read as an oversight rather than as a
+  // decision. On a board that has already committed to colour they take the
+  // theme's quiet register, which says "no emphasis" in the language the rest
+  // of the drawing is speaking.
+  const themeAnswersForUnroled = theme.entries[theme.defaultRole].fill !== "transparent";
+  const boardUsesColor = params.nodes.some((node) =>
+    node.role !== undefined && theme.entries[node.role].fill !== "transparent");
+  const unroled: NodeRole | undefined = !themeAnswersForUnroled && boardUsesColor ? "muted" : undefined;
+
   const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
     const position = geometry.positions.get(node.id) ?? { x: 0, y: 0 };
     const size = geometry.sizes.get(node.id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
     const type = nodeToType(node);
     const id = elementIdByNode.get(node.id)!;
-    const style = resolveNodeStyle(theme, node.role, node.emphasis, {
+    const style = resolveNodeStyle(theme, node.role ?? unroled, node.emphasis, {
       backgroundColor: node.backgroundColor,
       strokeColor: node.strokeColor,
     });
