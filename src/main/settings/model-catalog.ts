@@ -1,10 +1,13 @@
 import {
   AGENT_THINKING_LEVELS,
+  ALLOWED_MODEL_FAMILY,
   DEFAULT_AGENT_MODEL,
-  DEFAULT_APPROVAL_MODEL_ID,
   DEFAULT_VOICE_MODEL,
+  isAllowedBackendModel,
   type AgentThinkingLevel,
 } from "./settings-schema";
+
+export { ALLOWED_MODEL_FAMILY, isAllowedBackendModel };
 
 /**
  * What the settings UI needs to know about a model. Deliberately structural
@@ -39,23 +42,19 @@ export interface ModelCatalogRuntime {
 /**
  * Shown when the SDK cannot answer: an offline first launch, a missing key, or
  * a catalog fetch failure. An empty dropdown would look like a broken app.
+ * The allowed family as it stands, in id order like every catalog answer.
  */
 export const FALLBACK_MODELS: readonly ModelOption[] = [
-  {
-    id: DEFAULT_AGENT_MODEL,
-    provider: "openai",
-    name: DEFAULT_AGENT_MODEL,
-    reasoning: true,
-    thinkingLevels: ["off", "low", "medium", "high"],
-  },
-  {
-    id: DEFAULT_APPROVAL_MODEL_ID,
-    provider: "openai",
-    name: DEFAULT_APPROVAL_MODEL_ID,
-    reasoning: true,
-    thinkingLevels: ["off", "low", "medium", "high"],
-  },
-];
+  { id: DEFAULT_AGENT_MODEL, name: "GPT-5.6 Luna" },
+  { id: `${ALLOWED_MODEL_FAMILY}-sol`, name: "GPT-5.6 Sol" },
+  { id: `${ALLOWED_MODEL_FAMILY}-terra`, name: "GPT-5.6 Terra" },
+].map(({ id, name }) => ({
+  id,
+  provider: "openai",
+  name,
+  reasoning: true,
+  thinkingLevels: ["off", "low", "medium", "high"] as AgentThinkingLevel[],
+}));
 
 /**
  * Known realtime models, cheapest first: the mini is the default because it
@@ -88,10 +87,16 @@ function toOption(model: CatalogModel, fallbackProvider: string): ModelOption {
   return option;
 }
 
-function dedupe(options: ModelOption[]): ModelOption[] {
+/**
+ * One provider answer turned into a picker list: family rule, then dedupe,
+ * then id order. The family rule belongs here rather than at the picker
+ * because the catalog is what the app offers, and the SDK lists every model
+ * the key can reach, most of them families Wiley does not run agent work on.
+ */
+function toCatalog(options: ModelOption[]): ModelOption[] {
   const byKey = new Map<string, ModelOption>();
   for (const option of options) {
-    if (!option.id) continue;
+    if (!option.id || !isAllowedBackendModel(option.id)) continue;
     byKey.set(`${option.provider}/${option.id}`, option);
   }
   return [...byKey.values()].sort((a, b) =>
@@ -110,14 +115,14 @@ export async function listAvailableModels(
   if (!runtime) return [...FALLBACK_MODELS];
   try {
     const available = await runtime.getAvailable(provider);
-    const mapped = dedupe(available.map((model) => toOption(model, provider)));
+    const mapped = toCatalog(available.map((model) => toOption(model, provider)));
     if (mapped.length) return mapped;
   } catch (error) {
     console.error("Could not read the model catalog from the Pi SDK", error);
   }
   try {
     const known = runtime.getModels?.(provider) ?? [];
-    const mapped = dedupe(known.map((model) => toOption(model, provider)));
+    const mapped = toCatalog(known.map((model) => toOption(model, provider)));
     if (mapped.length) return mapped;
   } catch (error) {
     console.error("Could not read the static model list from the Pi SDK", error);

@@ -170,7 +170,7 @@ async function main() {
   const settings = await api("/api/settings", {
     method: "POST",
     body: JSON.stringify({
-      agent: { allowedModels: ["gpt-5.6-luna", "gpt-5.4-mini", WORKER_MODEL] },
+      agent: { allowedModels: ["gpt-5.6-luna", "gpt-5.6-sol", WORKER_MODEL] },
       workers: { claude: { enabled: true, model: WORKER_MODEL, maxConcurrent: 1, turnTimeoutMs: 300_000 } },
     }),
   });

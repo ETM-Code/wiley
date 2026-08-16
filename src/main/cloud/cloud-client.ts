@@ -1,4 +1,5 @@
 import type { ModelOption } from "../settings/model-catalog";
+import { isAllowedBackendModel } from "../settings/settings-schema";
 import type { RealtimeClientSecret } from "../voice-token";
 
 /**
@@ -126,7 +127,11 @@ export class CloudClient {
     return body;
   }
 
-  /** The models this account may run, in the shape the settings picker wants. */
+  /**
+   * The models this account may run, in the shape the settings picker wants.
+   * A relay may offer more than Wiley does; the family filter applies to what
+   * it offers exactly as it applies to the local catalog.
+   */
   async listModels(options: { signal?: AbortSignal } = {}): Promise<ModelOption[]> {
     const body = await this.#request<{ models?: unknown }>("/v1/models", { method: "GET", signal: options.signal });
     const raw = Array.isArray(body?.models) ? body.models : Array.isArray(body) ? body : [];
@@ -134,7 +139,7 @@ export class CloudClient {
       if (!entry || typeof entry !== "object") return [];
       const record = entry as Record<string, unknown>;
       const id = typeof record.id === "string" ? record.id : undefined;
-      if (!id) return [];
+      if (!id || !isAllowedBackendModel(id)) return [];
       const option: ModelOption = { id, provider: typeof record.provider === "string" ? record.provider : "wiley-cloud" };
       if (typeof record.name === "string") option.name = record.name;
       if (typeof record.reasoning === "boolean") option.reasoning = record.reasoning;

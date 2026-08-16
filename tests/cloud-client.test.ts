@@ -168,7 +168,7 @@ describe("CloudClient.listModels", () => {
     const { fetch, calls } = recordingFetch(() => json({
       models: [
         { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", reasoning: true, contextWindow: 272000 },
-        { id: "gpt-5.4-mini" },
+        { id: "gpt-5.6-sol" },
       ],
     }));
     const models = await client(fetch).listModels();
@@ -176,17 +176,24 @@ describe("CloudClient.listModels", () => {
     expect(calls[0].url).toBe("https://relay.example.com/v1/models");
     expect(models).toEqual([
       { id: "gpt-5.6-luna", provider: "wiley-cloud", name: "GPT-5.6 Luna", reasoning: true, contextWindow: 272000 },
-      { id: "gpt-5.4-mini", provider: "wiley-cloud" },
+      { id: "gpt-5.6-sol", provider: "wiley-cloud" },
     ]);
   });
 
   it("drops entries with no id rather than surfacing half a model", async () => {
-    const { fetch } = recordingFetch(() => json({ models: [{ name: "nameless" }, null, "nope", { id: "ok" }] }));
-    expect(await client(fetch).listModels()).toEqual([{ id: "ok", provider: "wiley-cloud" }]);
+    const { fetch } = recordingFetch(() => json({
+      models: [{ name: "nameless" }, null, "nope", { id: "gpt-5.6-terra" }],
+    }));
+    expect(await client(fetch).listModels()).toEqual([{ id: "gpt-5.6-terra", provider: "wiley-cloud" }]);
+  });
+
+  it("drops a relay model from outside the allowed family", async () => {
+    const { fetch } = recordingFetch(() => json({ models: [{ id: "gpt-5.4-mini" }, { id: "gpt-4o" }] }));
+    expect(await client(fetch).listModels()).toEqual([]);
   });
 
   it("accepts a bare array, which is what a plain proxy returns", async () => {
-    const { fetch } = recordingFetch(() => json([{ id: "gpt-5.4-mini", provider: "openai" }]));
-    expect(await client(fetch).listModels()).toEqual([{ id: "gpt-5.4-mini", provider: "openai" }]);
+    const { fetch } = recordingFetch(() => json([{ id: "gpt-5.6-luna", provider: "openai" }]));
+    expect(await client(fetch).listModels()).toEqual([{ id: "gpt-5.6-luna", provider: "openai" }]);
   });
 });

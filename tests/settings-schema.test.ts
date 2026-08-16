@@ -94,9 +94,35 @@ describe("normalizeSettings", () => {
 
   it("keeps the allowlist exactly as the user wrote it", () => {
     const settings = normalizeSettings({
-      agent: { model: "custom-root", subagentModel: "custom-sub", allowedModels: ["custom-sub", " custom-sub "] },
+      agent: {
+        model: "gpt-5.6-sol",
+        subagentModel: "gpt-5.6-terra",
+        allowedModels: ["gpt-5.6-terra", " gpt-5.6-terra "],
+      },
     });
-    expect(settings.agent.allowedModels).toEqual(["custom-sub"]);
+    expect(settings.agent.allowedModels).toEqual(["gpt-5.6-terra"]);
+  });
+
+  it("drops allowlist entries from outside the allowed family", () => {
+    const settings = normalizeSettings({
+      agent: { allowedModels: ["gpt-5.6-sol", "gpt-5.4-mini", "gpt-4o", "o3"] },
+    });
+    expect(settings.agent.allowedModels).toEqual(["gpt-5.6-sol"]);
+  });
+
+  it("migrates an older family forward instead of persisting it", () => {
+    const settings = normalizeSettings({
+      agent: {
+        model: "gpt-5.4",
+        subagentModel: "gpt-4o",
+        approvalModel: "gpt-5.4-mini",
+        allowedModels: ["gpt-5.4-mini", "gpt-4o"],
+      },
+    });
+    expect(settings.agent.model).toBe(DEFAULT_SETTINGS.agent.model);
+    expect(settings.agent.approvalModel).toBe(DEFAULT_SETTINGS.agent.approvalModel);
+    expect(settings.agent).not.toHaveProperty("subagentModel");
+    expect(settings.agent.allowedModels).toEqual(DEFAULT_SETTINGS.agent.allowedModels);
   });
 
   it("restores the default allowlist rather than blocking every spawn", () => {
@@ -155,9 +181,9 @@ describe("migrateSettings", () => {
   });
 
   it("preserves v0 values through a full load", () => {
-    const loaded = loadSettings({ agent: { model: "old-model", fastMode: false }, voice: { voice: "cedar" } });
+    const loaded = loadSettings({ agent: { model: "gpt-5.6-sol", fastMode: false }, voice: { voice: "cedar" } });
     expect(loaded.version).toBe(SETTINGS_VERSION);
-    expect(loaded.agent.model).toBe("old-model");
+    expect(loaded.agent.model).toBe("gpt-5.6-sol");
     expect(loaded.agent.fastMode).toBe(false);
     expect(loaded.voice.voice).toBe("cedar");
     expect(loaded.workers.codex.maxConcurrent).toBe(2);

@@ -224,7 +224,7 @@ async function main() {
   // ── 2. Correction: stale content must be fixed on the board ──
   const eventsBefore = agentEvents.length;
   await sendTask(
-    "One thing on the current safety diagram is wrong or missing: the approval reviewer runs a separate cheap model (gpt-5.4-mini by default via WILEY_APPROVAL_MODEL), it is NOT the main luna model, and read-only bash commands skip it entirely. Verify against src/main/safety.ts and correct the existing diagram in place: fix or erase only the wrong parts, do not clear the board, do not draw a second diagram.",
+    "One thing on the current safety diagram is wrong or missing: the approval reviewer is a separate session of its own (gpt-5.6-luna at low reasoning effort by default, set with WILEY_APPROVAL_MODEL), it is not a step inside the main session, and read-only bash commands skip it entirely. Verify against src/main/safety.ts and correct the existing diagram in place: fix or erase only the wrong parts, do not clear the board, do not draw a second diagram.",
     "The judge model part looks wrong, fix the diagram in place",
   );
   const startedTools = (names) => agentEvents.slice(eventsBefore).filter((event) =>

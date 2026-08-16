@@ -4,12 +4,13 @@ import {
   clampThinkingLevel,
   FALLBACK_MODELS,
   findModelOption,
+  isAllowedBackendModel,
   listAvailableModels,
   VOICE_MODEL_OPTIONS,
   type CatalogModel,
   type ModelCatalogRuntime,
 } from "../src/main/settings/model-catalog";
-import { DEFAULT_VOICE_MODEL } from "../src/main/settings/settings-schema";
+import { DEFAULT_AGENT_MODEL, DEFAULT_VOICE_MODEL } from "../src/main/settings/settings-schema";
 
 function fakeRuntime(models: CatalogModel[], options: { fail?: boolean; staticModels?: CatalogModel[] } = {}): ModelCatalogRuntime {
   return {
@@ -47,23 +48,28 @@ describe("listAvailableModels", () => {
 
   it("marks levels the model explicitly rejects as unsupported", async () => {
     const [model] = await listAvailableModels(fakeRuntime([
-      { id: "m", provider: "openai", reasoning: true, thinkingLevelMap: { off: null, low: "low", medium: "med", high: null } },
+      {
+        id: "gpt-5.6-sol",
+        provider: "openai",
+        reasoning: true,
+        thinkingLevelMap: { off: null, low: "low", medium: "med", high: null },
+      },
     ]));
     expect(model.thinkingLevels).toEqual(["low", "medium"]);
   });
 
   it("reports a non-reasoning model as off-only", async () => {
-    const [model] = await listAvailableModels(fakeRuntime([{ id: "m", provider: "openai", reasoning: false }]));
+    const [model] = await listAvailableModels(fakeRuntime([{ id: "gpt-5.6-sol", provider: "openai", reasoning: false }]));
     expect(model.thinkingLevels).toEqual(["off"]);
   });
 
   it("sorts and de-duplicates", async () => {
     const models = await listAvailableModels(fakeRuntime([
-      { id: "zeta", provider: "openai" },
-      { id: "alpha", provider: "openai" },
-      { id: "alpha", provider: "openai", name: "later wins" },
+      { id: "gpt-5.6-terra", provider: "openai" },
+      { id: "gpt-5.6-luna", provider: "openai" },
+      { id: "gpt-5.6-luna", provider: "openai", name: "later wins" },
     ]));
-    expect(models.map((model) => model.id)).toEqual(["alpha", "zeta"]);
+    expect(models.map((model) => model.id)).toEqual(["gpt-5.6-luna", "gpt-5.6-terra"]);
     expect(models[0].name).toBe("later wins");
   });
 
@@ -77,18 +83,67 @@ describe("listAvailableModels", () => {
 
   it("uses the SDK's own static list before the hardcoded fallback", async () => {
     const models = await listAvailableModels(
-      fakeRuntime([], { fail: true, staticModels: [{ id: "offline-model", provider: "openai" }] }),
+      fakeRuntime([], { fail: true, staticModels: [{ id: "gpt-5.6-terra", provider: "openai" }] }),
     );
-    expect(models.map((model) => model.id)).toEqual(["offline-model"]);
+    expect(models.map((model) => model.id)).toEqual(["gpt-5.6-terra"]);
   });
 
   it("falls back when the SDK returns nothing rather than showing an empty picker", async () => {
     expect(await listAvailableModels(fakeRuntime([]))).toEqual([...FALLBACK_MODELS]);
   });
 
+  it("offers only the allowed family, whatever the provider's catalog lists", async () => {
+    const models = await listAvailableModels(fakeRuntime([
+      { id: "gpt-4o", provider: "openai" },
+      { id: "gpt-5.4-mini", provider: "openai" },
+      { id: "gpt-5.5-pro", provider: "openai" },
+      { id: "o3", provider: "openai" },
+      { id: "gpt-5.6-luna", provider: "openai" },
+      { id: "gpt-5.6-terra", provider: "openai" },
+    ]));
+    expect(models.map((model) => model.id)).toEqual(["gpt-5.6-luna", "gpt-5.6-terra"]);
+  });
+
+  it("never lets the SDK's static list smuggle an older family in", async () => {
+    const models = await listAvailableModels(fakeRuntime([], {
+      fail: true,
+      staticModels: [{ id: "gpt-4o", provider: "openai" }, { id: "gpt-5.6-sol", provider: "openai" }],
+    }));
+    expect(models.map((model) => model.id)).toEqual(["gpt-5.6-sol"]);
+  });
+
+  it("falls back rather than showing an empty picker when nothing in the catalog qualifies", async () => {
+    expect(await listAvailableModels(fakeRuntime([{ id: "gpt-5.4-mini", provider: "openai" }])))
+      .toEqual([...FALLBACK_MODELS]);
+  });
+
   it("defaults the provider when a model omits it", async () => {
-    const [model] = await listAvailableModels(fakeRuntime([{ id: "m" }]), { provider: "custom" });
+    const [model] = await listAvailableModels(fakeRuntime([{ id: "gpt-5.6-luna" }]), { provider: "custom" });
     expect(model.provider).toBe("custom");
+  });
+});
+
+describe("isAllowedBackendModel", () => {
+  it("accepts the family and nothing older", () => {
+    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6", " gpt-5.6-luna "]) {
+      expect(isAllowedBackendModel(id)).toBe(true);
+    }
+    for (const id of ["gpt-5.4-mini", "gpt-5.5-pro", "gpt-4o", "o3", "gpt-5.61", "gpt-5.6luna", ""]) {
+      expect(isAllowedBackendModel(id)).toBe(false);
+    }
+  });
+
+  it("refuses anything that is not a string", () => {
+    expect(isAllowedBackendModel(undefined)).toBe(false);
+    expect(isAllowedBackendModel(null)).toBe(false);
+    expect(isAllowedBackendModel(["gpt-5.6-luna"])).toBe(false);
+  });
+});
+
+describe("FALLBACK_MODELS", () => {
+  it("offers the allowed family and leads with the default", () => {
+    expect(FALLBACK_MODELS.every((model) => isAllowedBackendModel(model.id))).toBe(true);
+    expect(FALLBACK_MODELS[0].id).toBe(DEFAULT_AGENT_MODEL);
   });
 });
 

@@ -1,4 +1,5 @@
 import type { SettingsPatch, SettingsView, WileySettings } from "./bridge";
+import { ALLOWED_MODEL_FAMILY, isAllowedBackendModel } from "../main/settings/settings-schema";
 
 /**
  * Pure helpers behind the settings panel. The panel edits a local draft and
@@ -85,7 +86,26 @@ export function toggleAllowedModel(
   return next.length ? next : [...allowed];
 }
 
-/** The union of what the host offers and what the user already configured. */
+/**
+ * The union of what the host offers and what the user already configured,
+ * minus anything outside the allowed family: a model the app will not run has
+ * no business sitting in a dropdown as if choosing it would do something.
+ */
 export function modelChoices(catalog: readonly string[], configured: readonly string[]): string[] {
-  return [...new Set([...catalog, ...configured])].sort((a, b) => a.localeCompare(b));
+  return [...new Set([...catalog, ...configured])].filter(isAllowedBackendModel)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * What is wrong with a typed agent model id, or nothing. The "Other…" field
+ * exists because the provider ships ids faster than a list can be updated, but
+ * it is not a way past the family rule: the host would normalize an older id
+ * straight back to the default, so the panel says so before that happens.
+ */
+export function agentModelError(value: string): string | undefined {
+  const id = value.trim();
+  if (!id) return "Enter a model id.";
+  if (isAllowedBackendModel(id)) return undefined;
+  return `Wiley only runs ${ALLOWED_MODEL_FAMILY} models, so "${id}" cannot be used. `
+    + `Try ${ALLOWED_MODEL_FAMILY}-luna.`;
 }

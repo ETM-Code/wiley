@@ -5,8 +5,27 @@ import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-ag
 import type { RuntimeLedger } from "../ledger";
 import { ApprovalJudge, CatastrophicCommandGuard, ReadBeforeEditGuard, isReadOnlyCommand } from "../safety";
 import type { VoiceBridge } from "../voice-bridge";
-import { DEFAULT_APPROVAL_MODEL, JUDGED_TOOLS, PI_PROVIDER } from "./constants";
+import { ALLOWED_MODEL_FAMILY, isAllowedBackendModel } from "../settings/settings-schema";
+import { APPROVAL_REASONING_EFFORT, DEFAULT_APPROVAL_MODEL, JUDGED_TOOLS, PI_PROVIDER } from "./constants";
 import { redact } from "./redact";
+
+/**
+ * The env switch is an escape hatch for a headless run, not a way around the
+ * model family: a name from an older family is refused here the same way the
+ * settings panel refuses to save one.
+ */
+function approvalModelId(configured?: string): string {
+  for (const candidate of [process.env.WILEY_APPROVAL_MODEL?.trim(), configured?.trim()]) {
+    if (!candidate) continue;
+    if (isAllowedBackendModel(candidate)) return candidate;
+    console.warn(
+      `Ignoring approval model "${candidate}": Wiley only runs ${ALLOWED_MODEL_FAMILY} models. `
+      + `Falling back to ${DEFAULT_APPROVAL_MODEL}.`,
+    );
+    return DEFAULT_APPROVAL_MODEL;
+  }
+  return DEFAULT_APPROVAL_MODEL;
+}
 
 export interface ApprovalJudgeOptions {
   enabled?: boolean;
@@ -28,7 +47,7 @@ export interface ApprovalJudgeOptions {
 export function createApprovalJudge(options: ApprovalJudgeOptions = {}): ApprovalJudge | undefined {
   if (process.env.WILEY_APPROVAL_DISABLED === "1") return undefined;
   if (options.enabled === false) return undefined;
-  const modelId = process.env.WILEY_APPROVAL_MODEL?.trim() || options.model?.trim() || DEFAULT_APPROVAL_MODEL;
+  const modelId = approvalModelId(options.model);
   const provider = options.provider ?? PI_PROVIDER;
   const runtime = options.modelRuntime;
   // The static catalog is typed against its own literal ids; settings carry
@@ -45,7 +64,7 @@ export function createApprovalJudge(options: ApprovalJudgeOptions = {}): Approva
     const message = await request(judgeModel, {
       systemPrompt,
       messages: [{ role: "user", content: userMessage, timestamp: Date.now() }],
-    }, { signal });
+    }, { signal, reasoningEffort: APPROVAL_REASONING_EFFORT });
     return message.content
       .filter((block): block is { type: "text"; text: string } => block.type === "text")
       .map((block) => block.text)

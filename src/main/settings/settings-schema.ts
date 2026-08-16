@@ -123,8 +123,37 @@ export interface WileySettings {
 export const DEFAULT_VOICE_MODEL = "gpt-realtime-mini-2.1";
 export const DEFAULT_VOICE_NAME = "marin";
 export const DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
+
+/**
+ * The only model family Wiley runs agent work on. Everything the backend
+ * offers, accepts, or spawns is checked against this one constant: the picker,
+ * the allowlist, the approval judge, the relay registration, and the spawn
+ * guard. Older families still exist in the provider's catalog and still answer
+ * requests, which is exactly why the refusal has to be explicit rather than
+ * left to whatever the catalog happens to return.
+ *
+ * Realtime voice models are a separate family with separate ids and are not
+ * governed by this rule. Neither are claude or codex workers, which run on the
+ * user's own CLI and its own model namespace.
+ */
+export const ALLOWED_MODEL_FAMILY = "gpt-5.6";
+
+/** True for an id in the allowed family, and only for a well-formed one. */
+export function isAllowedBackendModel(model: unknown): boolean {
+  if (typeof model !== "string") return false;
+  const id = model.trim();
+  return id === ALLOWED_MODEL_FAMILY || id.startsWith(`${ALLOWED_MODEL_FAMILY}-`);
+}
+
 export const DEFAULT_AGENT_MODEL = "gpt-5.6-luna";
-export const DEFAULT_APPROVAL_MODEL_ID = "gpt-5.4-mini";
+/**
+ * The judge reviews a tool call and answers in a sentence, so it wants the
+ * cheapest model in the family: Luna is an order of magnitude below Terra and
+ * Sol per token. The family ships no mini or nano variant, so this is also the
+ * whole of the cheap end. The judge runs it at low reasoning effort; see
+ * APPROVAL_REASONING_EFFORT.
+ */
+export const DEFAULT_APPROVAL_MODEL_ID = "gpt-5.6-luna";
 /** Every mac has it, so the handoff always has somewhere to land. */
 export const DEFAULT_TERMINAL_APP = "Terminal";
 
@@ -156,7 +185,7 @@ export const DEFAULT_SETTINGS: WileySettings = {
     fastMode: true,
     approvalEnabled: true,
     approvalModel: DEFAULT_APPROVAL_MODEL_ID,
-    allowedModels: [DEFAULT_AGENT_MODEL, DEFAULT_APPROVAL_MODEL_ID],
+    allowedModels: [...new Set([DEFAULT_AGENT_MODEL, DEFAULT_APPROVAL_MODEL_ID])],
   },
   workers: {
     claude: defaultWorkerSettings("claude"),
@@ -290,14 +319,27 @@ function normalizeVoice(raw: unknown): VoiceSettings {
   };
 }
 
+/** Anything outside the family becomes the default, rather than persisting. */
+function familyModel(value: unknown, fallback: string): string {
+  const id = str(value, fallback);
+  return isAllowedBackendModel(id) ? id : fallback;
+}
+
 function normalizeAgent(raw: unknown): AgentSettings {
   const source = isPlainObject(raw) ? raw : {};
-  const model = str(source.model, DEFAULT_SETTINGS.agent.model);
-  const approvalModel = str(source.approvalModel, DEFAULT_SETTINGS.agent.approvalModel);
-  const subagentModel = optionalStr(source.subagentModel);
-  // Left exactly as the user wrote it: the allowlist is the answer to "what
-  // may Wiley spawn work on", and quietly widening it would defeat the point.
-  const allowedModels = nonEmptyStrings(source.allowedModels, DEFAULT_SETTINGS.agent.allowedModels);
+  const model = familyModel(source.model, DEFAULT_SETTINGS.agent.model);
+  const approvalModel = familyModel(source.approvalModel, DEFAULT_SETTINGS.agent.approvalModel);
+  const rawSubagentModel = optionalStr(source.subagentModel);
+  // An out-of-family worker model clears rather than clamping: unset already
+  // means "same as the root model", which is the right place to land.
+  const subagentModel = rawSubagentModel && isAllowedBackendModel(rawSubagentModel) ? rawSubagentModel : undefined;
+  // Never widened, only narrowed: the allowlist is the user's answer to "what
+  // may Wiley spawn work on", so entries survive as written unless they name a
+  // model outside the family, which the app will not run at all.
+  const allowedModels = nonEmptyStrings(
+    strings(source.allowedModels, DEFAULT_SETTINGS.agent.allowedModels).filter(isAllowedBackendModel),
+    DEFAULT_SETTINGS.agent.allowedModels,
+  );
   const agent: AgentSettings = {
     provider: str(source.provider, DEFAULT_SETTINGS.agent.provider),
     model,

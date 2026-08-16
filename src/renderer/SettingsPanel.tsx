@@ -17,6 +17,7 @@ import {
   type WorkerSettings,
 } from "../main/settings/settings-schema";
 import {
+  agentModelError,
   formatListInput,
   formatRuleLines,
   hasDraftChanges,
@@ -31,12 +32,24 @@ import {
 const CLAUDE_PERMISSION_MODES = ["default", "acceptEdits", "plan"];
 const CUSTOM = "__custom__";
 
-/** A dropdown of known ids that still accepts anything the user types. */
+/**
+ * A dropdown of known ids that still accepts anything the user types, with an
+ * optional check on the typed value: free text is for ids newer than this
+ * list, not for ids the app refuses to run.
+ */
 function ModelPicker(
-  { label, value, options, onChange, hint }:
-  { label: string; value: string; options: readonly string[]; onChange: (value: string) => void; hint?: string },
+  { label, value, options, onChange, hint, validate }:
+  {
+    label: string;
+    value: string;
+    options: readonly string[];
+    onChange: (value: string) => void;
+    hint?: string;
+    validate?: (value: string) => string | undefined;
+  },
 ) {
   const known = options.includes(value);
+  const problem = known ? undefined : validate?.(value);
   return (
     <label className="settings-field">
       <span className="settings-field__label">{label}</span>
@@ -53,9 +66,11 @@ function ModelPicker(
           value={value}
           placeholder="Model id"
           aria-label={`${label} (custom)`}
+          aria-invalid={problem ? true : undefined}
           onChange={(event) => onChange(event.target.value)}
         />
       )}
+      {problem ? <small className="settings-error" role="alert">{problem}</small> : null}
       {hint ? <small className="settings-hint">{hint}</small> : null}
     </label>
   );
@@ -346,6 +361,10 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
     ...draft.agent.allowedModels,
   ]);
   const requiredModels = [draft.agent.model, draft.agent.subagentModel ?? draft.agent.model];
+  // A model the app will not run must not be saved: the host would normalize
+  // it away, and a setting that silently reverts is worse than a refusal.
+  const badAgentModel = [draft.agent.model, draft.agent.subagentModel ?? draft.agent.model, draft.agent.approvalModel]
+    .some((model) => agentModelError(model));
   const keyState = view.secrets.openaiApiKey;
   const tokenState = view.secrets.cloudSessionToken;
   // The relay URL has to be saved, not merely typed: the host reads it from
@@ -523,6 +542,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           label="Model"
           value={draft.agent.model}
           options={agentModels}
+          validate={agentModelError}
           onChange={(model) => patchAgent({
             model,
             allowedModels: toggleAllowedModel(draft.agent.allowedModels, model, true),
@@ -532,6 +552,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           label="Worker model"
           value={draft.agent.subagentModel ?? draft.agent.model}
           options={agentModels}
+          validate={agentModelError}
           hint="Background work runs on this model."
           onChange={(subagentModel) => patchAgent({
             subagentModel: subagentModel === draft.agent.model ? undefined : subagentModel,
@@ -559,6 +580,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           label="Reviewer model"
           value={draft.agent.approvalModel}
           options={agentModels}
+          validate={agentModelError}
           onChange={(approvalModel) => patchAgent({ approvalModel })}
         />
         <fieldset className="settings-fieldset">
@@ -660,7 +682,7 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             className="status-button settings-save"
-            disabled={busy || !dirty}
+            disabled={busy || !dirty || badAgentModel}
             onClick={() => void run(
               () => bridge.updateSettings(settingsDraftPatch(settingsOf(view), draft)),
               "Settings saved",

@@ -75,7 +75,7 @@ The two workers get different tiers, and the difference is real:
 
 So Claude gets prevention, and Codex gets containment plus detection. The tripwire tells you what happened; it cannot stop it happening.
 
-**Your models, your keys.** A settings panel picks the voice model (`gpt-realtime-mini-2.1` by default, `gpt-realtime-2.1` when you want the bigger ears), the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Fast mode, on by default, pins the root session to low thinking; turn it off when you want depth over latency. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
+**Your models, your keys.** A settings panel picks the voice model (`gpt-realtime-mini-2.1` by default, `gpt-realtime-2.1` when you want the bigger ears), the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Agent-side models are the `gpt-5.6` family only: the picker offers nothing older, and an older id in a settings file from a previous version is migrated forward rather than kept. Fast mode, on by default, pins the root session to low thinking; turn it off when you want depth over latency. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
 
 **One persona.** Voice model, orchestrator, and subagents present as a single coworker. Progress is first-person, at most one short sentence, and never narrates internal machinery.
 
@@ -109,7 +109,7 @@ Optional settings, for the cases the panel does not cover:
 | `WILEY_DATA_DIR` | Directory for the SQLite ledger |
 | `WILEY_CONFIG_DIR` | Where `settings.json` and the secret store live |
 | `VOICE_DISABLED=1` | Keeps Realtime offline and shows a text input for harness testing |
-| `WILEY_APPROVAL_MODEL` | Reviewer model for risky tool calls (default `gpt-5.4-mini`) |
+| `WILEY_APPROVAL_MODEL` | Reviewer model for risky tool calls (default `gpt-5.6-luna`; `gpt-5.6` family only) |
 | `WILEY_APPROVAL_DISABLED=1` | Disables the reviewer; the catastrophic guard always stays on |
 | `WILEY_HOST`, `WILEY_PORT`, `WILEY_WEB_PORT` | Browser shell bind address and ports; read the warning above first |
 

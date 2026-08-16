@@ -1,6 +1,8 @@
 import {
+  ALLOWED_MODEL_FAMILY,
   effectiveProvider,
   effectiveThinkingLevel,
+  isAllowedBackendModel,
   subagentModelFor,
   type AgentThinkingLevel,
   type WileySettings,
@@ -71,6 +73,14 @@ export function assertSpawnModelAllowed(
   kind: "pi" | "claude" | "codex" = "pi",
 ): void {
   if (kind !== "pi") return;
+  // The family rule outranks the allowlist: a stale settings.json or a patch
+  // that slipped an older id through cannot make Wiley run one.
+  if (!isAllowedBackendModel(model)) {
+    throw new Error(
+      `Cannot start background work on "${model}": Wiley only runs ${ALLOWED_MODEL_FAMILY} models. `
+      + "Choose one under Settings → Agent.",
+    );
+  }
   if (settings.agent.allowedModels.includes(model)) return;
   throw new Error(
     `Cannot start background work on "${model}": it is not in the allowed models list `

@@ -1,7 +1,12 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai/compat";
 
-import { CLOUD_PROVIDER_ID, subagentModelFor, type WileySettings } from "../settings/settings-schema";
+import {
+  CLOUD_PROVIDER_ID,
+  isAllowedBackendModel,
+  subagentModelFor,
+  type WileySettings,
+} from "../settings/settings-schema";
 import { relayApiBaseUrl } from "./cloud-client";
 
 /**
@@ -43,6 +48,9 @@ const lookupUpstream = getModel as unknown as (provider: string, id: string) => 
  * in use: what the root and workers run on, the approval judge, and whatever
  * else the user allowlisted. The relay enforces its own allowlist regardless;
  * this is what the local session factory needs in order to resolve a name.
+ *
+ * Filtered to the allowed family like every other catalog the app builds, so
+ * relay mode cannot become the way an older model gets registered.
  */
 export function cloudModelIds(settings: WileySettings): string[] {
   return [...new Set([
@@ -50,7 +58,7 @@ export function cloudModelIds(settings: WileySettings): string[] {
     subagentModelFor(settings),
     settings.agent.approvalModel,
     ...settings.agent.allowedModels,
-  ])].filter(Boolean);
+  ])].filter(isAllowedBackendModel);
 }
 
 /** One model entry, taking the upstream catalog's numbers when it knows them. */

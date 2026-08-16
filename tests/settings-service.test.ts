@@ -93,11 +93,11 @@ describe("SettingsService.models", () => {
       modelRuntime: {
         getAvailable: async () => {
           calls += 1;
-          return [{ id: "sdk-model", provider: "openai" }];
+          return [{ id: "gpt-5.6-sol", provider: "openai" }];
         },
       },
     });
-    expect((await settings.models()).map((model) => model.id)).toEqual(["sdk-model"]);
+    expect((await settings.models()).map((model) => model.id)).toEqual(["gpt-5.6-sol"]);
     await settings.models();
     expect(calls).toBe(1);
   });

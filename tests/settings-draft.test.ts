@@ -6,6 +6,7 @@ import {
   formatListInput,
   formatRuleLines,
   hasDraftChanges,
+  agentModelError,
   modelChoices,
   parseListInput,
   parseRuleLines,
@@ -120,6 +121,28 @@ describe("toggleAllowedModel", () => {
 
 describe("modelChoices", () => {
   it("merges the catalog with what the user already configured", () => {
-    expect(modelChoices(["b", "a"], ["c", "a"])).toEqual(["a", "b", "c"]);
+    expect(modelChoices(["gpt-5.6-terra", "gpt-5.6-luna"], ["gpt-5.6-sol", "gpt-5.6-luna"]))
+      .toEqual(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]);
+  });
+
+  it("offers nothing from outside the allowed family, however it got configured", () => {
+    expect(modelChoices(["gpt-4o", "gpt-5.6-luna"], ["gpt-5.4-mini"])).toEqual(["gpt-5.6-luna"]);
+  });
+});
+
+describe("agentModelError", () => {
+  it("accepts a model in the allowed family", () => {
+    expect(agentModelError("gpt-5.6-terra")).toBeUndefined();
+  });
+
+  it("explains the refusal and names a model that works", () => {
+    const message = agentModelError("gpt-5.4-mini");
+    expect(message).toMatch(/gpt-5\.4-mini/);
+    expect(message).toMatch(/only runs gpt-5\.6 models/);
+    expect(message).toMatch(/gpt-5\.6-luna/);
+  });
+
+  it("asks for an id rather than complaining about the family when the field is empty", () => {
+    expect(agentModelError("   ")).toBe("Enter a model id.");
   });
 });

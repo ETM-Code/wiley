@@ -8,6 +8,7 @@ import {
   cloudProviderFingerprint,
   cloudProviderRegistration,
 } from "../src/main/cloud/cloud-provider";
+import { DEFAULT_APPROVAL_MODEL } from "../src/main/pi/constants";
 import { createApprovalJudge } from "../src/main/pi/safety-extension";
 import { resolveSessionModels } from "../src/main/pi/session-models";
 import { CLOUD_PROVIDER_ID, loadSettings, type WileySettings } from "../src/main/settings/settings-schema";
@@ -25,11 +26,18 @@ describe("cloud model list", () => {
       agent: {
         model: "gpt-5.6-luna",
         subagentModel: "gpt-5.6-sol",
-        approvalModel: "gpt-5.4-mini",
+        approvalModel: "gpt-5.6-terra",
         allowedModels: ["gpt-5.6-luna", "gpt-5.6-sol", "extra-model"],
       },
     });
-    expect(cloudModelIds(settings)).toEqual(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.4-mini", "extra-model"]);
+    expect(cloudModelIds(settings)).toEqual(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]);
+  });
+
+  it("never registers a model from outside the allowed family", () => {
+    const settings = cloudSettings({
+      agent: { model: "gpt-5.6-luna", allowedModels: ["gpt-5.6-luna", "gpt-5.4-mini", "gpt-4o"] },
+    });
+    expect(cloudModelIds(settings)).toEqual(["gpt-5.6-luna"]);
   });
 
   it("falls back to the root model for workers when none is set", () => {
@@ -58,7 +66,7 @@ describe("cloudProviderRegistration", () => {
     expect(registration.baseUrl).toBe("https://relay.example.com/v1");
     expect(registration.api).toBe(CLOUD_PROVIDER_API);
     expect(registration.apiKey).toBe("tok_1");
-    expect(registration.models?.map((model) => model.id)).toEqual(["gpt-5.6-luna", "gpt-5.4-mini"]);
+    expect(registration.models?.map((model) => model.id)).toEqual(["gpt-5.6-luna"]);
   });
 
   it("registers unauthenticated rather than with an empty key when no token is saved", () => {
@@ -122,12 +130,12 @@ describe("the approval judge in cloud mode", () => {
     const judge = createApprovalJudge({
       enabled: true,
       provider: CLOUD_PROVIDER_ID,
-      model: "gpt-5.4-mini",
+      model: "gpt-5.6-terra",
       modelRuntime: fakeRuntime(seen),
     });
 
     expect(judge).toBeDefined();
-    expect(seen).toContain(`${CLOUD_PROVIDER_ID}/gpt-5.4-mini`);
+    expect(seen).toContain(`${CLOUD_PROVIDER_ID}/gpt-5.6-terra`);
     expect(await judge?.review({ tool: "bash", input: {}, cwd: "/tmp", recentUserRequests: [] }))
       .toEqual({ allow: true });
     expect(seen).toContain(`complete:${CLOUD_PROVIDER_ID}`);
@@ -136,11 +144,30 @@ describe("the approval judge in cloud mode", () => {
   it("would silently never run on a hosted account without the runtime", () => {
     // The static catalog holds no wiley-cloud models, so this is exactly the
     // failure the runtime hand-off exists to prevent.
-    expect(createApprovalJudge({ enabled: true, provider: CLOUD_PROVIDER_ID, model: "gpt-5.4-mini" }))
+    expect(createApprovalJudge({ enabled: true, provider: CLOUD_PROVIDER_ID, model: "gpt-5.6-terra" }))
       .toBeUndefined();
   });
 
   it("still works on the local path, runtime or not", () => {
-    expect(createApprovalJudge({ enabled: true, provider: "openai", model: "gpt-5.4-mini" })).toBeDefined();
+    expect(createApprovalJudge({ enabled: true, provider: "openai", model: "gpt-5.6-terra" })).toBeDefined();
+  });
+
+  it("refuses a configured model from an older family and judges on the default instead", () => {
+    const seen: string[] = [];
+    createApprovalJudge({
+      enabled: true,
+      provider: CLOUD_PROVIDER_ID,
+      model: "gpt-5.4-mini",
+      modelRuntime: fakeRuntime(seen),
+    });
+    expect(seen).toContain(`${CLOUD_PROVIDER_ID}/${DEFAULT_APPROVAL_MODEL}`);
+    expect(seen).not.toContain(`${CLOUD_PROVIDER_ID}/gpt-5.4-mini`);
+  });
+
+  it("refuses an older family from the env escape hatch too", () => {
+    const seen: string[] = [];
+    process.env.WILEY_APPROVAL_MODEL = "gpt-4o";
+    createApprovalJudge({ enabled: true, provider: CLOUD_PROVIDER_ID, modelRuntime: fakeRuntime(seen) });
+    expect(seen).toContain(`${CLOUD_PROVIDER_ID}/${DEFAULT_APPROVAL_MODEL}`);
   });
 });

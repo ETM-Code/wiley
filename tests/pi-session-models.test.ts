@@ -19,7 +19,7 @@ describe("resolveSessionModels", () => {
       thinkingLevel: "low",
       subagentModel: "gpt-5.6-luna",
       approvalEnabled: true,
-      approvalModel: "gpt-5.4-mini",
+      approvalModel: "gpt-5.6-luna",
     });
   });
 
@@ -29,9 +29,9 @@ describe("resolveSessionModels", () => {
   });
 
   it("uses the dedicated subagent model when one is set", () => {
-    const plan = resolveSessionModels(withAgent({ subagentModel: "gpt-5.4-mini" }));
+    const plan = resolveSessionModels(withAgent({ subagentModel: "gpt-5.6-sol" }));
     expect(plan.rootModel).toBe("gpt-5.6-luna");
-    expect(plan.subagentModel).toBe("gpt-5.4-mini");
+    expect(plan.subagentModel).toBe("gpt-5.6-sol");
   });
 });
 
@@ -74,13 +74,21 @@ describe("assertSpawnModelAllowed", () => {
   });
 
   it("names the model and the list when it is not allowed", () => {
-    expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-9-secret"))
-      .toThrow(/gpt-9-secret.*gpt-5\.6-luna, gpt-5\.4-mini.*Settings/s);
+    const settings = withAgent({ allowedModels: ["gpt-5.6-luna", "gpt-5.6-sol"] });
+    expect(() => assertSpawnModelAllowed(settings, "gpt-5.6-terra"))
+      .toThrow(/gpt-5\.6-terra.*gpt-5\.6-luna, gpt-5\.6-sol.*Settings/s);
+  });
+
+  it("refuses a model from outside the family before the allowlist is consulted", () => {
+    const settings = withAgent({ allowedModels: ["gpt-5.6-luna"] });
+    expect(() => assertSpawnModelAllowed(settings, "gpt-5.4-mini"))
+      .toThrow(/gpt-5\.4-mini.*only runs gpt-5\.6 models.*Settings/s);
+    expect(() => assertSpawnModelAllowed(settings, "gpt-4o")).toThrow(/only runs gpt-5\.6 models/);
   });
 
   it("leaves an external engine's own model names alone", () => {
     expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "haiku", "claude")).not.toThrow();
     expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-5.3-codex", "codex")).not.toThrow();
-    expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-9-secret", "pi")).toThrow();
+    expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-5.3-codex", "pi")).toThrow();
   });
 });
