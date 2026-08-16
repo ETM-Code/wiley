@@ -5,6 +5,7 @@ import {
   assignPorts,
   chooseSide,
   countBlockers,
+  meetOutline,
   orthogonalRoute,
   planRoutes,
   portSlots,
@@ -192,6 +193,35 @@ describe("orthogonalRoute", () => {
     const route = orthogonalRoute(from, to, walled);
     expect(route.points.length).toBeGreaterThanOrEqual(3);
     expect(countBlockers(route.points, false, walled)).toBeGreaterThan(0);
+  });
+});
+
+describe("meetOutline", () => {
+  const diamond = box("d", 20, 940, 220, 140);
+
+  it("brings an endpoint off a diamond's box and onto the diamond", () => {
+    // Eight px clear of the box's top edge, well off to one side: on the box
+    // that is a port, on the shape it is thin air beside the corner.
+    const seated = meetOutline(diamond, "diamond", { x: 165, y: 932 }, { x: 165, y: 832 });
+    expect(seated.x).toBe(165);
+    // The diamond's upper-right edge is at y = 962.3 there, and the eight px
+    // of daylight the layout left survives the move.
+    expect(seated.y).toBeCloseTo(954.3, 1);
+  });
+
+  it("keeps an endpoint that already meets the shape", () => {
+    // The middle of a side is where a diamond's own vertex is.
+    const seated = meetOutline(diamond, "diamond", { x: 130, y: 932 }, { x: 130, y: 832 });
+    expect(seated).toEqual({ x: 130, y: 932 });
+    const ellipse = box("e", 0, 0, 200, 100);
+    const top = meetOutline(ellipse, "ellipse", { x: 100, y: -8 }, { x: 100, y: -80 });
+    expect(top.x).toBeCloseTo(100, 6);
+    expect(top.y).toBeCloseTo(-8, 6);
+  });
+
+  it("leaves a rectangle alone", () => {
+    const at = { x: 165, y: 932 };
+    expect(meetOutline(diamond, "rectangle", at, { x: 165, y: 832 })).toBe(at);
   });
 });
 

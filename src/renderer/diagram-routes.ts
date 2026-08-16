@@ -285,6 +285,88 @@ export function borderPoint(box: Box, target: Point): Point {
   return { x: centre.x + dx * reach, y: centre.y + dy * reach };
 }
 
+/** The outlines a node can be drawn with, as far as a connector is concerned. */
+export type Outline = "rectangle" | "diamond" | "ellipse";
+
+/**
+ * How far along `direction` from `at` the box's outline lies, taking the
+ * nearest crossing in either direction. Returns null when the line misses the
+ * shape entirely, which a port on the shape's own box never does.
+ */
+function outlineReach(box: Box, outline: Outline, at: Point, direction: Point): number | null {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const a = box.width / 2;
+  const b = box.height / 2;
+  const px = at.x - cx;
+  const py = at.y - cy;
+  const nearest = (values: number[]) => (values.length === 0
+    ? null
+    : values.reduce((best, value) => (Math.abs(value) < Math.abs(best) ? value : best)));
+
+  if (outline === "ellipse") {
+    if (a <= 0 || b <= 0) return null;
+    const qa = (direction.x / a) ** 2 + (direction.y / b) ** 2;
+    const qb = 2 * ((px * direction.x) / a ** 2 + (py * direction.y) / b ** 2);
+    const qc = (px / a) ** 2 + (py / b) ** 2 - 1;
+    if (Math.abs(qa) < 1e-12) return null;
+    const discriminant = qb * qb - 4 * qa * qc;
+    if (discriminant < 0) return null;
+    const root = Math.sqrt(discriminant);
+    return nearest([(-qb + root) / (2 * qa), (-qb - root) / (2 * qa)]);
+  }
+
+  // Both remaining outlines are a closed run of straight edges: the four
+  // corners for a rectangle, the four side midpoints for a diamond.
+  const corners: Point[] = outline === "diamond"
+    ? [{ x: cx, y: box.y }, { x: box.x + box.width, y: cy }, { x: cx, y: box.y + box.height }, { x: box.x, y: cy }]
+    : [
+      { x: box.x, y: box.y },
+      { x: box.x + box.width, y: box.y },
+      { x: box.x + box.width, y: box.y + box.height },
+      { x: box.x, y: box.y + box.height },
+    ];
+  const hits: number[] = [];
+  for (let index = 0; index < corners.length; index++) {
+    const from = corners[index];
+    const to = corners[(index + 1) % corners.length];
+    const ex = to.x - from.x;
+    const ey = to.y - from.y;
+    const denominator = direction.x * ey - direction.y * ex;
+    if (Math.abs(denominator) < 1e-12) continue;
+    const t = ((from.x - at.x) * ey - (from.y - at.y) * ex) / denominator;
+    const s = ((from.x - at.x) * direction.y - (from.y - at.y) * direction.x) / denominator;
+    if (s >= -1e-9 && s <= 1 + 1e-9) hits.push(t);
+  }
+  return nearest(hits);
+}
+
+/**
+ * Moves a connector endpoint from a node's bounding box onto the shape the
+ * node is actually drawn as, keeping whatever gap it had from the box.
+ *
+ * A port halfway along the top of a diamond's box is nowhere near the diamond:
+ * the arrowhead ends up floating in the corner beside the shape with nothing
+ * under it, which is the single thing that makes an otherwise tidy decision
+ * node look broken.
+ */
+export function meetOutline(box: Box, outline: Outline, at: Point, neighbour: Point): Point {
+  if (outline === "rectangle") return at;
+  const dx = at.x - neighbour.x;
+  const dy = at.y - neighbour.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-9) return at;
+  const direction = { x: dx / length, y: dy / length };
+  const shape = outlineReach(box, outline, at, direction);
+  const bounding = outlineReach(box, "rectangle", at, direction);
+  if (shape === null || bounding === null) return at;
+  const shift = shape - bounding;
+  // A correction longer than the shape itself means the geometry is not what
+  // this was written for; leave the endpoint where the layout put it.
+  if (Math.abs(shift) > Math.hypot(box.width, box.height)) return at;
+  return { x: at.x + direction.x * shift, y: at.y + direction.y * shift };
+}
+
 type PortRequest = { key: string; nodeId: string; side: Side; target: Point };
 
 export type PortOptions = {
