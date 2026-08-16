@@ -517,8 +517,23 @@ export async function tidyDiagram(api: ExcalidrawImperativeAPI, value: unknown) 
   anchorToOrigin(boxes, graph.nodes);
 
   // Everything outside the tidy is somebody else's: the agent's own diagrams
-  // and any part of the sketch this request did not name.
-  const inside = new Set<string>(targets);
+  // and any part of the sketch this request did not name. A caption is inside
+  // whenever the shape it names is, or it would be judged as a foreign
+  // obstacle while travelling with the shape it belongs to.
+  const inside = new Set<string>([
+    ...targets,
+    ...graph.nodes.map((node) => node.elementId),
+    ...graph.edges.map((edge) => edge.elementId),
+    ...graph.unattached,
+    ...[...graph.nodes.map((node) => node.labelElementId),
+      ...graph.edges.map((edge) => edge.labelElementId)]
+      .filter((id): id is string => Boolean(id)),
+  ]);
+  for (const element of sketch) {
+    if (typeof element.containerId === "string" && inside.has(element.containerId)) {
+      inside.add(element.id);
+    }
+  }
   const foreign = humanObstacles(sketch.filter((element) => !inside.has(element.id)));
   const stamped: DiagramObstacle[] = scene
     .filter((element) => readDiagramStamp(element) !== undefined)

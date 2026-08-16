@@ -268,3 +268,24 @@ describe("tidy-diagram", () => {
     await expect(tidy(board([]))).rejects.toThrow(/nothing of the user's/);
   });
 });
+
+describe("tidying a named handful of shapes", () => {
+  const scene = messyScene("crooked-signup");
+
+  it("carries their captions along without judging them as foreign", async () => {
+    const target = board(scene.elements);
+    const shapes = scene.elements
+      .filter((element) => element.type === "rectangle")
+      .map((element) => element.id);
+    const result = await tidy(target, { elementIds: shapes });
+
+    expect(defects(result)).toEqual([]);
+    for (const element of target.elements()) {
+      const containerId = (element as { containerId?: string }).containerId;
+      if (element.type !== "text" || !containerId) continue;
+      const shape = target.elements().find((candidate) => candidate.id === containerId)!;
+      expect(element.x).toBeGreaterThanOrEqual(shape.x);
+      expect(element.x + element.width).toBeLessThanOrEqual(shape.x + shape.width);
+    }
+  });
+});
