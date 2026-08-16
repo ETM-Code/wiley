@@ -55,7 +55,8 @@ export function formatBoardHumanGraph(board: BoardSnapshot): string {
   return formatHumanGraph(boardHumanGraph(board));
 }
 
-export function buildBoardContext(board: BoardSnapshot) {
+/** Reading the sketch is a sweep over every element, so it happens once. */
+export function buildBoardContext(board: BoardSnapshot, sketch = boardHumanGraph(board)) {
   return {
     revision: board.revision,
     elementCount: board.elements.length,
@@ -70,7 +71,7 @@ export function buildBoardContext(board: BoardSnapshot) {
       text: element.text,
     })),
     diagrams: boardDiagrams(board),
-    humanGraph: humanGraphPayload(boardHumanGraph(board)),
+    humanGraph: humanGraphPayload(sketch),
     truncated: board.elements.length > BOARD_CONTEXT_ELEMENT_LIMIT,
   };
 }
@@ -81,6 +82,7 @@ export function buildTaskMessage(input: {
   transcriptEntries: unknown;
   board: BoardSnapshot;
 }): string {
+  const sketch = boardHumanGraph(input.board);
   return [
     input.task,
     "",
@@ -91,10 +93,10 @@ export function buildTaskMessage(input: {
     "</voice_conversation_context>",
     "",
     "<current_canvas_context>",
-    JSON.stringify(buildBoardContext(input.board)),
+    JSON.stringify(buildBoardContext(input.board, sketch)),
     "<diagrams>",
     formatDiagramListing(boardDiagrams(input.board)),
-    formatBoardHumanGraph(input.board),
+    formatHumanGraph(sketch),
     "</diagrams>",
     "</current_canvas_context>",
   ].join("\n");

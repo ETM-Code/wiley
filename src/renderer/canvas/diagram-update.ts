@@ -28,12 +28,15 @@ import type { Box } from "../diagram-routes";
 import {
   assertDiagramQuality,
   assertQualityClearOfHuman,
+  humanCollisionError,
+  placementCollisions,
   QUALITY_EVALUATION_LIMIT,
 } from "./diagram-render";
 import { diagramElements, mergeSpec, reconstructSpec, resolveTargetDiagram } from "./diagram-reconstruct";
 import { elementsBounds, finiteGeometry, PLACE_GAP } from "./geometry";
 import { inferHumanGraph, type HumanGraph, type SketchElement } from "./human-graph";
 import {
+  canonicalHumanEdges,
   humanElementIdOf,
   humanNodeId,
   humanObstacles,
@@ -163,7 +166,15 @@ export function withHumanBindings(
       .filter((id) => !kept.some((entry) => entry?.id === id))
       .map((id) => ({ id, type: "arrow" as const }));
     if (missing.length === 0 && kept.length === bound.length) return element;
-    return { ...element, boundElements: [...kept, ...missing] } as SceneElement;
+    // Excalidraw reconciles by version, so an edit that does not bump it can
+    // be dropped, leaving an arrow bound to a shape with no record of it.
+    return {
+      ...element,
+      boundElements: [...kept, ...missing],
+      version: (element as SceneElement & { version: number }).version + 1,
+      versionNonce: Math.floor(Math.random() * 2 ** 31),
+      updated: Date.now(),
+    } as SceneElement;
   });
 }
 
@@ -222,12 +233,24 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
   // their boxes by id, and an arrow this diagram already runs into the sketch
   // only reconstructs as an edge while the reading is to hand.
   const sketch = inferHumanGraph(scene as unknown as SketchElement[]);
+  const existing = reconstructSpec(scene, diagramId, { human: sketch });
+  // Endpoints are spelled the one way before anything matches on them: an
+  // edge reconstructed as `human:abc` and one requested as `abc` are the same
+  // edge, and merging them as two would draw the connection twice.
+  const declared = new Set([
+    ...existing.nodes.map((node) => node.id),
+    ...(requested.nodes ?? []).map((node) => node.id),
+  ]);
+  const asked: Partial<LayoutParams> = {
+    ...requested,
+    ...(requested.edges ? { edges: canonicalHumanEdges(requested.edges, sketch, declared) } : {}),
+  };
   const merged = params.mode === "merge"
-    ? mergeSpec(reconstructSpec(scene, diagramId, { human: sketch }), requested)
+    ? mergeSpec(existing, asked)
     : {
-        ...requested,
-        nodes: requested.nodes ?? [],
-        edges: requested.edges ?? [],
+        ...asked,
+        nodes: asked.nodes ?? [],
+        edges: asked.edges ?? [],
       } as LayoutParams;
   const spec = materializeHumanNodes(merged, sketch);
   const split = splitHumanSpec(spec);
@@ -235,19 +258,15 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
   const plan = await planDiagramLayout(split.agentSpec, { x: 0, y: 0 }, diagramId);
   const previous = boundsOf(before) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   const foreignElements = finiteGeometry(scene.filter((element) => !beforeIds.has(element.id)));
-  const shifted = params.keepPosition === false
+  const foreignBoxes = foreignElements.map((element) => ({
+    minX: element.x,
+    minY: element.y,
+    maxX: element.x + element.width,
+    maxY: element.y + element.height,
+  }));
+  const placedFirst = params.keepPosition === false
     ? undefined
-    : placeUpdatedPlan(
-        plan,
-        previous,
-        foreignElements.map((element) => ({
-          minX: element.x,
-          minY: element.y,
-          maxX: element.x + element.width,
-          maxY: element.y + element.height,
-        })),
-      );
-  guardFrameAutoFit(plan);
+    : placeUpdatedPlan(plan, previous, foreignBoxes);
 
   // The person's boxes and captions are regions this diagram has to respect,
   // minus the ones it is deliberately attached to: an arrow reaching a shape
@@ -265,11 +284,27 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
   const obstacles = humanObstacles(scene as unknown as SketchElement[])
     .filter((obstacle) => !attached.has(obstacle.id));
   const placed = planBounds(plan);
+  // It slides on along whichever axis it grew on, the same axis placeUpdatedPlan
+  // would have used.
   const grewWide = (placed.maxX - placed.minX) - (previous.maxX - previous.minX)
     >= (placed.maxY - placed.minY) - (previous.maxY - previous.minY);
   // Clearing the sketch has to settle before the connecting arrows are drawn:
   // an arrow bound to somebody's element cannot be translated afterwards.
-  assertQualityClearOfHuman(plan, obstacles, grewWide);
+  const cleared = assertQualityClearOfHuman(
+    plan,
+    obstacles,
+    grewWide ? "right" : "below",
+    foreignBoxes,
+  );
+  const shifted = placedFirst || cleared.shifted
+    ? {
+        dx: (placedFirst?.dx ?? 0) + (cleared.shifted?.dx ?? 0),
+        dy: (placedFirst?.dy ?? 0) + (cleared.shifted?.dy ?? 0),
+      }
+    : undefined;
+  // Only after the last translate: a frame nudged off zero and then slid back
+  // onto it by a clearing shift would hand itself to the converter's auto-fit.
+  guardFrameAutoFit(plan);
 
   // The connecting arrows come last, because the sketch sits at absolute
   // coordinates the layout never had a say over: only once the plan is
@@ -291,6 +326,11 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     }
   }
   const quality = assertDiagramQuality(plan, obstacles);
+  // The connecting arrows were routed around the sketch, so anything of the
+  // person's they still land on is a real problem rather than one a shift
+  // could have solved, and the plan can no longer move: it is bound to them.
+  const landed = quality ? placementCollisions(quality) : [];
+  if (landed.length > 0) throw humanCollisionError(landed);
 
   const claimed = new Set(plan.skeletons.map((skeleton) => String(skeleton.id)));
   const collisions = scene.filter((element) => claimed.has(element.id)

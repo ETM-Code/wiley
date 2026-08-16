@@ -556,7 +556,19 @@ function validateGraph(params: LayoutParams): void {
   validateContainers(params, nodeIds);
   requireMember(params.layout?.direction, DIAGRAM_DIRECTIONS, "layout direction");
   requireMember(params.layout?.algorithm, DIAGRAM_ALGORITHMS, "layout algorithm");
-  for (const edge of params.edges ?? []) {
+  validateGraphEdges(params.edges ?? [], nodeIds);
+}
+
+/**
+ * Every edge is held to this, including the ones that never reach ELK because
+ * one end of them is a shape the person drew. An edge that skipped the check
+ * would route from nowhere and carry whatever style string it was handed.
+ */
+export function validateGraphEdges(
+  edges: readonly GraphEdge[],
+  nodeIds: ReadonlySet<string>,
+): void {
+  for (const edge of edges) {
     if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
       throw new Error(`Diagram edge references an unknown node: ${edge.from} -> ${edge.to}`);
     }

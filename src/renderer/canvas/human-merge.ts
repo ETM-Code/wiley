@@ -23,6 +23,7 @@ import {
   boundLabelClears,
   boundLabelRoom,
   measureText,
+  validateGraphEdges,
   type DiagramPlan,
   type GraphEdge,
   type GraphNode,
@@ -103,6 +104,37 @@ export function humanGraphNode(node: HumanNode): GraphNode {
 }
 
 /**
+ * The one spelling an endpoint has. A bare element id from the scene listing
+ * and the prefixed `human:` form mean the same shape, so they have to become
+ * the same string before anything matches edges by their endpoints; otherwise
+ * asking for the same connection twice draws it twice.
+ */
+export function canonicalHumanEndpoint(
+  endpoint: string,
+  graph: HumanGraph,
+  declared: ReadonlySet<string>,
+): string {
+  if (declared.has(endpoint)) return endpoint;
+  if (humanElementIdOf(endpoint)) return endpoint;
+  return graph.nodes.some((node) => node.elementId === endpoint)
+    ? humanNodeId(endpoint)
+    : endpoint;
+}
+
+/** The same spelling, applied across a set of edges before they are merged. */
+export function canonicalHumanEdges(
+  edges: readonly GraphEdge[],
+  graph: HumanGraph,
+  declared: ReadonlySet<string>,
+): GraphEdge[] {
+  return edges.map((edge) => ({
+    ...edge,
+    from: canonicalHumanEndpoint(edge.from, graph, declared),
+    to: canonicalHumanEndpoint(edge.to, graph, declared),
+  }));
+}
+
+/**
  * Fills in every node an edge names against the person's sketch, so the agent
  * can write `{from: "api", to: "human:abc"}` and nothing else. A bare element
  * id means the same thing: that is what the scene listing shows, so refusing
@@ -115,19 +147,11 @@ export function materializeHumanNodes(spec: LayoutParams, graph: HumanGraph): La
   const declared = new Set(spec.nodes.map((node) => node.id));
   const added = new Map<string, GraphNode>();
   const resolveEndpoint = (endpoint: string): string => {
-    if (declared.has(endpoint)) return endpoint;
-    const named = humanElementIdOf(endpoint);
-    if (named) {
-      const human = byElementId.get(named);
-      if (!human) throw new Error(`No shape of the user's on the board matches ${endpoint}`);
-      added.set(endpoint, humanGraphNode(human));
-      return endpoint;
-    }
-    const human = byElementId.get(endpoint);
-    // Not a node and not the person's either: validateGraph names it better
-    // than anything that could be said here.
-    if (!human) return endpoint;
-    const id = humanNodeId(endpoint);
+    const id = canonicalHumanEndpoint(endpoint, graph, declared);
+    const named = humanElementIdOf(id);
+    if (!named) return id;
+    const human = byElementId.get(named);
+    if (!human) throw new Error(`No shape of the user's on the board matches ${endpoint}`);
     added.set(id, humanGraphNode(human));
     return id;
   };
@@ -164,6 +188,8 @@ export function splitHumanSpec(spec: LayoutParams): HumanSpecSplit {
     else agentNodes.push(node);
   }
   const edges = spec.edges ?? [];
+  // Cross edges never reach ELK, so this is the only place they are checked.
+  validateGraphEdges(edges, new Set(spec.nodes.map((node) => node.id)));
   const ordinals = edgeOrdinals(edges);
   const agentEdges: GraphEdge[] = [];
   const crossEdges: HumanSpecSplit["crossEdges"] = [];

@@ -107,24 +107,53 @@ export function resolveDiagramOrigin(
   return directionalOrigin(reference, content, direction);
 }
 
+function boundsOverlap(a: PlanBounds, b: PlanBounds): boolean {
+  return a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
+}
+
+/** After a shift the content has to clear whatever it slid into next. */
+const MAX_CLEARING_PASSES = 4;
+
 /**
- * How far content has to move along one axis to clear everything it landed
- * on. Sliding on a single axis keeps the arrangement the caller chose; moving
- * diagonally would put the drawing somewhere nobody asked for.
+ * How far content has to move to clear everything in its way.
+ *
+ * It slides along one axis, in the direction it was placed: a diagram asked
+ * to sit left of an anchor moves further left rather than back across the
+ * thing it was placed beside. Each pass clears whatever the previous one slid
+ * into, so getting out of the way of one drawing cannot land on another.
  */
 export function shiftClearOf(
   content: PlanBounds,
-  hit: readonly PlanBounds[],
-  horizontal: boolean,
+  avoid: readonly PlanBounds[],
+  direction: PlaceDirection,
   gap = PLACE_GAP,
 ): { dx: number; dy: number } | undefined {
-  if (hit.length === 0) return undefined;
-  const distance = horizontal
-    ? Math.max(...hit.map((box) => box.maxX - content.minX))
-    : Math.max(...hit.map((box) => box.maxY - content.minY));
-  const delta = snapModelCoordinate(distance + gap);
-  if (!Number.isFinite(delta) || delta === 0) return undefined;
-  return horizontal ? { dx: delta, dy: 0 } : { dx: 0, dy: delta };
+  let dx = 0;
+  let dy = 0;
+  for (let pass = 0; pass < MAX_CLEARING_PASSES; pass++) {
+    const here = {
+      minX: content.minX + dx,
+      maxX: content.maxX + dx,
+      minY: content.minY + dy,
+      maxY: content.maxY + dy,
+    };
+    const hit = avoid.filter((box) => boundsOverlap(here, box));
+    if (hit.length === 0) return dx === 0 && dy === 0 ? undefined : { dx, dy };
+    const distance = direction === "right"
+      ? Math.max(...hit.map((box) => box.maxX - here.minX))
+      : direction === "left"
+        ? Math.max(...hit.map((box) => here.maxX - box.minX))
+        : direction === "below"
+          ? Math.max(...hit.map((box) => box.maxY - here.minY))
+          : Math.max(...hit.map((box) => here.maxY - box.minY));
+    const delta = snapModelCoordinate(distance + gap);
+    if (!Number.isFinite(delta) || delta <= 0) return undefined;
+    if (direction === "right") dx += delta;
+    else if (direction === "left") dx -= delta;
+    else if (direction === "below") dy += delta;
+    else dy -= delta;
+  }
+  return undefined;
 }
 
 export function perimeterPoint(

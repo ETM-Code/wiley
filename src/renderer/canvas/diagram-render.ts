@@ -16,6 +16,7 @@ import {
   translatePlan,
   type DiagramPlan,
   type LayoutParams,
+  type PlanBounds,
 } from "../diagram-layout";
 import {
   evaluateConvertedScene,
@@ -27,7 +28,15 @@ import {
 } from "../diagram-quality";
 import { readDiagramStamp } from "../../shared/diagram-stamp";
 import { deriveDiagramId, titleElementId } from "../diagram-spec";
-import { asRecord, gridResult, resolveDiagramOrigin, shiftClearOf } from "./geometry";
+import {
+  asRecord,
+  elementsBounds,
+  finiteGeometry,
+  gridResult,
+  resolveDiagramOrigin,
+  shiftClearOf,
+  type PlaceDirection,
+} from "./geometry";
 import { humanObstacles } from "./human-merge";
 import type { SketchElement } from "./human-graph";
 import {
@@ -123,36 +132,60 @@ export function assertDiagramQuality(
 }
 
 /**
- * The findings that mean the picture is actually wrong. A box landing on the
- * user's own work is deliberately not one of them: that is a placement the
- * caller gets to try again before it counts as a failure.
+ * The findings that mean the picture is actually wrong. Anything involving
+ * the user's own work is deliberately not one of them: that is a placement
+ * the caller gets to try again before it counts as a failure.
  */
 export function diagramDefects(quality: DiagramQualityReport): string[] {
   return [
-    ...quality.nodeOverlaps.filter((finding) => !isObstacleFinding(finding)),
+    ...quality.nodeOverlaps,
     ...quality.edgesThroughNodes,
     ...quality.containerContainment,
     ...quality.edgesThroughContainers,
-  ];
+  ].filter((finding) => !isObstacleFinding(finding));
 }
 
-/** Where the drawing landed on top of the person's, which a shift can fix. */
+/**
+ * Where the drawing landed on the person's. A route driven through one of
+ * their boxes counts here too: the layout engine never saw their sketch, so
+ * the honest answer is to move the whole drawing somewhere its routes have
+ * clear air, not to fail a request over geometry nobody could have avoided.
+ */
 export function placementCollisions(quality: DiagramQualityReport): string[] {
-  return [...quality.nodeOverlaps, ...quality.labelCollisions].filter(isObstacleFinding);
+  return [
+    ...quality.nodeOverlaps,
+    ...quality.labelCollisions,
+    ...quality.edgesThroughNodes,
+  ].filter(isObstacleFinding);
+}
+
+export function humanCollisionError(collisions: readonly string[]): Error {
+  return new Error(`Diagram would sit on the user's own drawing: ${collisions.slice(0, 3).join("; ")}`);
+}
+
+function obstacleBounds(obstacle: DiagramObstacle) {
+  return {
+    minX: obstacle.bounds.x,
+    minY: obstacle.bounds.y,
+    maxX: obstacle.bounds.x + obstacle.bounds.width,
+    maxY: obstacle.bounds.y + obstacle.bounds.height,
+  };
 }
 
 /**
  * One attempt to get out of the way, then a real failure.
  *
  * Placing a diagram beside a sketch can still land on it once the layout
- * decides how big the diagram actually is, so the plan slides along the axis
- * it grew on until it clears everything it hit. A second failure is not a
- * placement problem any shift is going to solve.
+ * decides how big the diagram actually is, so the plan slides on in the
+ * direction it was placed until it clears everything, the sketch and the
+ * other diagrams alike. A second failure is not a placement problem any
+ * shift is going to solve.
  */
 export function assertQualityClearOfHuman(
   plan: DiagramPlan,
   obstacles: readonly DiagramObstacle[],
-  horizontal: boolean,
+  direction: PlaceDirection,
+  alsoAvoid: readonly PlanBounds[] = [],
 ): { quality: DiagramQualityReport | undefined; shifted?: { dx: number; dy: number } } {
   const quality = assertDiagramQuality(plan, obstacles);
   if (!quality) return { quality };
@@ -161,23 +194,32 @@ export function assertQualityClearOfHuman(
 
   const hit = obstacles
     .filter((obstacle) => collisions.some((finding) => finding.includes(` x ${obstacle.id}`)))
-    .map((obstacle) => ({
-      minX: obstacle.bounds.x,
-      minY: obstacle.bounds.y,
-      maxX: obstacle.bounds.x + obstacle.bounds.width,
-      maxY: obstacle.bounds.y + obstacle.bounds.height,
-    }));
-  const shift = shiftClearOf(planBounds(plan), hit, horizontal);
-  if (!shift) {
-    throw new Error(`Diagram would sit on the user's own drawing: ${collisions.slice(0, 3).join("; ")}`);
-  }
+    .map(obstacleBounds);
+  // Clearing what it hit is only half the job; the pass has to keep going
+  // until it is clear of everything else on the board as well.
+  const shift = shiftClearOf(planBounds(plan), [...hit, ...alsoAvoid], direction);
+  if (!shift) throw humanCollisionError(collisions);
   translatePlan(plan, shift.dx, shift.dy);
   const retried = assertDiagramQuality(plan, obstacles);
   const remaining = retried ? placementCollisions(retried) : [];
-  if (remaining.length > 0) {
-    throw new Error(`Diagram would sit on the user's own drawing: ${remaining.slice(0, 3).join("; ")}`);
-  }
+  if (remaining.length > 0) throw humanCollisionError(remaining);
   return { quality: retried, shifted: shift };
+}
+
+/**
+ * Everything already on the board that is not one of the obstacles, as boxes
+ * a clearing shift has to end up clear of. Without it, sliding out of the
+ * user's way could park the drawing on another diagram instead.
+ */
+function foreignBounds(
+  elements: readonly SceneElement[],
+  obstacles: readonly DiagramObstacle[],
+): PlanBounds[] {
+  const named = new Set(obstacles.map((obstacle) => obstacle.id));
+  return finiteGeometry(elements)
+    .filter((element) => !named.has(element.id))
+    .map((element) => elementsBounds([element]))
+    .filter((bounds): bounds is PlanBounds => bounds !== null);
 }
 
 /** Monotonic even when two diagrams are requested within the same millisecond. */
@@ -215,16 +257,19 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     withoutDiagramPreviewElements([...api.getSceneElements()]),
   );
   translatePlan(plan, origin.x, origin.y);
-  guardFrameAutoFit(plan);
   // Previews are redrawn on every JSON delta and are throwaway by design, so
   // they never pay for the checks.
-  const obstacles = preview
+  const existing = preview
     ? []
-    : humanObstacles(withoutDiagramPreviewElements([...api.getSceneElements()]) as unknown as SketchElement[]);
+    : withoutDiagramPreviewElements([...api.getSceneElements()]);
+  const obstacles = humanObstacles(existing as unknown as SketchElement[]);
   const direction = params.anchorDirection ?? "right";
   const quality = preview
     ? undefined
-    : assertQualityClearOfHuman(plan, obstacles, direction === "right" || direction === "left").quality;
+    : assertQualityClearOfHuman(plan, obstacles, direction, foreignBounds(existing, obstacles)).quality;
+  // Only after the last translate: a frame nudged off zero and then slid back
+  // onto it by a clearing shift would hand itself to the converter's auto-fit.
+  guardFrameAutoFit(plan);
   const title = params.title?.trim();
 
   // Derived ids are only safe while nothing else owns them. The converter

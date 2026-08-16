@@ -355,9 +355,17 @@ export function humanGraphPayload(graph: HumanGraph, limit = HUMAN_GRAPH_PAYLOAD
   const truncated = graph.nodes.length > limit
     || graph.edges.length > limit
     || graph.unattached.length > limit;
+  const nodes = graph.nodes.slice(0, limit);
+  // An edge to a node that fell outside the slice names an id nothing else in
+  // the listing explains, which is worse than not listing the edge.
+  const listed = new Set(nodes.map((node) => node.elementId));
+  const edges = graph.edges
+    .filter((edge) => (!edge.fromElementId || listed.has(edge.fromElementId))
+      && (!edge.toElementId || listed.has(edge.toElementId)))
+    .slice(0, limit);
   return {
     ...(truncated ? { truncated: true } : {}),
-    nodes: graph.nodes.slice(0, limit).map((node) => ({
+    nodes: nodes.map((node) => ({
       id: node.elementId,
       shape: node.shape,
       ...(node.label ? { label: node.label } : {}),
@@ -368,7 +376,7 @@ export function humanGraphPayload(graph: HumanGraph, limit = HUMAN_GRAPH_PAYLOAD
         h: Math.round(node.bounds.height),
       },
     })),
-    edges: graph.edges.slice(0, limit).map((edge) => ({
+    edges: edges.map((edge) => ({
       id: edge.elementId,
       from: edge.fromElementId ?? null,
       to: edge.toElementId ?? null,
