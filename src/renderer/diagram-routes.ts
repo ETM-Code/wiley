@@ -588,9 +588,16 @@ export function flowRoute(
   // Two boxes meant to sit in one column can still land half a grid cell
   // apart, because a box is placed by its corner and centred by its width.
   // Bracketing that lean draws a visible jog in the middle of a run that was
-  // supposed to read as one straight line; leaning the line instead does not.
+  // supposed to read as one straight line, and leaning the line draws the one
+  // slanted connector on a board of square ones, which is the thing a reader
+  // picks out first. Neither is what was meant: the run is drawn straight
+  // along the line between the two ends, each of which gives up half the
+  // offset and stays on its own side of its own box.
   if (Math.abs(offset) <= FLOW_SQUARE_SLACK) {
-    const points = [from, to];
+    const shared = alongY ? (from.x + to.x) / 2 : (from.y + to.y) / 2;
+    const points = alongY
+      ? [{ x: shared, y: from.y }, { x: shared, y: to.y }]
+      : [{ x: from.x, y: shared }, { x: to.x, y: shared }];
     return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
   }
   const turn = alongY ? (from.y + to.y) / 2 : (from.x + to.x) / 2;

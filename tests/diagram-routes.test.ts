@@ -229,6 +229,18 @@ describe("flowRoute", () => {
     const route = flowRoute({ x: 400, y: 200 }, { x: 400, y: 268 }, sides, [])!;
     expect(route).toEqual({ points: [{ x: 400, y: 200 }, { x: 400, y: 268 }], rounded: false });
   });
+
+  it("squares a run that is barely off line instead of leaning it", () => {
+    // Half a grid cell of lean over a short run is the one slanted connector
+    // on a board of square ones, and that is what a reader picks out first.
+    const route = flowRoute({ x: 180, y: 300 }, { x: 260, y: 290 }, { from: "right", to: "left" }, [])!;
+    expect(route.points).toEqual([{ x: 180, y: 295 }, { x: 260, y: 295 }]);
+  });
+
+  it("squares a barely-off vertical run the same way", () => {
+    const route = flowRoute({ x: 400, y: 200 }, { x: 408, y: 268 }, sides, [])!;
+    expect(route.points).toEqual([{ x: 404, y: 200 }, { x: 404, y: 268 }]);
+  });
 });
 
 describe("orthogonalRoute", () => {
