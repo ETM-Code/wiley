@@ -1,8 +1,9 @@
 {
-  "name": "board-ai",
+  "name": "wiley",
   "version": "0.1.0",
   "private": true,
-  "description": "A realtime voice-driven Excalidraw workspace powered by Pi agents.",
+  "license": "Apache-2.0",
+  "description": "Wiley: a co-present voice-driven whiteboard where a Pi agent sketches and builds alongside you.",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
@@ -56,8 +57,8 @@
     "vitest": "4.1.0"
   },
   "build": {
-    "appId": "ai.board.desktop",
-    "productName": "Board AI",
+    "appId": "ai.eltrus.wiley",
+    "productName": "Wiley",
     "directories": {
       "output": "release"
     },

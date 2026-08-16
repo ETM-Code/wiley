@@ -1,6 +1,6 @@
 # Agent-Driven Test Procedure
 
-Automated, layered, peer-reviewed testing for the board-ai stack (Electron + Excalidraw + gpt-realtime-2.1 + pi harness). The goal: every seam is exercised by machines, every result is judged by a fresh-context agent, and defects surface before a human ever puts on headphones.
+Automated, layered, peer-reviewed testing for the Wiley stack (Electron + Excalidraw + gpt-realtime-2.1 + pi harness). The goal: every seam is exercised by machines, every result is judged by a fresh-context agent, and defects surface before a human ever puts on headphones.
 
 Companion to `pi-harness-guide.md`; section numbers below refer to that guide.
 
