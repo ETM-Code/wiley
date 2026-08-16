@@ -36,6 +36,28 @@ function loadOpenColor(): Record<string, string[]> | null {
   }
 }
 
+/**
+ * Where a fill sits on the colour wheel, or null when it carries too little
+ * saturation for an angle to mean anything.
+ */
+function hueAngle(hex: string): number | null {
+  if (!hex.startsWith("#") || hex.length !== 7) return null;
+  const [red, green, blue] = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
+  const max = Math.max(red, green, blue);
+  const delta = max - Math.min(red, green, blue);
+  if (delta < 0.08) return null;
+  const sixth = max === red
+    ? ((green - blue) / delta + 6) % 6
+    : max === green ? (blue - red) / delta + 2 : (red - green) / delta + 4;
+  return sixth * 60;
+}
+
+/** The shorter way round the wheel between two angles. */
+function hueDistance(a: number, b: number): number {
+  const gap = Math.abs(a - b) % 360;
+  return gap > 180 ? 360 - gap : gap;
+}
+
 describe("diagram palette", () => {
   it("pins every hue to open-color at the shade indexes Excalidraw uses", () => {
     const openColor = loadOpenColor();
@@ -96,6 +118,24 @@ describe("diagram themes", () => {
       // would separate its channels far wider than this.
       const channels = [1, 3, 5].map((index) => Number.parseInt(entry.fill.slice(index, index + 2), 16));
       expect(Math.max(...channels) - Math.min(...channels)).toBeLessThanOrEqual(16);
+    }
+  });
+
+  it("keeps every accent a wide turn of the wheel from its own theme", () => {
+    // The accent is what a board spends on "look here". Sat next to the
+    // primary on the colour wheel it stops being an accent and the board
+    // reads as one hue smeared across several roles.
+    for (const name of THEME_NAMES) {
+      const theme = THEMES[name];
+      const accent = hueAngle(theme.entries.accent.fill);
+      // The grayscale theme separates by weight, not by hue, and a gray's
+      // angle is an artefact of rounding rather than a colour.
+      if (accent === null) continue;
+      for (const against of ["primary", "success"] as const) {
+        const other = hueAngle(theme.entries[against].fill);
+        if (other === null) continue;
+        expect(hueDistance(accent, other), `${name} accent vs ${against}`).toBeGreaterThanOrEqual(45);
+      }
     }
   });
 

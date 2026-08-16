@@ -151,6 +151,13 @@ export type DiagramTheme = {
  */
 type QuietSpec = { hue: HueName; weight: "fill" | "soft" };
 
+/**
+ * The accent is the one hue a theme spends on "look here", so it has to be
+ * visibly off the theme's own family. A green board whose accent was teal and
+ * whose success was lime handed the reader four adjacent greens and no way to
+ * tell which of them was the point. The unit test holds every accent a wide
+ * turn of the colour wheel away from its own primary and success.
+ */
 type ThemeSpec = {
   roles: Record<Exclude<NodeRole, "muted">, HueName | "neutral">;
   quiet: QuietSpec;
@@ -179,7 +186,7 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       success: "teal",
       warning: "yellow",
       danger: "red",
-      accent: "cyan",
+      accent: "violet",
       neutral: "neutral",
     },
     quiet: { hue: "blue", weight: "soft" },
@@ -192,7 +199,7 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       success: "lime",
       warning: "yellow",
       danger: "red",
-      accent: "teal",
+      accent: "violet",
       neutral: "neutral",
     },
     quiet: { hue: "green", weight: "soft" },
@@ -218,7 +225,7 @@ const THEME_SPECS: Record<ThemeName, ThemeSpec> = {
       success: "teal",
       warning: "yellow",
       danger: "pink",
-      accent: "violet",
+      accent: "indigo",
       neutral: "neutral",
     },
     quiet: { hue: "grape", weight: "soft" },
