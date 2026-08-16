@@ -763,6 +763,7 @@ function containerBoxes(
   positions: ReadonlyMap<string, RoutePoint>,
   sizes: ReadonlyMap<string, { width: number; height: number }>,
   minWidths: ReadonlyMap<string, number>,
+  direction: DiagramDirection,
 ): Map<string, RouteBox> {
   const boxes = new Map<string, RouteBox>();
   const build = (id: string): RouteBox | null => {
@@ -802,7 +803,87 @@ function containerBoxes(
     return box;
   };
   for (const id of plan.rootContainers) build(id);
+  alignSiblingBands(plan, boxes, direction, positions, sizes);
   return boxes;
+}
+
+/** Runs of boxes that overlap along one axis, in the order they start. */
+function bandsOf(boxes: readonly RouteBox[], alongY: boolean): RouteBox[][] {
+  const start = (box: RouteBox) => (alongY ? box.y : box.x);
+  const end = (box: RouteBox) => start(box) + (alongY ? box.height : box.width);
+  const sorted = [...boxes].sort((a, b) => start(a) - start(b) || (a.id < b.id ? -1 : 1));
+  const bands: RouteBox[][] = [];
+  let reach = Number.NEGATIVE_INFINITY;
+  for (const box of sorted) {
+    if (bands.length === 0 || start(box) >= reach) bands.push([box]);
+    else bands[bands.length - 1].push(box);
+    reach = Math.max(reach, end(box));
+  }
+  return bands;
+}
+
+/**
+ * Sibling regions that share a band share their edges.
+ *
+ * A row of regions laid across a flow is read as a row, and four of them whose
+ * tops each landed wherever their own tallest member happened to sit reads as
+ * four unrelated boxes that someone forgot to line up. The band is only taken
+ * when stretching to it stays clear of everything the regions do not hold, so
+ * a region can never grow over a node or a neighbour to get there.
+ */
+function alignSiblingBands(
+  plan: ContainerPlan,
+  boxes: Map<string, RouteBox>,
+  direction: DiagramDirection,
+  positions: ReadonlyMap<string, RoutePoint>,
+  sizes: ReadonlyMap<string, { width: number; height: number }>,
+): void {
+  // A flow separates its regions along its own axis, so the band is the other
+  // one: columns of a RIGHT flow share tops, rows of a DOWN flow share sides.
+  const alongY = !portsSpreadAlongWidth(direction);
+  const held = new Map<string, Set<string>>();
+  const collect = (id: string): Set<string> => {
+    const owned = new Set<string>(plan.memberNodes.get(id) ?? []);
+    for (const child of plan.childContainers.get(id) ?? []) {
+      for (const nodeId of collect(child)) owned.add(nodeId);
+    }
+    held.set(id, owned);
+    return owned;
+  };
+  for (const id of plan.rootContainers) collect(id);
+
+  const nodeBoxes: RouteBox[] = [];
+  for (const [nodeId, position] of positions) {
+    const size = sizes.get(nodeId);
+    if (size) nodeBoxes.push({ id: nodeId, x: position.x, y: position.y, ...size });
+  }
+  const outside = (id: string): RouteBox[] => {
+    const owned = held.get(id) ?? new Set<string>();
+    const chain = new Set([id, ...containerChain(plan, id)]);
+    return [
+      ...nodeBoxes.filter((box) => !owned.has(box.id)),
+      ...[...boxes].filter(([other]) => !chain.has(other) && !containerChain(plan, other).includes(id))
+        .map(([, box]) => box),
+    ];
+  };
+
+  const families = [plan.rootContainers, ...plan.childContainers.values()];
+  for (const family of families) {
+    const drawn = family.map((id) => boxes.get(id)).filter((box): box is RouteBox => Boolean(box));
+    if (drawn.length < 2) continue;
+    for (const band of bandsOf(drawn, alongY)) {
+      if (band.length < 2) continue;
+      const low = Math.min(...band.map((box) => (alongY ? box.y : box.x)));
+      const high = Math.max(...band.map((box) => (alongY ? box.y + box.height : box.x + box.width)));
+      const stretched = band.map((box) => (alongY
+        ? { ...box, y: low, height: high - low }
+        : { ...box, x: low, width: high - low }));
+      const clear = stretched.every((box) => outside(box.id)
+        .every((other) => !boxesTouch(box, other)));
+      if (!clear) continue;
+      for (const box of stretched) boxes.set(box.id, box);
+    }
+  }
 }
 
 /** Enough width that the container's own label fits inside its top band. */
@@ -1024,7 +1105,15 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     sizes: input.sizes,
     outcome,
     ...(input.containers
-      ? { containers: containerBoxes(input.containers, positions, input.sizes, input.containerLabelWidths) }
+      ? {
+          containers: containerBoxes(
+            input.containers,
+            positions,
+            input.sizes,
+            input.containerLabelWidths,
+            input.direction,
+          ),
+        }
       : {}),
     edges: input.edges.map((edge, index) => {
       const route = absolute.routes.get(`edge-${index}`);
