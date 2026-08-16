@@ -5,6 +5,7 @@ import {
   assignPorts,
   chooseSide,
   countBlockers,
+  flowRoute,
   meetOutline,
   orthogonalRoute,
   planRoutes,
@@ -170,6 +171,39 @@ describe("repairStraightRoute", () => {
 
   it("is deterministic", () => {
     expect(repairStraightRoute(from, to, blocker)).toEqual(repairStraightRoute(from, to, blocker));
+  });
+});
+
+describe("flowRoute", () => {
+  const sides = { from: "bottom", to: "top" } as const;
+
+  it("turns as a bracket, so the connector never swings past the child", () => {
+    const route = flowRoute({ x: 400, y: 200 }, { x: 900, y: 268 }, sides, [])!;
+    // A rounded polyline swings wide of its bendpoints. On the short legs a
+    // row gap leaves, that swing overshoots the child and dips below the top
+    // of its row, which is what made an org chart read as swooping.
+    expect(route.rounded).toBe(false);
+    expect(route.points).toEqual([
+      { x: 400, y: 200 },
+      { x: 400, y: 234 },
+      { x: 900, y: 234 },
+      { x: 900, y: 268 },
+    ]);
+  });
+
+  it("stays inside the gap between the two rows", () => {
+    const route = flowRoute({ x: 400, y: 200 }, { x: 900, y: 268 }, sides, [])!;
+    for (const point of route.points) {
+      expect(point.y).toBeGreaterThanOrEqual(200);
+      expect(point.y).toBeLessThanOrEqual(268);
+      expect(Math.min(point.x, 900)).toBeGreaterThanOrEqual(400);
+      expect(Math.max(point.x, 400)).toBeLessThanOrEqual(900);
+    }
+  });
+
+  it("draws a straight drop when parent and child already line up", () => {
+    const route = flowRoute({ x: 400, y: 200 }, { x: 400, y: 268 }, sides, [])!;
+    expect(route).toEqual({ points: [{ x: 400, y: 200 }, { x: 400, y: 268 }], rounded: false });
   });
 });
 
