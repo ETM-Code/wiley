@@ -25,12 +25,18 @@ import {
 import { planDiff, tweenGeometry, type DiffElement, type DiffGeometry } from "../diagram-diff";
 import { evaluateConvertedScene, mergeQualityReports } from "../diagram-quality";
 import type { Box } from "../diagram-routes";
-import { assertDiagramQuality, QUALITY_EVALUATION_LIMIT } from "./diagram-render";
+import {
+  assertDiagramQuality,
+  assertQualityClearOfHuman,
+  QUALITY_EVALUATION_LIMIT,
+} from "./diagram-render";
 import { diagramElements, mergeSpec, reconstructSpec, resolveTargetDiagram } from "./diagram-reconstruct";
 import { elementsBounds, finiteGeometry, PLACE_GAP } from "./geometry";
 import { inferHumanGraph, type HumanGraph, type SketchElement } from "./human-graph";
 import {
+  humanElementIdOf,
   humanNodeId,
+  humanObstacles,
   materializeHumanNodes,
   planHumanEdges,
   splitHumanSpec,
@@ -242,9 +248,31 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
       );
   guardFrameAutoFit(plan);
 
-  // The connecting arrows are drawn last, because the sketch sits at absolute
-  // coordinates the layout never had a say over: only once the plan has been
-  // placed do both ends of such an arrow exist in the same space.
+  // The person's boxes and captions are regions this diagram has to respect,
+  // minus the ones it is deliberately attached to: an arrow reaching a shape
+  // has to be allowed to touch it.
+  const attached = new Set(split.crossEdges.flatMap(({ edge }) => [
+    humanElementIdOf(edge.from),
+    humanElementIdOf(edge.to),
+  ]).filter((id): id is string => Boolean(id)));
+  // A caption bound to an attached shape lives inside it and is exempt with it.
+  for (const element of scene as Labelled[]) {
+    if (typeof element.containerId === "string" && attached.has(element.containerId)) {
+      attached.add(element.id);
+    }
+  }
+  const obstacles = humanObstacles(scene as unknown as SketchElement[])
+    .filter((obstacle) => !attached.has(obstacle.id));
+  const placed = planBounds(plan);
+  const grewWide = (placed.maxX - placed.minX) - (previous.maxX - previous.minX)
+    >= (placed.maxY - placed.minY) - (previous.maxY - previous.minY);
+  // Clearing the sketch has to settle before the connecting arrows are drawn:
+  // an arrow bound to somebody's element cannot be translated afterwards.
+  assertQualityClearOfHuman(plan, obstacles, grewWide);
+
+  // The connecting arrows come last, because the sketch sits at absolute
+  // coordinates the layout never had a say over: only once the plan is
+  // finally placed do both ends of such an arrow exist in the same space.
   const sketchBoxes = humanSketchBoxes(sketch);
   const humanEdges = planHumanEdges(plan, split.crossEdges, {
     agentBoxes: agentNodeBoxes(plan),
@@ -261,7 +289,7 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
       boundAdditions.set(elementId, [...(boundAdditions.get(elementId) ?? []), binding.arrowId]);
     }
   }
-  const quality = assertDiagramQuality(plan);
+  const quality = assertDiagramQuality(plan, obstacles);
 
   const claimed = new Set(plan.skeletons.map((skeleton) => String(skeleton.id)));
   const collisions = scene.filter((element) => claimed.has(element.id)

@@ -36,9 +36,41 @@ import {
   type Box,
   type RouteRequest,
 } from "../diagram-routes";
+import type { DiagramObstacle } from "../diagram-quality";
 import { edgeElementId, edgeKey, edgeLabelElementId, edgeOrdinals } from "../diagram-spec";
 import { resolveEdgeStyle, resolveTheme } from "../diagram-theme";
-import type { HumanGraph, HumanNode } from "./human-graph";
+import { humanElements, type HumanGraph, type HumanNode, type SketchElement } from "./human-graph";
+
+/** Types whose box is worth keeping the agent's drawing out of. */
+const OBSTACLE_TYPES = new Set([
+  "rectangle", "diamond", "ellipse", "image", "embeddable", "iframe", "text",
+]);
+
+/**
+ * The person's work, as regions the agent's drawing has to respect. Their
+ * connectors and scribbles are deliberately absent: a long diagonal arrow's
+ * bounding box covers a whole quadrant of the canvas, and reserving that
+ * would push every new diagram off the board.
+ */
+export function humanObstacles(elements: readonly SketchElement[]): DiagramObstacle[] {
+  const obstacles: DiagramObstacle[] = [];
+  for (const element of humanElements(elements)) {
+    if (!OBSTACLE_TYPES.has(element.type)) continue;
+    const bounds = {
+      x: Number(element.x ?? Number.NaN),
+      y: Number(element.y ?? Number.NaN),
+      width: Number(element.width ?? Number.NaN),
+      height: Number(element.height ?? Number.NaN),
+    };
+    if (Object.values(bounds).some((value) => !Number.isFinite(value))) continue;
+    obstacles.push({
+      id: element.id,
+      bounds,
+      kind: element.type === "text" ? "text" : "shape",
+    });
+  }
+  return obstacles;
+}
 
 /** How a spec names one of the person's own elements. */
 export const HUMAN_NODE_PREFIX = "human:";

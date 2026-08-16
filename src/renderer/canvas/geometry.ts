@@ -107,6 +107,26 @@ export function resolveDiagramOrigin(
   return directionalOrigin(reference, content, direction);
 }
 
+/**
+ * How far content has to move along one axis to clear everything it landed
+ * on. Sliding on a single axis keeps the arrangement the caller chose; moving
+ * diagonally would put the drawing somewhere nobody asked for.
+ */
+export function shiftClearOf(
+  content: PlanBounds,
+  hit: readonly PlanBounds[],
+  horizontal: boolean,
+  gap = PLACE_GAP,
+): { dx: number; dy: number } | undefined {
+  if (hit.length === 0) return undefined;
+  const distance = horizontal
+    ? Math.max(...hit.map((box) => box.maxX - content.minX))
+    : Math.max(...hit.map((box) => box.maxY - content.minY));
+  const delta = snapModelCoordinate(distance + gap);
+  if (!Number.isFinite(delta) || delta === 0) return undefined;
+  return horizontal ? { dx: delta, dy: 0 } : { dx: 0, dy: delta };
+}
+
 export function perimeterPoint(
   box: { x: number; y: number; width: number; height: number },
   towards: { x: number; y: number },
