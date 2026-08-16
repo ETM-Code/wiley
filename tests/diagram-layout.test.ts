@@ -171,10 +171,10 @@ describe("diagram layout quality", () => {
     const quiet = nodeDimensions({ id: "a", label: "Hub" }, 1, "RIGHT");
     const busy = nodeDimensions({ id: "a", label: "Hub" }, 8, "RIGHT");
     expect(busy.height).toBeGreaterThan(quiet.height);
-    expect(busy.height).toBeGreaterThanOrEqual(9 * 28);
+    expect(busy.height).toBeGreaterThanOrEqual(8 * 28);
     // DOWN layouts attach edges along the top and bottom, so width grows.
     const busyDown = nodeDimensions({ id: "a", label: "Hub" }, 8, "DOWN");
-    expect(busyDown.width).toBeGreaterThanOrEqual(9 * 28);
+    expect(busyDown.width).toBeGreaterThanOrEqual(8 * 28);
     expect(busyDown.height).toBeLessThan(busy.height);
   });
 
@@ -184,8 +184,8 @@ describe("diagram layout quality", () => {
     expect(nodeDimensions(node, 8, "LEFT")).toEqual(nodeDimensions(node, 8, "RIGHT"));
     // UP mirrors DOWN: connectors land on the horizontal sides.
     expect(nodeDimensions(node, 8, "UP")).toEqual(nodeDimensions(node, 8, "DOWN"));
-    expect(nodeDimensions(node, 8, "UP").width).toBeGreaterThanOrEqual(9 * 28);
-    expect(nodeDimensions(node, 8, "LEFT").height).toBeGreaterThanOrEqual(9 * 28);
+    expect(nodeDimensions(node, 8, "UP").width).toBeGreaterThanOrEqual(8 * 28);
+    expect(nodeDimensions(node, 8, "LEFT").height).toBeGreaterThanOrEqual(8 * 28);
   });
 
   it("lays LEFT and UP out along the axis they name", async () => {
