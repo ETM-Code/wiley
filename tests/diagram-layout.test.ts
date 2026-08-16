@@ -661,6 +661,42 @@ describe("diagram layout quality", () => {
     expect(measureText("🚀 Ship", 20).width).toBeGreaterThan(measureText("Ship", 20).width + 20);
   });
 
+  it("keeps a flow reading forwards when a feedback edge closes the loop", async () => {
+    const params: LayoutParams = {
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      nodes: [
+        { id: "ingest", label: "Ingest" },
+        { id: "clean", label: "Clean" },
+        { id: "check", label: "Check", shape: "diamond" },
+        { id: "load", label: "Load" },
+      ],
+      edges: [
+        { from: "ingest", to: "clean" },
+        { from: "clean", to: "check" },
+        { from: "check", to: "load" },
+        // The edge that closes the loop is declared last, the way the story is
+        // told. Reversing an earlier one instead lays the flow out backwards.
+        { from: "check", to: "clean", label: "retry" },
+      ],
+    };
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    const xOf = (node: string) => {
+      const skeleton = plan.skeletons.find(
+        (candidate) => candidate.id === plan.elementIdByNode.get(node),
+      );
+      return skeleton!.x as number;
+    };
+    expect(xOf("ingest")).toBeLessThan(xOf("clean"));
+    expect(xOf("clean")).toBeLessThan(xOf("check"));
+    expect(xOf("check")).toBeLessThan(xOf("load"));
+    // The feedback edge stays a short hop between neighbours instead of
+    // wrapping the whole drawing.
+    const retry = plan.skeletons.find((skeleton) => skeleton.type === "arrow"
+      && (skeleton.start as { id?: string }).id === plan.elementIdByNode.get("check"))!;
+    const span = Math.max(...(retry.points as number[][]).map(([x]) => Math.abs(x)));
+    expect(span).toBeLessThan(xOf("load") - xOf("ingest"));
+  });
+
   it("snaps node geometry to the hidden model grid", async () => {
     const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
     for (const skeleton of plan.skeletons) {
