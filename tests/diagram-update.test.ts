@@ -465,3 +465,133 @@ describe("placeUpdatedPlan", () => {
     expect(minX).toBe(500);
   });
 });
+
+describe("update-diagram reaching into the human's sketch", () => {
+  /** Draws the flow, then puts a hand-drawn box well below it. */
+  async function boardWithSketch() {
+    const target = board();
+    const drawn = await drawFlow(target);
+    const deliver = target.elements().find(
+      (element) => element.customData?.wiley?.key === "deliver",
+    )!;
+    const sketch: SceneRecord = {
+      id: "sketch-login",
+      type: "rectangle",
+      x: deliver.x,
+      y: deliver.y + 500,
+      width: 160,
+      height: 80,
+    };
+    const caption: SceneRecord = {
+      id: "sketch-login-text",
+      type: "text",
+      x: sketch.x + 20,
+      y: sketch.y + 30,
+      width: 60,
+      height: 20,
+      text: "Login",
+      containerId: "sketch-login",
+    };
+    target.api.updateScene({
+      elements: [...target.elements(), sketch, caption] as never,
+      captureUpdate: "IMMEDIATELY" as never,
+    });
+    return { target, drawn, sketch, caption };
+  }
+
+  it("binds a new edge to the person's own element instead of copying it", async () => {
+    const { target, drawn, sketch } = await boardWithSketch();
+    const connected = await handleCanvasRequest(target.api, {
+      id: 21,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "deliver", to: "human:sketch-login", label: "signs in" }],
+      },
+    }) as { counts: { added: number } };
+    expect(connected.counts.added).toBeGreaterThan(0);
+
+    const arrow = target.elements().find(
+      (element) => (element.endBinding as { elementId?: string } | undefined)?.elementId === "sketch-login",
+    );
+    expect(arrow).toBeDefined();
+    expect(arrow?.customData?.wiley?.role).toBe("edge");
+
+    const survivor = target.elements().find((element) => element.id === "sketch-login")!;
+    expect(survivor.x).toBe(sketch.x);
+    expect(survivor.y).toBe(sketch.y);
+    expect(survivor.width).toBe(sketch.width);
+    expect(survivor.customData).toBeUndefined();
+    expect(survivor.boundElements).toEqual([{ id: arrow!.id, type: "arrow" }]);
+  });
+
+  it("rebuilds the connection on the next merge instead of doubling it", async () => {
+    const { target, drawn } = await boardWithSketch();
+    const params = {
+      diagram: drawn.diagramId,
+      mode: "merge",
+      edges: [{ from: "deliver", to: "human:sketch-login" }],
+    };
+    await handleCanvasRequest(target.api, { id: 22, op: "update-diagram", params });
+    const after = await handleCanvasRequest(target.api, {
+      id: 23,
+      op: "update-diagram",
+      params: { diagram: drawn.diagramId, mode: "merge" },
+    }) as { counts: { added: number; removed: number } };
+
+    expect(after.counts).toMatchObject({ added: 0, removed: 0 });
+    const bridges = target.elements().filter(
+      (element) => (element.endBinding as { elementId?: string } | undefined)?.elementId === "sketch-login",
+    );
+    expect(bridges).toHaveLength(1);
+    const survivor = target.elements().find((element) => element.id === "sketch-login")!;
+    expect((survivor.boundElements as unknown[]).length).toBe(1);
+  });
+
+  it("keeps the person's element through a replace that drops every agent node", async () => {
+    const { target, drawn } = await boardWithSketch();
+    await handleCanvasRequest(target.api, {
+      id: 24,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "replace",
+        nodes: [{ id: "accept", label: "Accept" }],
+        edges: [],
+      },
+    });
+    expect(target.elements().some((element) => element.id === "sketch-login")).toBe(true);
+    expect(target.elements().some((element) => element.id === "sketch-login-text")).toBe(true);
+  });
+
+  it("accepts a bare element id, which is what the scene listing shows", async () => {
+    const { target, drawn } = await boardWithSketch();
+    await handleCanvasRequest(target.api, {
+      id: 26,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "deliver", to: "sketch-login" }],
+      },
+    });
+    const arrow = target.elements().find(
+      (element) => (element.endBinding as { elementId?: string } | undefined)?.elementId === "sketch-login",
+    );
+    expect(arrow).toBeDefined();
+  });
+
+  it("refuses an id with no element of the person's behind it", async () => {
+    const { target, drawn } = await boardWithSketch();
+    await expect(handleCanvasRequest(target.api, {
+      id: 25,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "deliver", to: "human:nothing" }],
+      },
+    })).rejects.toThrow(/human:nothing/);
+  });
+});

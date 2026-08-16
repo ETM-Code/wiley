@@ -120,6 +120,24 @@ describe("materializeHumanNodes", () => {
     });
   });
 
+  it("reads a bare element id as the same request and rewrites the edge", () => {
+    const spec = materializeHumanNodes({
+      nodes: [{ id: "api", label: "API" }],
+      edges: [{ from: "api", to: "human-box" }],
+    }, human);
+    expect(spec.edges).toEqual([{ from: "api", to: "human:human-box" }]);
+    expect(spec.nodes[1].elementId).toBe("human-box");
+  });
+
+  it("lets an agent node keep an id a human element happens to share", () => {
+    const spec = materializeHumanNodes({
+      nodes: [{ id: "human-box", label: "Mine" }, { id: "api", label: "API" }],
+      edges: [{ from: "api", to: "human-box" }],
+    }, human);
+    expect(spec.edges).toEqual([{ from: "api", to: "human-box" }]);
+    expect(spec.nodes.every((node) => node.origin === undefined)).toBe(true);
+  });
+
   it("fails loudly on an id with no element behind it", () => {
     expect(() => materializeHumanNodes({
       nodes: [{ id: "api", label: "API" }],
