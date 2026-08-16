@@ -435,8 +435,9 @@ export function tidyPatches(input: {
     }
     // A caption on a re-routed arrow follows it to the new midpoint.
     const caption = route.edge.labelElementId ? byId.get(route.edge.labelElementId) : undefined;
-    if (!caption) continue;
-    const wasMiddle = middleOf(connectorPoints(byId.get(route.edge.elementId) ?? { id: "", type: "arrow" }));
+    const arrow = byId.get(route.edge.elementId);
+    if (!caption || !arrow) continue;
+    const wasMiddle = middleOf(connectorPoints(arrow));
     const nowMiddle = middleOf(route.points);
     merge(caption.id, {
       x: finiteNumber(caption.x) + (nowMiddle.x - wasMiddle.x),
