@@ -457,6 +457,54 @@ describe("diagram layout quality", () => {
     expect(title.x as number).toBeGreaterThan(left);
   });
 
+  it("measures the title's headroom against what stands under it", async () => {
+    // A mind map's topmost ink is a leaf off in one corner, so a headroom band
+    // measured against the whole board's top hangs the title a corner's height
+    // clear of the branch it actually names.
+    const plan = await planDiagramLayout({
+      title: "Launch planning",
+      layout: { algorithm: "tree", direction: "RIGHT" },
+      nodes: [
+        { id: "root", label: "Launch", shape: "ellipse" },
+        { id: "market", label: "Positioning", rounded: true },
+        { id: "product", label: "Product", rounded: true },
+        { id: "ops", label: "Operations", rounded: true },
+        { id: "story", label: "Story", shape: "text" },
+        { id: "pricing", label: "Pricing", shape: "text" },
+        { id: "beta", label: "Beta feedback", shape: "text" },
+        { id: "docs", label: "Docs", shape: "text" },
+        { id: "support", label: "Support rota", shape: "text" },
+        { id: "billing", label: "Billing switch", shape: "text" },
+      ],
+      edges: [
+        { from: "root", to: "market" },
+        { from: "root", to: "product" },
+        { from: "root", to: "ops" },
+        { from: "market", to: "story" },
+        { from: "market", to: "pricing" },
+        { from: "product", to: "beta" },
+        { from: "product", to: "docs" },
+        { from: "ops", to: "support" },
+        { from: "ops", to: "billing" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const title = plan.skeletons.find(
+      (skeleton) => plan.roles.get(String(skeleton.id))?.role === "title",
+    )!;
+    const titleBottom = (title.y as number) + (title.height as number);
+    const titleLeft = title.x as number;
+    const titleRight = titleLeft + (title.width as number);
+    const nodes = plan.skeletons.filter((skeleton) => plan.roles.get(String(skeleton.id))?.role === "node");
+    const under = nodes.filter((skeleton) => (skeleton.x as number) + (skeleton.width as number) >= titleLeft
+      && (skeleton.x as number) <= titleRight);
+    expect(under.length).toBeGreaterThan(0);
+    const gap = Math.min(...under.map((skeleton) => skeleton.y as number)) - titleBottom;
+    expect(gap).toBeGreaterThanOrEqual(40);
+    expect(gap).toBeLessThanOrEqual(60 + MODEL_GRID_SIZE);
+    // And still above every last thing on the board.
+    expect(titleBottom).toBeLessThan(Math.min(...nodes.map((skeleton) => skeleton.y as number)));
+  });
+
   it("measures with the real Excalifont, not the fallback estimate", () => {
     const wide = measureText("WWWW", 20).width;
     const narrow = measureText("iiii", 20).width;
