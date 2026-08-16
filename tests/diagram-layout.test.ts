@@ -310,6 +310,37 @@ describe("diagram layout quality", () => {
     },
   );
 
+  it("rings a star's spokes at even bearings", async () => {
+    const spokes = 7;
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "radial" },
+      nodes: [
+        { id: "hub", label: "Event bus" },
+        ...Array.from({ length: spokes }, (_, index) => ({ id: `s${index}`, label: `Spoke ${index + 1}` })),
+      ],
+      edges: Array.from({ length: spokes }, (_, index) => ({ from: "hub", to: `s${index}` })),
+    }, ORIGIN, DIAGRAM_ID);
+    const centre = (id: string) => {
+      const box = plan.skeletons.find((skeleton) => skeleton.id === plan.elementIdByNode.get(id))!;
+      return {
+        x: (box.x as number) + (box.width as number) / 2,
+        y: (box.y as number) + (box.height as number) / 2,
+      };
+    };
+    const hub = centre("hub");
+    const bearings = Array.from({ length: spokes }, (_, index) => {
+      const point = centre(`s${index}`);
+      return (Math.atan2(point.y - hub.y, point.x - hub.x) * 180) / Math.PI;
+    }).sort((a, b) => a - b);
+    const gaps = bearings.map((bearing, index) => (index === 0
+      ? bearing - bearings[bearings.length - 1] + 360
+      : bearing - bearings[index - 1]));
+    // Every spoke a turn of the circle apart, give or take the grid it snaps
+    // to. Bunched angles are what left two corners of a hub board empty.
+    for (const gap of gaps) expect(Math.abs(gap - 360 / spokes)).toBeLessThan(6);
+    expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
+  });
+
   it("reports the direction an undirected algorithm ignored", async () => {
     const plan = await planDiagramLayout({
       layout: { algorithm: "force", direction: "UP" },
