@@ -1451,6 +1451,62 @@ function dedupeNearPoints(points: readonly RoutePoint[], tolerance = 2): RoutePo
  * still-guilty edges onto wider arcs. Returns null when three rounds are not
  * enough, which is the caller's cue to fall back to layered.
  */
+/**
+ * The hub of a star, or nothing.
+ *
+ * A star is the shape a hub-and-spoke request actually asks for: one node
+ * every other node hangs off, and no other edges at all. Anything with a
+ * second level or a spoke-to-spoke link is a tree, and a tree is what the
+ * radial algorithm is for.
+ */
+function starHub(input: GeometryInput): string | null {
+  const ids = input.params.nodes.map((node) => node.id);
+  if (ids.length < 3 || input.edges.length !== ids.length - 1) return null;
+  const degree = new Map<string, number>();
+  for (const edge of input.edges) {
+    if (edge.from === edge.to) return null;
+    degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
+    degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
+  }
+  const hub = ids.find((id) => degree.get(id) === ids.length - 1);
+  if (!hub) return null;
+  return ids.every((id) => id === hub || degree.get(id) === 1) ? hub : null;
+}
+
+/** The bearing the first spoke takes: straight up, the way a clock starts. */
+const RING_START_BEARING = -Math.PI / 2;
+
+/**
+ * Rings a star's spokes at even bearings.
+ *
+ * The radial algorithm places a general tree and its answer for a plain star
+ * is a ring at whatever angles fall out of the order the spokes arrived in:
+ * three of them bunched across the top and two corners left empty. A star has
+ * one honest arrangement, which is every spoke a turn of the circle apart, and
+ * a ring wide enough that no two neighbours touch.
+ */
+function starRing(input: GeometryInput, hub: string): Map<string, RoutePoint> {
+  const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
+  const reach = (id: string) => Math.hypot(sizeOf(id).width, sizeOf(id).height) / 2;
+  const spokes = input.params.nodes.map((node) => node.id).filter((id) => id !== hub);
+  let radius = Math.max(...spokes.map((id) => reach(hub) + reach(id) + input.nodeSpacing));
+  // Neighbours on the ring are a chord apart, so the ring has to be wide
+  // enough that the two widest of them still clear each other.
+  const chord = 2 * Math.sin(Math.PI / spokes.length);
+  if (chord > 1e-6) {
+    for (const [index, id] of spokes.entries()) {
+      const next = spokes[(index + 1) % spokes.length];
+      radius = Math.max(radius, (reach(id) + reach(next) + input.nodeSpacing) / chord);
+    }
+  }
+  const centers = new Map<string, RoutePoint>([[hub, { x: 0, y: 0 }]]);
+  for (const [index, id] of spokes.entries()) {
+    const bearing = RING_START_BEARING + (2 * Math.PI * index) / spokes.length;
+    centers.set(id, { x: Math.cos(bearing) * radius, y: Math.sin(bearing) * radius });
+  }
+  return centers;
+}
+
 async function nonLayeredGeometry(
   input: GeometryInput,
   algorithm: Exclude<DiagramAlgorithm, "layered">,
@@ -1472,13 +1528,16 @@ async function nonLayeredGeometry(
   }
 
   const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
-  const rawCenters = new Map<string, RoutePoint>((result.children ?? []).map((node: ElkNode) => {
-    const size = sizeOf(node.id);
-    return [node.id, {
-      x: finiteNumber(node.x) + size.width / 2,
-      y: finiteNumber(node.y) + size.height / 2,
-    }];
-  }));
+  const hub = algorithm === "radial" ? starHub(input) : null;
+  const rawCenters = hub
+    ? starRing(input, hub)
+    : new Map<string, RoutePoint>((result.children ?? []).map((node: ElkNode) => {
+      const size = sizeOf(node.id);
+      return [node.id, {
+        x: finiteNumber(node.x) + size.width / 2,
+        y: finiteNumber(node.y) + size.height / 2,
+      }];
+    }));
   const scale = spreadFactor(rawCenters, input.sizes);
   const anchor = [...rawCenters.values()].reduce(
     (total, point) => ({ x: total.x + point.x / rawCenters.size, y: total.y + point.y / rawCenters.size }),
@@ -1492,7 +1551,9 @@ async function nonLayeredGeometry(
     }];
   }));
   const snapDeltas = new Map<string, SnapDelta>();
-  for (const node of result.children ?? []) {
+  // A ring is our own placement, so ELK's routes and the deltas that would
+  // carry them across no longer describe anything on the board.
+  for (const node of hub ? [] : result.children ?? []) {
     const snapped = positions.get(node.id);
     if (!snapped) continue;
     snapDeltas.set(node.id, { dx: snapped.x - finiteNumber(node.x), dy: snapped.y - finiteNumber(node.y) });
@@ -1515,7 +1576,7 @@ async function nonLayeredGeometry(
   const flowSides = algorithm === "tree" ? TREE_PORT_SIDES[input.direction] : undefined;
   const requests: RouteRequest[] = input.edges.map((edge, index) => {
     const { section } = elkSection(result, index);
-    const raw = section
+    const raw = section && !hub
       ? dedupeNearPoints([section.startPoint, ...(section.bendPoints ?? []), section.endPoint])
       : undefined;
     return {
