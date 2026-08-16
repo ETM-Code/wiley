@@ -568,6 +568,27 @@ describe("diagram layout quality", () => {
     expect(plan.skeletons.filter(
       (skeleton) => plan.roles.get(String(skeleton.id))?.role === "edgeLabel",
     )).toHaveLength(spokes);
+    // And every spoke stands the same daylight off the hub, which is what a
+    // reader measures: the length of the connector between the two. One radius
+    // around a hub twice as wide as it is tall gives the spoke above it twice
+    // the daylight it gives the two beside it.
+    const centre = (skeleton: typeof hub) => ({
+      x: (skeleton.x as number) + (skeleton.width as number) / 2,
+      y: (skeleton.y as number) + (skeleton.height as number) / 2,
+    });
+    const reach = (skeleton: typeof hub, dx: number, dy: number) => Math.min(
+      Math.abs(dx) > 1e-9 ? (skeleton.width as number) / 2 / Math.abs(dx) : Number.POSITIVE_INFINITY,
+      Math.abs(dy) > 1e-9 ? (skeleton.height as number) / 2 / Math.abs(dy) : Number.POSITIVE_INFINITY,
+    );
+    const middle = centre(hub);
+    const daylight = Array.from({ length: spokes }, (_, index) => {
+      const spoke = box(`s${index}`);
+      const at = centre(spoke);
+      const span = Math.hypot(at.x - middle.x, at.y - middle.y);
+      const unit = { x: (at.x - middle.x) / span, y: (at.y - middle.y) / span };
+      return span - reach(hub, unit.x, unit.y) - reach(spoke, unit.x, unit.y);
+    });
+    expect(Math.max(...daylight) - Math.min(...daylight)).toBeLessThanOrEqual(MODEL_GRID_SIZE);
   });
 
   it("reports the direction an undirected algorithm ignored", async () => {
