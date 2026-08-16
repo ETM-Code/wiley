@@ -184,6 +184,23 @@ describe("diagram layout quality", () => {
     expect(at(up, "b").x).toBe(at(up, "a").x);
   });
 
+  it("folds a flow that would otherwise come out as a ribbon", async () => {
+    const chain = (count: number) => planDiagramLayout({
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      nodes: Array.from({ length: count }, (_, index) => ({ id: `n${index}`, label: `Step ${index + 1}` })),
+      edges: Array.from({ length: count - 1 }, (_, index) => ({ from: `n${index}`, to: `n${index + 1}` })),
+    }, ORIGIN, DIAGRAM_ID);
+    const rows = (plan: Awaited<ReturnType<typeof chain>>) => new Set(
+      [...plan.elementIdByNode.values()]
+        .map((id) => plan.skeletons.find((skeleton) => skeleton.id === id)!.y),
+    ).size;
+
+    // Four boxes in a row is a drawing. Sixteen is a ribbon nobody can read
+    // without scrolling, and it comes back on more than one row.
+    expect(rows(await chain(4))).toBe(1);
+    expect(rows(await chain(16))).toBeGreaterThan(1);
+  });
+
   it.each(["force", "stress", "radial", "tree"] as const)(
     "places %s identically on every run",
     async (algorithm) => {
