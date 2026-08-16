@@ -342,6 +342,59 @@ describe("diagram layout quality", () => {
     expect(report.nodeOverlaps).toEqual([]);
   });
 
+  it("stands a decision flow's main path on one line", async () => {
+    const plan = await planDiagramLayout({
+      title: "Incident response",
+      layout: { algorithm: "layered", direction: "DOWN" },
+      nodes: [
+        { id: "alert", label: "Alert fires" },
+        { id: "triage", label: "On-call triages" },
+        { id: "sev", label: "Sev 1?", shape: "diamond" },
+        { id: "page", label: "Page the team" },
+        { id: "fix", label: "Mitigate" },
+        { id: "verify", label: "Verify recovery", shape: "diamond" },
+        { id: "post", label: "Write postmortem" },
+        { id: "close", label: "Close incident" },
+      ],
+      edges: [
+        { from: "alert", to: "triage" },
+        { from: "triage", to: "sev" },
+        { from: "sev", to: "page", label: "yes" },
+        { from: "sev", to: "fix", label: "no" },
+        { from: "page", to: "fix" },
+        { from: "fix", to: "verify" },
+        { from: "verify", to: "post", label: "recovered" },
+        { from: "verify", to: "fix", label: "still down" },
+        { from: "post", to: "close" },
+        { from: "post", to: "triage", label: "update runbook" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const node = (id: string) => byId.get(plan.elementIdByNode.get(id)!)!;
+    // Every box on the path down the middle shares one centre line, whatever
+    // its width and however many connectors it carries.
+    const centres = ["alert", "triage", "sev", "page", "fix", "verify", "post", "close"]
+      .map((id) => (node(id).x as number) + (node(id).width as number) / 2);
+    expect(new Set(centres).size).toBe(1);
+    // And the branch that skips a rank rejoins on a side of its own, rather
+    // than landing a second arrowhead beside the one already on the top.
+    const arrowTo = (from: string, to: string) => plan.skeletons.find((skeleton) => skeleton.type === "arrow"
+      && (skeleton.start as { id: string }).id === plan.elementIdByNode.get(from)
+      && (skeleton.end as { id: string }).id === plan.elementIdByNode.get(to))!;
+    const landing = (from: string, to: string) => {
+      const points = absoluteArrowPoints(arrowTo(from, to));
+      return points[points.length - 1];
+    };
+    const fix = node("fix");
+    expect(landing("page", "fix").y).toBeCloseTo(fix.y as number, 5);
+    expect(landing("sev", "fix").x).toBeCloseTo((fix.x as number) + (fix.width as number), 5);
+    const report = evaluateDiagramPlan(plan);
+    expect(report.edgesThroughNodes).toEqual([]);
+    expect(report.nodeOverlaps).toEqual([]);
+    expect(report.crowdedPorts).toEqual([]);
+    expect(report.sharedPorts).toEqual([]);
+  });
+
   it.each(["force", "stress", "radial", "tree"] as const)(
     "places %s identically on every run",
     async (algorithm) => {

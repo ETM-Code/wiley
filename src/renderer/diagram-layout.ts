@@ -1125,6 +1125,8 @@ export type FoldedFlow = {
   sides: Map<number, { from: Side; to: Side }>;
   aspect: number;
   rows: number[];
+  /** Every connector orthogonal; see RoutePlanOptions.square. */
+  square?: boolean;
 };
 
 /** The ranks ELK laid out, in flow order, each one whole. */
@@ -1280,6 +1282,139 @@ function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
     best = { positions, sides, aspect: shape, rows: counts };
   }
   return best;
+}
+
+/**
+ * How far off the line a main path has to wander before it is worth redrawing
+ * the board's connectors to straighten it. Half a grid cell is the rounding
+ * ELK's own placement leaves behind and reads as straight.
+ */
+const MAIN_PATH_DRIFT = MODEL_GRID_SIZE / 2;
+
+/**
+ * The nodes on the flow's main path: one per rank, joined end to end.
+ *
+ * The longest run of one-rank steps is what a reader follows down the middle
+ * of a flow chart, and everything else on the board is a branch off it. A flow
+ * whose longest run does not reach every rank has no single main path, so
+ * there is no one line to stand it on.
+ */
+function mainPath(layers: readonly FlowLayer[], edges: readonly GraphEdge[]): ElkNode[] | null {
+  const rankOf = new Map<string, number>();
+  layers.forEach((layer, index) => {
+    for (const node of layer.nodes) rankOf.set(node.id, index);
+  });
+  const steps = new Map<string, string[]>();
+  for (const edge of edges) {
+    const from = rankOf.get(edge.from);
+    const to = rankOf.get(edge.to);
+    if (from === undefined || to === undefined || to !== from + 1) continue;
+    steps.set(edge.to, [...(steps.get(edge.to) ?? []), edge.from]);
+  }
+  const reach = new Map<string, number>();
+  const cameFrom = new Map<string, string>();
+  for (const layer of layers) {
+    for (const node of layer.nodes) {
+      let best = 1;
+      for (const previous of steps.get(node.id) ?? []) {
+        const through = (reach.get(previous) ?? 0) + 1;
+        if (through > best) {
+          best = through;
+          cameFrom.set(node.id, previous);
+        }
+      }
+      reach.set(node.id, best);
+    }
+  }
+  const [end] = [...reach].sort(([, a], [, b]) => b - a)[0] ?? [];
+  if (end === undefined || (reach.get(end) ?? 0) < layers.length) return null;
+  const byId = new Map((layers.flatMap((layer) => layer.nodes)).map((node) => [String(node.id), node]));
+  const path: ElkNode[] = [];
+  for (let id: string | undefined = end; id !== undefined; id = cameFrom.get(id)) {
+    path.unshift(byId.get(id)!);
+  }
+  return path.length === layers.length ? path : null;
+}
+
+/**
+ * Stands a flow's main path on one line.
+ *
+ * ELK routes through ports it spreads along a node's side itself, and it
+ * aligns the ports, not the boxes. A rank whose node carries three connectors
+ * therefore hangs off the channel by whatever the spread was, and the run down
+ * the middle of an eight-rank decision chart arrives at each box on a slightly
+ * different axis. The ranks are shifted whole, so nothing inside one moves
+ * relative to anything else in it; only the board's own centre line changes.
+ *
+ * The connectors are redrawn, because ELK's channels describe where it put the
+ * ranks and not where they are now. Everything else is the fold's machinery,
+ * including the guard: a board that cannot be redrawn with square corners is
+ * handed back to ELK unchanged.
+ */
+function alignMainPath(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
+  if (input.containers) return null;
+  const alongY = portsSpreadAlongWidth(input.direction);
+  const layers = flowLayers(laid, alongY);
+  if (layers.length < 3) return null;
+  const path = mainPath(layers, input.edges);
+  if (!path) return null;
+
+  const crossCentre = (node: ElkNode) => finiteNumber(alongY ? node.x : node.y)
+    + finiteNumber(alongY ? node.width : node.height) / 2;
+  const centres = path.map(crossCentre).sort((a, b) => a - b);
+  const axis = centres[Math.floor(centres.length / 2)];
+  const shifts = path.map((node) => axis - crossCentre(node));
+  if (shifts.every((shift) => Math.abs(shift) <= MAIN_PATH_DRIFT)) return null;
+
+  const positions = new Map<string, RoutePoint>();
+  layers.forEach((layer, index) => {
+    const shift = shifts[index];
+    for (const node of layer.nodes) {
+      const x = finiteNumber(node.x) + (alongY ? shift : 0);
+      const y = finiteNumber(node.y) + (alongY ? 0 : shift);
+      positions.set(String(node.id), { x, y });
+    }
+  });
+
+  const rankOf = new Map<string, number>();
+  layers.forEach((layer, index) => {
+    for (const node of layer.nodes) rankOf.set(String(node.id), index);
+  });
+  const forward: { from: Side; to: Side } = alongY
+    ? { from: "bottom", to: "top" }
+    : { from: "right", to: "left" };
+  // The flow's own two sides belong to the flow. A branch that skips a rank
+  // and a feedback edge that closes a loop run in the margin beside the board
+  // instead, and they leave and arrive there: an edge that rejoins the flow
+  // head on lands a second arrowhead beside the first, which reads as one
+  // connector drawn twice. Which margin is whichever side of the centre line
+  // the two ends already sit on, so the run never has to cross the board to
+  // reach its own lane; a branch that hangs off neither side takes the right
+  // and a loop that closes off neither takes the left, so the two kinds do
+  // not share a lane.
+  const high: Side = alongY ? "right" : "bottom";
+  const low: Side = alongY ? "left" : "top";
+  const offset = (id: string) => {
+    const point = positions.get(id);
+    const size = input.sizes.get(id);
+    if (!point || !size) return 0;
+    return (alongY ? point.x + size.width / 2 : point.y + size.height / 2) - axis;
+  };
+  const sides = new Map<number, { from: Side; to: Side }>();
+  input.edges.forEach((edge, index) => {
+    const from = rankOf.get(edge.from);
+    const to = rankOf.get(edge.to);
+    if (from === undefined || to === undefined || from === to) return;
+    if (to === from + 1) {
+      sides.set(index, forward);
+      return;
+    }
+    const away = [offset(edge.from), offset(edge.to)]
+      .reduce((worst, one) => (Math.abs(one) > Math.abs(worst) ? one : worst), 0);
+    const margin = away === 0 ? (to > from ? high : low) : (away > 0 ? high : low);
+    sides.set(index, { from: margin, to: margin });
+  });
+  return { positions, sides, aspect: aspect(laid), rows: layers.map((layer) => layer.nodes.length), square: true };
 }
 
 /**
@@ -1626,13 +1761,14 @@ function foldedGeometry(
   }));
   const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
   const minSteps = new Map<string, number>();
-  let routes = planRoutes(boxes, requests, { minSteps });
+  const square = folded.square === true;
+  let routes = planRoutes(boxes, requests, { minSteps, square });
   for (let round = 0; ; round++) {
     const guilty = routeDefects(boxes, routes, attachments);
     if (guilty.size === 0) break;
     if (round === MAX_ROUTE_REPAIR_ITERATIONS - 1) return null;
     for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
-    routes = planRoutes(boxes, requests, { minSteps });
+    routes = planRoutes(boxes, requests, { minSteps, square });
   }
   // A grid is drawn with straight runs and square corners. An edge that had to
   // be bent onto an arc to get anywhere is the grid saying it does not suit
@@ -1706,6 +1842,11 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     ? foldedGeometry(input, folded, outcome)
     : null;
   if (foldGeometry) return foldGeometry;
+  // A flow that keeps its shape still owes its reader one centre line to
+  // follow. The ranks are shifted onto it whole and the connectors redrawn.
+  const aligned = alignMainPath(input, result);
+  const alignedGeometry = aligned ? foldedGeometry(input, aligned, outcome) : null;
+  if (alignedGeometry) return alignedGeometry;
   const absolute = resolveAbsolute(result);
   const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
     const box = absolute.boxes.get(node.id);
