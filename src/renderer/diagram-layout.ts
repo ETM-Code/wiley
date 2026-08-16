@@ -288,8 +288,15 @@ export function snapModelSize(value: unknown, fallback: number): number {
   return Math.max(MODEL_GRID_SIZE, snapModelCoordinate(value, fallback));
 }
 
+/**
+ * A box measures an even number of grid cells on every side, so that its
+ * centre lands on the grid like every other coordinate does. An odd number
+ * puts the centre half a cell off, and a row of boxes that cannot share a
+ * centre line is a row a reader sees wobble.
+ */
 function snapUpSize(value: number): number {
-  return Math.max(MODEL_GRID_SIZE, Math.ceil(value / MODEL_GRID_SIZE) * MODEL_GRID_SIZE);
+  const cell = MODEL_GRID_SIZE * 2;
+  return Math.max(cell, Math.ceil(value / cell) * cell);
 }
 
 export function nodeToType(node: GraphNode): GraphShape {
