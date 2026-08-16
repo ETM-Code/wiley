@@ -21,7 +21,7 @@ import { resolveSkillsDir } from "../main/skills";
 import { TranscriptStore } from "../main/transcript";
 import { VoiceBridge } from "../main/voice-bridge";
 import { callVoiceTool } from "../main/voice-tools";
-import { mintRealtimeToken } from "../main/voice-token";
+import { mintConfiguredVoiceToken } from "../main/cloud/cloud-mode";
 import { createSecretStore, isLoopbackHost } from "../main/settings/secret-store";
 import { assertSecretName, SettingsService } from "../main/settings/settings-service";
 import { resolveConfigDir, SettingsStore } from "../main/settings/settings-store";
@@ -243,10 +243,9 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, await settings.view());
     }
     if (request.method === "POST" && url.pathname === "/api/voice-token") {
-      const voiceSettings = settings.settings.voice;
-      return sendJson(response, 200, await mintRealtimeToken({
-        model: voiceSettings.model,
-        voice: voiceSettings.voice,
+      return sendJson(response, 200, await mintConfiguredVoiceToken({
+        settings: settings.settings,
+        secrets: settingsStore.secrets,
         apiKey: settings.resolveApiKey().key,
       }));
     }
