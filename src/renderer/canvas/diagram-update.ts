@@ -24,9 +24,18 @@ import {
 } from "../diagram-layout";
 import { planDiff, tweenGeometry, type DiffElement, type DiffGeometry } from "../diagram-diff";
 import { evaluateConvertedScene, mergeQualityReports } from "../diagram-quality";
+import type { Box } from "../diagram-routes";
 import { assertDiagramQuality, QUALITY_EVALUATION_LIMIT } from "./diagram-render";
 import { diagramElements, mergeSpec, reconstructSpec, resolveTargetDiagram } from "./diagram-reconstruct";
 import { elementsBounds, finiteGeometry, PLACE_GAP } from "./geometry";
+import { inferHumanGraph, type HumanGraph, type SketchElement } from "./human-graph";
+import {
+  humanNodeId,
+  materializeHumanNodes,
+  planHumanEdges,
+  splitHumanSpec,
+  type HumanEdgeBinding,
+} from "./human-merge";
 import { pauseForStreaming, reportCanvasStreamProgress, shouldStreamCanvas } from "./streaming";
 import type { SceneElement } from "./types";
 
@@ -98,6 +107,82 @@ export function placeUpdatedPlan(
   return { dx, dy };
 }
 
+/** Where every agent node ended up, keyed the way the spec names it. */
+function agentNodeBoxes(plan: DiagramPlan): Map<string, Box> {
+  const skeletonById = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+  const boxes = new Map<string, Box>();
+  for (const [nodeId, elementId] of plan.elementIdByNode) {
+    const skeleton = skeletonById.get(elementId);
+    if (!skeleton) continue;
+    boxes.set(nodeId, {
+      id: nodeId,
+      x: Number(skeleton.x ?? 0),
+      y: Number(skeleton.y ?? 0),
+      width: Number(skeleton.width ?? 0),
+      height: Number(skeleton.height ?? 0),
+    });
+  }
+  return boxes;
+}
+
+/** Every shape of the person's, as a box a route has to stay out of. */
+export function humanSketchBoxes(graph: HumanGraph): Map<string, Box> {
+  return new Map(graph.nodes.map((node) => [humanNodeId(node.elementId), {
+    id: humanNodeId(node.elementId),
+    x: node.bounds.x,
+    y: node.bounds.y,
+    width: node.bounds.width,
+    height: node.bounds.height,
+  }]));
+}
+
+/**
+ * Records the connecting arrow on the person's own element without ever
+ * rewriting anything else about it, and stays idempotent so replaying it on
+ * every animation frame cannot stack duplicate entries.
+ */
+export function withHumanBindings(
+  elements: readonly SceneElement[],
+  additions: ReadonlyMap<string, string[]>,
+): SceneElement[] {
+  if (additions.size === 0) return [...elements];
+  return elements.map((element) => {
+    const arrows = additions.get(element.id);
+    if (!arrows) return element;
+    const bound = (element as SceneElement & {
+      boundElements?: Array<{ id: string; type: string }> | null;
+    }).boundElements ?? [];
+    const missing = arrows
+      .filter((id) => !bound.some((entry) => entry?.id === id))
+      .map((id) => ({ id, type: "arrow" as const }));
+    if (missing.length === 0) return element;
+    return { ...element, boundElements: [...bound, ...missing] } as SceneElement;
+  });
+}
+
+/**
+ * The converter can only bind an arrow to an element in its own batch, and a
+ * shape the person drew is not in the batch. Its end of the arrow is written
+ * on afterwards, the same way connect_shapes does it.
+ */
+export function bindHumanEndpoints(
+  created: readonly SceneElement[],
+  bindings: readonly HumanEdgeBinding[],
+): void {
+  if (bindings.length === 0) return;
+  const byId = new Map(created.map((element) => [element.id, element]));
+  for (const binding of bindings) {
+    const arrow = byId.get(binding.arrowId);
+    if (!arrow) continue;
+    if (binding.startElementId) {
+      Object.assign(arrow, { startBinding: { elementId: binding.startElementId, focus: 0, gap: 4 } });
+    }
+    if (binding.endElementId) {
+      Object.assign(arrow, { endBinding: { elementId: binding.endElementId, focus: 0, gap: 4 } });
+    }
+  }
+}
+
 function withGeometry(element: SceneElement, geometry: DiffGeometry): SceneElement {
   return {
     ...element,
@@ -126,15 +211,21 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     ...(params.edges ? { edges: params.edges } : {}),
     ...(params.containers ? { containers: params.containers } : {}),
   };
-  const spec = params.mode === "merge"
-    ? mergeSpec(reconstructSpec(scene, diagramId), requested)
+  // The person's sketch is read fresh every time: a request may name one of
+  // their boxes by id, and an arrow this diagram already runs into the sketch
+  // only reconstructs as an edge while the reading is to hand.
+  const sketch = inferHumanGraph(scene as unknown as SketchElement[]);
+  const merged = params.mode === "merge"
+    ? mergeSpec(reconstructSpec(scene, diagramId, { human: sketch }), requested)
     : {
         ...requested,
         nodes: requested.nodes ?? [],
         edges: requested.edges ?? [],
       } as LayoutParams;
+  const spec = materializeHumanNodes(merged, sketch);
+  const split = splitHumanSpec(spec);
 
-  const plan = await planDiagramLayout(spec, { x: 0, y: 0 }, diagramId);
+  const plan = await planDiagramLayout(split.agentSpec, { x: 0, y: 0 }, diagramId);
   const previous = boundsOf(before) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   const foreignElements = finiteGeometry(scene.filter((element) => !beforeIds.has(element.id)));
   const shifted = params.keepPosition === false
@@ -150,6 +241,26 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
         })),
       );
   guardFrameAutoFit(plan);
+
+  // The connecting arrows are drawn last, because the sketch sits at absolute
+  // coordinates the layout never had a say over: only once the plan has been
+  // placed do both ends of such an arrow exist in the same space.
+  const sketchBoxes = humanSketchBoxes(sketch);
+  const humanEdges = planHumanEdges(plan, split.crossEdges, {
+    agentBoxes: agentNodeBoxes(plan),
+    humanBoxes: new Map([...split.humanNodes.keys()]
+      .map((id) => [id, sketchBoxes.get(id)])
+      .filter((entry): entry is [string, Box] => Boolean(entry[1]))),
+    blockers: [...sketchBoxes.values()],
+  });
+  plan.skeletons.push(...humanEdges.skeletons);
+  const boundAdditions = new Map<string, string[]>();
+  for (const binding of humanEdges.bindings) {
+    for (const elementId of [binding.startElementId, binding.endElementId]) {
+      if (!elementId) continue;
+      boundAdditions.set(elementId, [...(boundAdditions.get(elementId) ?? []), binding.arrowId]);
+    }
+  }
   const quality = assertDiagramQuality(plan);
 
   const claimed = new Set(plan.skeletons.map((skeleton) => String(skeleton.id)));
@@ -169,6 +280,7 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
     throw new Error("Diagram layout produced invalid element geometry");
   }
+  bindHumanEndpoints(created as unknown as SceneElement[], humanEdges.bindings);
   const diff = planDiff(scene as unknown as DiffElement[], plan);
   const rendered = quality && created.length <= QUALITY_EVALUATION_LIMIT
     ? mergeQualityReports(
@@ -179,8 +291,11 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
 
   const createdIds = new Set(created.map((element) => element.id));
   // Always rebased on the live scene: the human may be drawing while this runs.
-  const foreignScene = () => [...api.getSceneElements()].filter(
-    (element) => !beforeIds.has(element.id) && !createdIds.has(element.id),
+  const foreignScene = () => withHumanBindings(
+    [...api.getSceneElements()].filter(
+      (element) => !beforeIds.has(element.id) && !createdIds.has(element.id),
+    ),
+    boundAdditions,
   );
   const foreignCount = foreignScene().length;
   const moved = diff.survivors.filter((survivor) => survivor.from.x !== survivor.to.x

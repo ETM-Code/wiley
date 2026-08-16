@@ -71,27 +71,39 @@ export function humanGraphNode(node: HumanNode): GraphNode {
 }
 
 /**
- * Fills in every `human:` node an edge names but the spec never declared, so
- * the agent can write `{from: "api", to: "human:abc"}` and nothing else. An id
- * with no matching element on the board is a mistake worth failing on rather
- * than silently dropping the connection the user asked for.
+ * Fills in every node an edge names against the person's sketch, so the agent
+ * can write `{from: "api", to: "human:abc"}` and nothing else. A bare element
+ * id means the same thing: that is what the scene listing shows, so refusing
+ * it would only punish the agent for reading the context it was given. An id
+ * that matches nothing at all fails loudly rather than quietly dropping the
+ * connection the user asked for.
  */
 export function materializeHumanNodes(spec: LayoutParams, graph: HumanGraph): LayoutParams {
   const byElementId = new Map(graph.nodes.map((node) => [node.elementId, node]));
   const declared = new Set(spec.nodes.map((node) => node.id));
-  const added: GraphNode[] = [];
-  for (const edge of spec.edges ?? []) {
-    for (const endpoint of [edge.from, edge.to]) {
-      const elementId = humanElementIdOf(endpoint);
-      if (!elementId || declared.has(endpoint)) continue;
-      const human = byElementId.get(elementId);
-      if (!human) {
-        throw new Error(`No shape of the user's on the board matches ${endpoint}`);
-      }
-      declared.add(endpoint);
-      added.push(humanGraphNode(human));
+  const added = new Map<string, GraphNode>();
+  const resolveEndpoint = (endpoint: string): string => {
+    if (declared.has(endpoint)) return endpoint;
+    const named = humanElementIdOf(endpoint);
+    if (named) {
+      const human = byElementId.get(named);
+      if (!human) throw new Error(`No shape of the user's on the board matches ${endpoint}`);
+      added.set(endpoint, humanGraphNode(human));
+      return endpoint;
     }
-  }
+    const human = byElementId.get(endpoint);
+    // Not a node and not the person's either: validateGraph names it better
+    // than anything that could be said here.
+    if (!human) return endpoint;
+    const id = humanNodeId(endpoint);
+    added.set(id, humanGraphNode(human));
+    return id;
+  };
+  const edges = (spec.edges ?? []).map((edge) => ({
+    ...edge,
+    from: resolveEndpoint(edge.from),
+    to: resolveEndpoint(edge.to),
+  }));
   // A declared human node still needs its real geometry and label attached.
   const nodes = spec.nodes.map((node) => {
     const elementId = humanElementIdOf(node.id);
@@ -100,7 +112,7 @@ export function materializeHumanNodes(spec: LayoutParams, graph: HumanGraph): La
     if (!human) throw new Error(`No shape of the user's on the board matches ${node.id}`);
     return { ...humanGraphNode(human), ...(node.label ? { label: node.label } : {}) };
   });
-  return { ...spec, nodes: [...nodes, ...added] };
+  return { ...spec, nodes: [...nodes, ...added.values()], edges };
 }
 
 export type HumanSpecSplit = {
