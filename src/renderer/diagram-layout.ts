@@ -31,6 +31,7 @@ import {
 
 import {
   CAPTION_DAYLIGHT,
+  CAPTION_DAYLIGHT_MIN,
   CORRIDOR_GAP,
   MAX_ROUTE_REPAIR_ITERATIONS,
   PASSING_CLEARANCE,
@@ -732,6 +733,8 @@ type LayoutGeometry = {
   outcome: DiagramLayoutOutcome;
   /** Present only when the request declared containers. */
   containers?: Map<string, RouteBox>;
+  /** The flow was stood on one line: a board far wider than it is tall. */
+  ribbon?: boolean;
 };
 
 /**
@@ -1932,16 +1935,67 @@ function foldedGeometry(
   }
 
   const placed: RouteBox[] = [...boxes.values()];
+  // A grid board draws its boxes in bands, so its captions can stand on rows
+  // of their own: one caption's height clear above a band, or the same below
+  // it. Seated from each route's own midpoint instead, five captions on one
+  // ribbon come out at five heights, and a reader reads five things where
+  // there is one row of them. A row is only taken when the caption still
+  // clears everything from it; a caption naming a run far from any band keeps
+  // the seat it was given.
+  const rows = captionRows([...boxes.values()]);
   const edges: EdgeGeometry[] = input.edges.map((edge, index) => {
     const route = routes[index];
     const text = edge.label?.trim();
     if (!text) return { points: route.points, rounded: route.rounded };
     const size = measureText(text, EDGE_LABEL_FONT_SIZE);
-    const label = placeEdgeLabel(route.points, size, placed);
+    const free = placeEdgeLabel(route.points, size, placed);
+    const label = onARow(free, size, rows, route.points, placed);
     placed.push({ id: `label-${index}`, x: label.x, y: label.y, ...size });
     return { points: route.points, rounded: route.rounded, label };
   });
-  return { positions, sizes: input.sizes, outcome, edges };
+  return { positions, sizes: input.sizes, outcome, edges, ribbon: square };
+}
+
+/**
+ * The lines a caption may stand on: one caption's daylight above and below
+ * each band of boxes, a band being a run of boxes that share the board's
+ * cross axis. A folded board has one band per row of the fold; a ribbon has
+ * one, which is the whole point of it.
+ */
+function captionRows(boxes: readonly RouteBox[]): number[] {
+  const spans = boxes
+    .map((box) => ({ top: box.y, bottom: box.y + box.height }))
+    .sort((a, b) => a.top - b.top);
+  const bands: Array<{ top: number; bottom: number }> = [];
+  for (const span of spans) {
+    const last = bands[bands.length - 1];
+    if (last && span.top <= last.bottom) last.bottom = Math.max(last.bottom, span.bottom);
+    else bands.push({ ...span });
+  }
+  return bands.flatMap((band) => [band.top - CAPTION_DAYLIGHT, band.bottom + CAPTION_DAYLIGHT]);
+}
+
+/**
+ * The given seat moved onto the nearest caption row, when the row is a place
+ * the caption can actually stand: clear of every box, and still a daylight off
+ * every point of the run it names. Otherwise the seat it already had.
+ */
+function onARow(
+  seat: RoutePoint,
+  size: { width: number; height: number },
+  rows: readonly number[],
+  route: readonly RoutePoint[],
+  placed: readonly RouteBox[],
+): RoutePoint {
+  const middle = seat.y + size.height / 2;
+  const nearest = [...rows].sort((a, b) => Math.abs(a - middle) - Math.abs(b - middle))[0];
+  if (nearest === undefined) return seat;
+  // A row above a band seats the caption's foot on it; a row below, its head.
+  const moved = { x: seat.x, y: nearest < middle ? nearest - size.height : nearest };
+  const box: RouteBox = { id: "row", ...moved, ...size };
+  if (placed.some((other) => box.x < other.x + other.width && other.x < box.x + box.width
+    && box.y < other.y + other.height && other.y < box.y + box.height)) return seat;
+  return geometryIntersectsBox(routeGeometry(route, false), box, -CAPTION_DAYLIGHT) ? seat : moved;
 }
 
 /**
@@ -2960,13 +3014,13 @@ function assemblePlan(
     // line clipping a glyph reads as a strike-through, and one running a
     // hair's breadth under the word reads as carrying it. Only a line the
     // caption keeps visible daylight from reads as a line it merely names.
-    const onALine = (box: RouteBox, except = -1): boolean => absoluteRoutes.some((other, otherIndex) =>
-      otherIndex !== except
-      && geometryIntersectsBox(
-        routeGeometry(other, geometry.edges[otherIndex].rounded),
-        box,
-        -CAPTION_DAYLIGHT,
-      ));
+    const onALine = (box: RouteBox, except = -1, daylight = CAPTION_DAYLIGHT): boolean =>
+      absoluteRoutes.some((other, otherIndex) => otherIndex !== except
+        && geometryIntersectsBox(
+          routeGeometry(other, geometry.edges[otherIndex].rounded),
+          box,
+          -daylight,
+        ));
     // A region the edge is not a member of is not a place its label may land:
     // inside one, it reads as belonging to that region.
     const foreignRegions = [...regionBoxes.entries()]
@@ -3018,7 +3072,11 @@ function assemblePlan(
       && boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
       && boundLabelClears(absoluteRoute, labelSize, nodeBoxes)
       && boundLabelClears(absoluteRoute, labelSize, labelGround, LABEL_MIN_GAP)
-      && !onALine(labelBox, index);
+      // Held to the bar the evaluator holds it to rather than the one
+      // placement aims for: a caption riding its line has already been told
+      // there is nowhere to stand, and a neighbouring run six pixels off does
+      // not touch the word.
+      && !onALine(labelBox, index, CAPTION_DAYLIGHT_MIN);
     const bound = Boolean(text) && (labelMode === "bound" || ridesInstead);
     edgeSkeletons.push({
       id: edgeId,
@@ -3193,14 +3251,24 @@ function assemblePlan(
   // topmost ink is a leaf off in one corner would otherwise push the title a
   // corner's height clear of everything it names, and the caption reads as
   // marooned even though it is centred correctly.
-  const beneathTitle = drawnBoxes.filter((box) => box.x + box.width >= titleLeft - TITLE_HEADROOM
-    && box.x <= titleLeft + titleSize.width + TITLE_HEADROOM);
+  // A flow stood on one line that came out several times wider than it is
+  // tall has no band above it: the title sits down on the ribbon like one more
+  // stage of it. It gets a band of its own height again, which is the one
+  // thing that can be given to a shape that has already been measured against
+  // the fold and refused it. A flow that came out square keeps the plain
+  // headroom, which is a band on a board of that shape.
+  const drawnBottom = Math.max(...drawnBoxes.map((box) => box.y));
+  const isRibbon = geometry.ribbon === true
+    && drawnRight - drawnLeft > (drawnBottom - drawnTop) * RIBBON_ASPECT;
+  const headroom = isRibbon ? TITLE_HEADROOM + titleSize.height : TITLE_HEADROOM;
+  const beneathTitle = drawnBoxes.filter((box) => box.x + box.width >= titleLeft - headroom
+    && box.x <= titleLeft + titleSize.width + headroom);
   const headroomFrom = beneathTitle.length > 0
     ? Math.min(...beneathTitle.map((box) => box.y))
     : drawnTop;
   // Still above every last thing on the board: a title level with a corner of
   // the drawing reads as one more caption on it.
-  const titleBottom = Math.min(headroomFrom - TITLE_HEADROOM, drawnTop - LABEL_MIN_GAP);
+  const titleBottom = Math.min(headroomFrom - headroom, drawnTop - LABEL_MIN_GAP);
   const titleId = titleElementId(diagramId);
   if (title) roles.set(titleId, { role: "title" });
   const skeletons: JsonObject[] = [
