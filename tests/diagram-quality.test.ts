@@ -311,6 +311,33 @@ describe("bound edge labels", () => {
     expect(evaluateDiagramPlan(plan).labelCollisions).toEqual(["wire:label x crosser"]);
   });
 
+  /**
+   * A caption owes daylight to the line it names, not merely to everyone
+   * else's. Its own is the line a reader is most likely to read it as sitting
+   * on, since it is the one it is nearest by design.
+   */
+  const captioned = (y: number) => handBuiltPlan([
+    node("from", 0, 0),
+    node("to", 600, 0),
+    arrow("wire", [[160, 40], [600, 40]], { start: "from", end: "to" }),
+    {
+      role: "edgeLabel",
+      key: "wire",
+      skeleton: { id: "wire-caption", type: "text", x: 340, y, width: 40, height: 20, text: "emit" },
+    },
+  ]);
+
+  it("flags a caption resting on the line it names", () => {
+    // Three pixels of daylight: at any sensible export zoom, a word on a line.
+    expect(evaluateDiagramPlan(captioned(17)).labelCollisions).toEqual(["wire-caption x wire"]);
+    // And squarely across it, which is the same finding said louder.
+    expect(evaluateDiagramPlan(captioned(30)).labelCollisions).toEqual(["wire-caption x wire"]);
+  });
+
+  it("leaves a caption standing a clear daylight off its own line alone", () => {
+    expect(evaluateDiagramPlan(captioned(8)).labelCollisions).toEqual([]);
+  });
+
   it("flags two labels crowded together, not only ones that overlap", () => {
     const caption = (id: string, x: number, y: number): PlanPart => ({
       role: "edgeLabel",

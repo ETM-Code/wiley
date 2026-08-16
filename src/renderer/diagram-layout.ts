@@ -30,6 +30,7 @@ import {
 } from "./diagram-theme";
 
 import {
+  CAPTION_DAYLIGHT,
   CORRIDOR_GAP,
   MAX_ROUTE_REPAIR_ITERATIONS,
   PASSING_CLEARANCE,
@@ -196,7 +197,11 @@ export type DiagramElementRoleEntry = {
   edgeIndex?: number;
   /** Semantic id of the container holding this element, if any. */
   container?: string;
-  /** Set on an edge label the converter attaches to the arrow itself. */
+  /**
+   * Set on an edge label the converter attaches to the arrow itself, which
+   * only a request naming labelMode "bound" now asks for. It is also what
+   * excuses that caption from the daylight every other one owes its line.
+   */
   bound?: boolean;
   /**
    * The parent whose fan this connector belongs to, when a tree's children
@@ -1945,11 +1950,12 @@ function foldedGeometry(
  * channel onto the 20px grid is what merges two arrows into one line.
  */
 async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutcome): Promise<LayoutGeometry> {
-  // A label only needs room of its own when it cannot fit in the channel the
-  // layer gap already provides. Asking ELK to reserve room for a centred
-  // label costs an entire extra layer, which is what made a chart carrying
-  // "yes" and "no" twice as long as the same chart without them.
-  const ridesTheArrow = (edge: GraphEdge): boolean => {
+  // Every caption stands beside its line, but only a caption too wide for the
+  // channel the layer gap already provides needs ELK to widen the board for
+  // it. Asking ELK to reserve room for one that fits costs an entire extra
+  // layer, which is what made a chart carrying "yes" and "no" twice as long as
+  // the same chart without them. The ones that fit are seated by hand instead.
+  const fitsTheChannel = (edge: GraphEdge): boolean => {
     const text = edge.label?.trim();
     if (!text || edge.labelMode === "standalone") return false;
     // Inside a region the reserved room is also what keeps the label within
@@ -1957,7 +1963,7 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     if (input.containers && lowestCommonContainer(input.containers, edge.from, edge.to)) return false;
     return measureText(text, EDGE_LABEL_FONT_SIZE).width + BOUND_LABEL_CLEARANCE <= input.layerSpacing;
   };
-  const withheld = new Set(input.edges.filter(ridesTheArrow));
+  const withheld = new Set(input.edges.filter(fitsTheChannel));
   const graph = { ...input, reserveLabel: (edge: GraphEdge) => !withheld.has(edge) };
   const options = {
     "elk.algorithm": "layered",
@@ -2874,42 +2880,6 @@ function assemblePlan(
   // Every route is known before any label is placed, so a label can be judged
   // against the lines it does not own as well as the boxes.
   const absoluteRoutes = geometry.edges.map((routed, index) => seatRoute(routed, edges[index]));
-  /**
-   * Everything the drawing already occupies, before a single caption is put
-   * down. A bound label sits centred on its own route, so one riding the run
-   * that wraps the outside of the drawing hangs half of itself past the last
-   * line on the board, and the whole diagram reads as jammed into the corner
-   * of whatever frame it is shown in. That one stands beside its route
-   * instead.
-   */
-  const drawnExtent = (() => {
-    const xs: number[] = [];
-    const ys: number[] = [];
-    for (const box of [...nodeBoxes, ...regionBoxes.values()]) {
-      xs.push(box.x, box.x + box.width);
-      ys.push(box.y, box.y + box.height);
-    }
-    for (const route of absoluteRoutes) {
-      for (const point of route) {
-        xs.push(point.x);
-        ys.push(point.y);
-      }
-    }
-    if (xs.length === 0) return null;
-    return {
-      left: Math.min(...xs),
-      right: Math.max(...xs),
-      top: Math.min(...ys),
-      bottom: Math.max(...ys),
-    };
-  })();
-  const insideDrawing = (box: RouteBox): boolean => drawnExtent === null
-    || (box.x >= drawnExtent.left && box.x + box.width <= drawnExtent.right
-      && box.y >= drawnExtent.top && box.y + box.height <= drawnExtent.bottom);
-  // Laid out as a ring around one centre: every connector on the board is a
-  // spoke, and every caption on it names a spoke.
-  const ringSpokes = geometry.outcome.used === "radial"
-    && starHub(params.nodes, edges) !== null;
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
   // A bound label has no skeleton, so its box exists nowhere else. Anything
@@ -2917,6 +2887,11 @@ function assemblePlan(
   const boundLabelBoxes: RouteBox[] = [];
   /** Standalone label boxes, in the order they were put down. */
   const placedLabelBoxes: RouteBox[] = [];
+  const clearOf = (box: RouteBox, others: readonly RouteBox[], margin = 0): boolean =>
+    others.every((other) => !(box.x < other.x + other.width + margin
+      && other.x < box.x + box.width + margin
+      && box.y < other.y + other.height + margin
+      && other.y < box.y + box.height + margin));
   let boundLabelCount = 0;
   for (const [index, edge] of edges.entries()) {
     const routed = geometry.edges[index];
@@ -2943,38 +2918,82 @@ function assemblePlan(
     });
     const text = edge.label?.trim();
     const labelSize = text ? measureText(text, EDGE_LABEL_FONT_SIZE) : { width: 0, height: 0 };
-    // A label rides the arrow when the middle of the route is long enough to
-    // carry it, and stands beside the route when it is not. A label the
-    // layout never found a place for rides the arrow rather than vanishing.
     const labelMode = edge.labelMode ?? "auto";
     // Labels are placed one after another, so each one has to clear the boxes
     // and every label already put down, not just the nodes.
     const labelGround = [...boundLabelBoxes, ...placedLabelBoxes];
+    const edgeLabelId = edgeLabelElementId(diagramId, key);
     const anchor = boundLabelAnchor(absoluteRoute);
     const labelBox = {
-      id: `${edgeId}:label`,
+      id: edgeLabelId,
       x: anchor.x - labelSize.width / 2,
       y: anchor.y - labelSize.height / 2,
       ...labelSize,
     };
-    const roomOnTheArrow = boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
-      // On a star the spokes are the drawing. A bound caption is seated in a
-      // gap cut out of the line it names, and a board that does that to every
-      // spoke has no spoke drawn whole: seven words, each between two stubs.
-      && !ringSpokes
-      && insideDrawing(labelBox)
+    // Judged against the caption's own box, grown by the daylight it owes: a
+    // line clipping a glyph reads as a strike-through, and one running a
+    // hair's breadth under the word reads as carrying it. Only a line the
+    // caption keeps visible daylight from reads as a line it merely names.
+    const onALine = (box: RouteBox, except = -1): boolean => absoluteRoutes.some((other, otherIndex) =>
+      otherIndex !== except
+      && geometryIntersectsBox(
+        routeGeometry(other, geometry.edges[otherIndex].rounded),
+        box,
+        -CAPTION_DAYLIGHT,
+      ));
+    // A region the edge is not a member of is not a place its label may land:
+    // inside one, it reads as belonging to that region.
+    const foreignRegions = [...regionBoxes.entries()]
+      .filter(([id]) => !ownerChain.includes(id))
+      .map(([, box]) => box);
+    // The room the layout reserved is room beside the route in principle, but
+    // it reserves it before it knows where the route finally went, so the spot
+    // it hands back sometimes sits astride a line. A caption with a connector
+    // ruled through it reads as struck out, so it is only taken when it is
+    // clear of every line on the board.
+    const reserved = routed.label
+      ? { x: origin.x + routed.label.x, y: origin.y + routed.label.y }
+      : undefined;
+    const struckThrough = reserved !== undefined
+      && onALine({ id: edgeLabelId, x: reserved.x, y: reserved.y, ...labelSize });
+    // A label the layout kept no room for, or put on a line, still has to go
+    // somewhere: beside the route, clear of the boxes, the way every unlayered
+    // algorithm places one.
+    const spot = reserved && !struckThrough
+      ? reserved
+      : placeEdgeLabel(absoluteRoute, labelSize, [
+        ...foreignRegions,
+        ...nodeBoxes,
+        // Only the labels claim clear space around themselves; a caption may
+        // sit right against a box, but never right against another caption.
+        ...labelGround.map((box) => ({
+          id: box.id,
+          x: box.x - LABEL_MIN_GAP,
+          y: box.y - LABEL_MIN_GAP,
+          width: box.width + LABEL_MIN_GAP * 2,
+          height: box.height + LABEL_MIN_GAP * 2,
+        })),
+      ], onALine);
+    const seatBox = { id: edgeLabelId, x: spot.x, y: spot.y, ...labelSize };
+    const seatIsAPlaceToStand = !onALine(seatBox)
+      && clearOf(seatBox, [...foreignRegions, ...nodeBoxes])
+      && clearOf(seatBox, labelGround, LABEL_MIN_GAP);
+    // A caption stands beside the line it names, never on it: Excalidraw seats
+    // a bound label in a gap cut out of the run, which puts the word where the
+    // line was and leaves a reader deciding whether it names this connector or
+    // the one crossing behind it. So the layout never binds by preference.
+    //
+    // It does bind as a last resort. On a fan of eight labelled edges there is
+    // no air beside any of them, and a word with three lines through it names
+    // none of them; the gap cut in one run at least says which. A request
+    // naming labelMode "bound" gets that from the start.
+    const ridesInstead = labelMode === "auto"
+      && !seatIsAPlaceToStand
+      && boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
       && boundLabelClears(absoluteRoute, labelSize, nodeBoxes)
       && boundLabelClears(absoluteRoute, labelSize, labelGround, LABEL_MIN_GAP)
-      // A label rides its own arrow by construction; landing on somebody
-      // else's line is the same kind of mess as landing on a box.
-      && absoluteRoutes.every((other, otherIndex) => otherIndex === index
-        || !geometryIntersectsBox(routeGeometry(other, geometry.edges[otherIndex].rounded), labelBox, 0));
-    const bound = Boolean(text) && (labelMode === "bound" || (labelMode === "auto" && (
-      // No spot back from the layout and none withheld means the layout could
-      // not place this label at all; riding the arrow beats vanishing.
-      (routed.label === undefined && !routed.placeLabel)
-      || roomOnTheArrow
-    )));
+      && !onALine(labelBox, index);
+    const bound = Boolean(text) && (labelMode === "bound" || ridesInstead);
     edgeSkeletons.push({
       id: edgeId,
       type: "arrow",
@@ -2999,10 +3018,9 @@ function assemblePlan(
     if (!text) continue;
     // A bound label has no skeleton of its own; the converter makes it. It
     // still gets an identity so every check and every later edit can name it.
-    const edgeLabelId = edgeLabelElementId(diagramId, key);
     if (bound) {
       boundLabelCount += 1;
-      boundLabelBoxes.push({ ...labelBox, id: edgeLabelId });
+      boundLabelBoxes.push(labelBox);
       roles.set(edgeLabelId, {
         role: "edgeLabel",
         key,
@@ -3012,47 +3030,7 @@ function assemblePlan(
       });
       continue;
     }
-    // The room the layout reserved is room beside the route in principle, but
-    // it reserves it before it knows where the route finally went, so the spot
-    // it hands back sometimes sits astride a line. A caption with a connector
-    // ruled through it reads as struck out, so it is only taken when it is
-    // clear of every line on the board.
-    const reserved = routed.label
-      ? { x: origin.x + routed.label.x, y: origin.y + routed.label.y }
-      : undefined;
-    // Judged against the caption's own box: a line that clips a glyph reads
-    // as a strike-through, and one that runs alongside it does not.
-    const onALine = (box: RouteBox): boolean => absoluteRoutes.some((other, otherIndex) =>
-      geometryIntersectsBox(
-        routeGeometry(other, geometry.edges[otherIndex].rounded),
-        box,
-        0,
-      ));
-    const struckThrough = reserved !== undefined
-      && onALine({ id: edgeLabelId, x: reserved.x, y: reserved.y, ...labelSize });
-    // A label the layout kept no room for, or put on a line, still has to go
-    // somewhere: beside the route, clear of the boxes, the way every unlayered
-    // algorithm places one.
-    const spot = reserved && !struckThrough
-      ? reserved
-      : placeEdgeLabel(absoluteRoute, labelSize, [
-        // A region the edge is not a member of is not a place its label may
-        // land: inside one, it reads as belonging to that region.
-        ...[...regionBoxes.entries()]
-          .filter(([id]) => !ownerChain.includes(id))
-          .map(([, box]) => box),
-        ...nodeBoxes,
-        // Only the labels claim clear space around themselves; a caption may
-        // sit right against a box, but never right against another caption.
-        ...labelGround.map((box) => ({
-          id: box.id,
-          x: box.x - LABEL_MIN_GAP,
-          y: box.y - LABEL_MIN_GAP,
-          width: box.width + LABEL_MIN_GAP * 2,
-          height: box.height + LABEL_MIN_GAP * 2,
-        })),
-      ], onALine);
-    placedLabelBoxes.push({ id: edgeLabelId, x: spot.x, y: spot.y, ...labelSize });
+    placedLabelBoxes.push(seatBox);
     roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
     edgeLabelSkeletons.push({
       id: edgeLabelId,

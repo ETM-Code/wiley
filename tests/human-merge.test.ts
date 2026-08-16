@@ -27,7 +27,11 @@ describe("connectors into the human sketch", () => {
 
   it("keeps every label clear of the ones the diagram already carries", async () => {
     const plan = await planDiagramLayout(spec, ORIGIN, "wd-merge");
-    expect(plan.boundLabelBoxes.length).toBe(1);
+    // The diagram's own caption stands beside its route, so it exists only as
+    // a skeleton. The second pass has to read it from there.
+    expect(plan.skeletons.filter(
+      (skeleton) => plan.roles.get(String(skeleton.id))?.role === "edgeLabel",
+    ).map((skeleton) => skeleton.text)).toEqual(["verifies the session"]);
     const agentBoxes = new Map(plan.skeletons
       .filter((skeleton) => plan.roles.get(String(skeleton.id))?.role === "node")
       .map((skeleton) => [

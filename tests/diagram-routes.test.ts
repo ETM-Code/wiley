@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CAPTION_DAYLIGHT,
   PORT_SPACING,
   assignPorts,
   chooseSide,
@@ -179,8 +180,17 @@ describe("placeEdgeLabel", () => {
   const size = { width: 60, height: 20 };
   const route = [{ x: 0, y: 100 }, { x: 400, y: 100 }];
 
-  it("takes the first clear spot around the middle of the route", () => {
-    expect(placeEdgeLabel(route, size, [])).toEqual({ x: 170, y: 72 });
+  it("seats a caption square to the run, on the side a reader looks", () => {
+    // Above a horizontal run, its box a full daylight clear of the line.
+    expect(placeEdgeLabel(route, size, [])).toEqual({ x: 170, y: 68 });
+    expect(100 - (68 + size.height)).toBe(CAPTION_DAYLIGHT);
+  });
+
+  it("seats a caption beside a vertical run rather than along it", () => {
+    const upright = [{ x: 100, y: 0 }, { x: 100, y: 400 }];
+    const spot = placeEdgeLabel(upright, size, []);
+    expect(spot).toEqual({ x: 112, y: 190 });
+    expect(spot.x - 100).toBe(CAPTION_DAYLIGHT);
   });
 
   it("passes over a clear spot the caller rules out", () => {

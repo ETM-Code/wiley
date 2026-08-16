@@ -68,6 +68,14 @@ export const CONTAINER_INSET = 12;
 /** Two ports nearer than this on one node read as a single attachment. */
 const MIN_PORT_SEPARATION = 14;
 
+/**
+ * The daylight below which a caption stops reading as beside a line and
+ * starts reading as sitting on it. The layout aims for CAPTION_DAYLIGHT,
+ * comfortably above this; a board exported small is where the difference
+ * between the two gets spent.
+ */
+const CAPTION_DAYLIGHT_MIN = 6;
+
 /** WCAG large-text minimum: below this a label stops being legible on its fill. */
 const MIN_LABEL_CONTRAST = 3;
 /**
@@ -168,8 +176,11 @@ function evaluateStyleCoherence(plan: DiagramPlan, report: DiagramQualityReport)
   }
 }
 
-/** A label box tagged with the arrow it rides, so it never accuses its own. */
-type LabelBox = Box & { owner?: string };
+/**
+ * A caption tagged with the connector it names, and with whether the request
+ * pinned it to that connector rather than the layout seating it.
+ */
+type LabelBox = Box & { owner?: string; pinned?: boolean };
 
 /**
  * The box Excalidraw will give a label bound to this arrow. The anchor rule
@@ -180,7 +191,7 @@ export function boundLabelBox(arrow: JsonObject, override?: Box): LabelBox | und
   const id = String(arrow.id ?? "");
   const text = (arrow.label as { text?: unknown } | undefined)?.text;
   if (typeof text !== "string" || !text.trim()) return undefined;
-  if (override) return { ...override, id: `${id}:label`, owner: id };
+  if (override) return { ...override, id: `${id}:label`, owner: id, pinned: true };
   const points = absoluteArrowPoints(arrow);
   if (points.length < 2) return undefined;
   const size = measureText(text.trim(), EDGE_LABEL_FONT_SIZE);
@@ -189,6 +200,7 @@ export function boundLabelBox(arrow: JsonObject, override?: Box): LabelBox | und
   return {
     id: `${id}:label`,
     owner: id,
+    pinned: true,
     x: anchor.x - size.width / 2 - slack,
     y: anchor.y - size.height / 2 - slack,
     width: size.width + slack * 2,
@@ -398,6 +410,16 @@ export function evaluateDiagramPlan(
   const labels: LabelBox[] = [];
   const arrows: JsonObject[] = [];
   const boxById = new Map<string, Box>();
+  // Which connector each standalone caption names. A bound one carries its
+  // arrow's id in its own; a caption standing beside the line is joined to it
+  // only by the endpoint key both were named after.
+  const arrowIdByKey = new Map<string, string>();
+  for (const skeleton of plan.skeletons) {
+    const entry = plan.roles.get(String(skeleton.id ?? ""));
+    if (entry?.role === "edge" && entry.key !== undefined) {
+      arrowIdByKey.set(entry.key, String(skeleton.id ?? ""));
+    }
+  }
   for (const skeleton of plan.skeletons) {
     const id = String(skeleton.id ?? "");
     const box: Box = {
@@ -420,9 +442,13 @@ export function evaluateDiagramPlan(
     }
     boxById.set(id, box);
     if (role === "node") nodes.push(box);
+    else if (role === "edgeLabel") {
+      const owner = arrowIdByKey.get(plan.roles.get(id)?.key ?? "");
+      labels.push(owner ? { ...box, owner } : box);
+    }
     // The title competes for the same space as edge labels; hold it to the
     // same collision standard, and a region's own caption with it.
-    else if (role === "edgeLabel" || role === "title" || role === "containerLabel") labels.push(box);
+    else if (role === "title" || role === "containerLabel") labels.push(box);
   }
 
   for (let a = 0; a < nodes.length; a++) {
@@ -442,12 +468,19 @@ export function evaluateDiagramPlan(
       // than merely staying off one another.
       if (boxesOverlap(label, other, LABEL_MIN_GAP)) report.labelCollisions.push(`${label.id} x ${other.id}`);
     }
-    // A bound label sits on its own arrow by construction; landing on anyone
-    // else's is a genuine collision.
+    // A caption owes daylight to every line on the board, the one it names
+    // included. Its own line is the one a reader is most likely to mistake it
+    // for sitting on, since it is the one it is nearest by design, and a word
+    // resting on a run reads as carried by it rather than naming it.
+    //
+    // The exception is a caption the request pinned to its arrow with
+    // labelMode "bound": Excalidraw seats that one in a gap cut out of the
+    // line, which is exactly what was asked for and not the layout's doing.
     if (!label.owner) continue;
     for (const arrow of arrows) {
-      if (String(arrow.id) === label.owner) continue;
-      if (geometryIntersectsBox(arrowGeometry(arrow), label, 0)) {
+      const own = String(arrow.id) === label.owner;
+      if (own && label.pinned) continue;
+      if (geometryIntersectsBox(arrowGeometry(arrow), label, -CAPTION_DAYLIGHT_MIN)) {
         report.labelCollisions.push(`${label.id} x ${String(arrow.id)}`);
       }
     }
