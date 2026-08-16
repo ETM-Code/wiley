@@ -34,6 +34,7 @@ import {
   PORT_SPACING,
   geometryIntersectsBox,
   placeEdgeLabel,
+  type Side,
   routeGeometry,
   planRoutes,
   routeDefects,
@@ -982,6 +983,14 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
   };
 }
 
+/** Which sides a parent leaves and a child is entered on, per flow direction. */
+const TREE_PORT_SIDES: Record<DiagramDirection, { from: Side; to: Side }> = {
+  DOWN: { from: "bottom", to: "top" },
+  UP: { from: "top", to: "bottom" },
+  RIGHT: { from: "right", to: "left" },
+  LEFT: { from: "left", to: "right" },
+};
+
 const NON_LAYERED_OPTIONS: Record<Exclude<DiagramAlgorithm, "layered">, Record<string, string>> = {
   tree: { "elk.algorithm": "mrtree" },
   radial: { "elk.algorithm": "radial" },
@@ -1110,12 +1119,22 @@ async function nonLayeredGeometry(
       }
     }
   }
+  // A hierarchy reads as one when every child is entered from the parent's
+  // side of it. Letting each edge pick the nearest border instead lands the
+  // arrow on a child's flank and the chart reads as a web.
+  const flowSides = algorithm === "tree" ? TREE_PORT_SIDES[input.direction] : undefined;
   const requests: RouteRequest[] = input.edges.map((edge, index) => {
     const { section } = elkSection(result, index);
     const raw = section
       ? dedupeNearPoints([section.startPoint, ...(section.bendPoints ?? []), section.endPoint])
       : undefined;
-    return { id: `edge-${index}`, from: edge.from, to: edge.to, ...(raw ? { route: raw } : {}) };
+    return {
+      id: `edge-${index}`,
+      from: edge.from,
+      to: edge.to,
+      ...(flowSides ? { sides: flowSides } : {}),
+      ...(raw ? { route: raw } : {}),
+    };
   });
   const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
 
