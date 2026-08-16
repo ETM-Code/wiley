@@ -455,6 +455,192 @@ button {
   text-overflow: ellipsis;
 }
 
+.project-picker {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background: var(--wiley-app-bg);
+  place-items: center;
+}
+
+.project-picker__card {
+  width: min(560px, calc(100vw - 48px));
+  padding: 32px;
+  color: var(--wiley-text);
+  background: var(--wiley-surface);
+  border: 1px solid var(--wiley-border-subtle);
+  border-radius: 14px;
+  box-shadow: var(--wiley-shadow-panel);
+}
+
+.project-picker__card h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.project-picker__card h2 {
+  margin: 26px 0 8px;
+  color: var(--wiley-text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.project-picker__lead {
+  margin: 10px 0 22px;
+  color: var(--wiley-text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.project-open {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 16px;
+  color: var(--wiley-on-accent);
+  background: var(--wiley-accent);
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.project-open:hover:not(:disabled) {
+  background: var(--wiley-accent-hover);
+}
+
+.project-open:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.project-open svg,
+.project-chip svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 12px;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--wiley-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.project-item:hover:not(:disabled) {
+  background: var(--wiley-surface-sunken);
+}
+
+.project-item:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.project-item__name {
+  font-weight: 600;
+}
+
+.project-item__path {
+  grid-column: 1;
+  overflow: hidden;
+  color: var(--wiley-text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project-item__meta {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  color: var(--wiley-text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.project-empty {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  color: var(--wiley-text-faint);
+  font-size: 13px;
+}
+
+.project-chip-wrap {
+  position: relative;
+}
+
+.project-chip {
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project-chip--fixed {
+  cursor: default;
+}
+
+.project-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(360px, calc(100vw - 40px));
+  padding: 12px;
+  color: var(--wiley-text);
+  background: var(--wiley-surface);
+  border: 1px solid var(--wiley-border);
+  border-radius: 12px;
+  box-shadow: var(--wiley-shadow-panel);
+}
+
+.project-menu h3 {
+  margin: 14px 0 4px;
+  color: var(--wiley-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.project-menu__open {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--wiley-text);
+  background: var(--wiley-accent-soft);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.project-menu__open:hover:not(:disabled) {
+  background: var(--wiley-accent-soft-hover);
+}
+
 .app-toast {
   position: absolute;
   left: 50%;

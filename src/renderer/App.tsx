@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertToExcalidrawElements, Excalidraw } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
-import { bridge, type AgentEvent, type AgentStatus } from "./bridge";
+import { bridge, type AgentEvent, type AgentStatus, type ProjectView } from "./bridge";
 import {
   isDiagramPreviewActive,
   subscribeToCanvasRequests,
@@ -10,6 +10,7 @@ import {
 } from "./canvas-handlers";
 import { useColorScheme } from "./color-scheme";
 import { HouseMusicPlayer } from "./house-music";
+import ProjectPicker, { ProjectChip } from "./ProjectPicker";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
 import SettingsPanel from "./SettingsPanel";
 
@@ -246,6 +247,7 @@ export default function App() {
   const [activity, setActivity] = useState<AgentEvent[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [voiceDisabled, setVoiceDisabled] = useState(false);
+  const [projects, setProjects] = useState<ProjectView | null>(null);
   const voice = useMemo(
     () =>
       new RealtimeVoiceController((message) => {
@@ -424,6 +426,47 @@ export default function App() {
     };
   }, [syncVisibleCanvas]);
 
+  /**
+   * A different project means a different board with its own revision numbers,
+   * which may well be lower than the ones this window has been counting. Every
+   * piece of that bookkeeping resets before the first sync, or the new
+   * project's board would be judged stale against the old one's and ignored.
+   */
+  const resetBoard = useCallback(() => {
+    if (snapshotTimerRef.current !== null) {
+      window.clearTimeout(snapshotTimerRef.current);
+      snapshotTimerRef.current = null;
+    }
+    boardRevisionRef.current = 0;
+    boardReadyRef.current = false;
+    snapshotPendingRef.current = false;
+    lastSubmittedElementsRef.current = "";
+    apiRef.current?.updateScene({
+      elements: [] as unknown as Parameters<ExcalidrawImperativeAPI["updateScene"]>[0]["elements"],
+    });
+    setActivity([]);
+    void syncVisibleCanvas().catch(() => undefined);
+  }, [syncVisibleCanvas]);
+
+  useEffect(() => {
+    let live = true;
+    void bridge.getProjects().then((view) => {
+      if (live) setProjects(view);
+    }, () => {
+      // A host with no project flow leaves the board exactly as it was.
+      if (live) setProjects({ recent: [], canOpen: false });
+    });
+    const unsubscribe = bridge.onProjectChanged((view) => {
+      setProjects(view);
+      resetBoard();
+      setToast(view.current ? `Opened ${view.current.name}` : null);
+    });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, [resetBoard]);
+
   const toggleMicrophone = useCallback(async () => {
     try {
       await voice.toggleMicrophone();
@@ -478,6 +521,17 @@ export default function App() {
     [],
   );
 
+  // Nothing is running behind this and there is no board to show, so the
+  // picker gets the whole window rather than floating over an empty canvas.
+  if (projects && !projects.current && projects.canOpen) {
+    return (
+      <main className="app-shell">
+        <ProjectPicker view={projects} onOpened={setProjects} />
+        {toast ? <div className="app-toast" role="status">{toast}</div> : null}
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <Excalidraw
@@ -492,6 +546,7 @@ export default function App() {
         }
         renderTopRightUI={() => (
           <>
+            {projects ? <ProjectChip view={projects} onOpened={setProjects} /> : null}
             <button
               type="button"
               className="status-button"
