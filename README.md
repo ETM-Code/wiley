@@ -93,8 +93,16 @@ The only persistent voice control is the microphone button in the bottom-right. 
 npm run typecheck
 npm test               # unit + layout stress suite, real font metrics, no tokens
 npm run build
-npm run package:mac    # unsigned arm64 DMG in release/
+npm run package:mac    # signed arm64 DMG in release/
 ```
+
+Packaging targets, all arm64 DMG in `release/`:
+
+| Command | Result |
+| --- | --- |
+| `npm run package:mac` | Signed with the Developer ID identity in your login keychain |
+| `npm run package:mac:notarized` | Also submitted to Apple and stapled; needs notarytool credentials exported (see `.env.example`) |
+| `npm run package:mac:unsigned` | No signing at all, for a quick local check |
 
 ### The scenarios that have to work
 
