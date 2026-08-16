@@ -608,6 +608,8 @@ export function flowRoute(
   blockers: readonly Box[],
   /** Where the connector turns, when a fan of siblings shares one bus. */
   turnAt?: number,
+  /** Which lane out from the board a margin run takes; see RouteRequest. */
+  lane = 1,
 ): RepairedRoute | null {
   const alongY = sides.from === "top" || sides.from === "bottom";
   // A connector that leaves and rejoins on the same side is a loop back or a
@@ -617,10 +619,11 @@ export function flowRoute(
   if (sides.from === sides.to) {
     const outward = sides.from === "bottom" || sides.from === "right" ? 1 : -1;
     const ends = alongY ? [from.y, to.y] : [from.x, to.x];
-    const lane = (outward > 0 ? Math.max(...ends) : Math.min(...ends)) + outward * CORRIDOR_GAP;
+    const at = (outward > 0 ? Math.max(...ends) : Math.min(...ends))
+      + outward * CORRIDOR_GAP * Math.max(1, lane);
     const points = alongY
-      ? [from, { x: from.x, y: lane }, { x: to.x, y: lane }, to]
-      : [from, { x: lane, y: from.y }, { x: lane, y: to.y }, to];
+      ? [from, { x: from.x, y: at }, { x: to.x, y: at }, to]
+      : [from, { x: at, y: from.y }, { x: at, y: to.y }, to];
     return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
   }
   const offset = alongY ? to.x - from.x : to.y - from.y;
@@ -880,6 +883,15 @@ export type RouteRequest = {
    */
   blockers?: readonly Box[];
   /**
+   * Which lane out from the board a connector running in the margin takes,
+   * counted from one. Two feedback edges given the same margin ran down the
+   * same line, the repair loop could only answer by abandoning the shape
+   * altogether, and what came back was an elbow stubbing out of a diamond's
+   * point. The lanes are handed out instead, longest run outermost, so the
+   * short one nests inside the long one.
+   */
+  lane?: number;
+  /**
    * The flow coordinate of the bus a fan of siblings shares. Every child of
    * one parent leaves by the middle of the parent's side, runs to this line,
    * and splits along it. It is the shape every org chart on the shelf is
@@ -938,8 +950,13 @@ export function planRoutes(
     // A flow that named its sides gets the turned connector first. The repair
     // loop raises minStep on an edge that is still in trouble, and that is the
     // signal to stop insisting on the tidy shape and go looking for any shape.
-    if (edge.sides && minStep <= 1) {
-      const flow = flowRoute(start, end, edge.sides, blockers, edge.trunk);
+    // A run in the margin keeps its shape however much trouble it is in: the
+    // shape is right and the lane is what was wrong, so the repair widens the
+    // lane rather than abandoning the margin for an elbow across the board.
+    const marginRun = edge.sides !== undefined && edge.sides.from === edge.sides.to;
+    if (edge.sides && (minStep <= 1 || marginRun)) {
+      const lane = (edge.lane ?? 1) + (marginRun ? minStep - 1 : 0);
+      const flow = flowRoute(start, end, edge.sides, blockers, edge.trunk, lane);
       if (flow) return { id: edge.id, ...flow };
     }
     if (!options.square) {

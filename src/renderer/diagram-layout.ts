@@ -1136,6 +1136,8 @@ export type FoldedFlow = {
   positions: Map<string, RoutePoint>;
   /** The sides each edge leaves and arrives on, by the edge's index. */
   sides: Map<number, { from: Side; to: Side }>;
+  /** Which lane out from the board each margin run takes, by edge index. */
+  lanes?: Map<number, number>;
   aspect: number;
   rows: number[];
   /** Every connector orthogonal; see RoutePlanOptions.square. */
@@ -1438,6 +1440,8 @@ function alignMainPath(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
     return (alongY ? point.x + size.width / 2 : point.y + size.height / 2) - axis;
   };
   const sides = new Map<number, { from: Side; to: Side }>();
+  /** How far along the flow each margin run reaches, by edge index. */
+  const reach = new Map<number, number>();
   input.edges.forEach((edge, index) => {
     const from = rankOf.get(edge.from);
     const to = rankOf.get(edge.to);
@@ -1446,6 +1450,7 @@ function alignMainPath(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
       sides.set(index, forward);
       return;
     }
+    reach.set(index, Math.abs(to - from));
     // Within half a cell of the line is on the line: the snap moves a box that
     // far anyway, and an end that came out a hundredth of a pixel off the
     // centre would otherwise send a branch down the loop's own margin.
@@ -1456,7 +1461,26 @@ function alignMainPath(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
       : (away > 0 ? high : low);
     sides.set(index, { from: margin, to: margin });
   });
-  return { positions, sides, aspect: aspect(laid), rows: layers.map((layer) => layer.nodes.length), square: true };
+  // One margin can carry more than one run, and two runs on one line is the
+  // whole board's worth of feedback drawn once. Each margin's runs are given
+  // their own lane, the one reaching furthest along the flow taking the
+  // outermost, so the short run nests inside the long one instead of the two
+  // fighting over the same line.
+  const lanes = new Map<number, number>();
+  for (const margin of [high, low]) {
+    [...reach.entries()]
+      .filter(([index]) => sides.get(index)?.from === margin)
+      .sort(([a, one], [b, other]) => one - other || a - b)
+      .forEach(([index], order) => lanes.set(index, order + 1));
+  }
+  return {
+    positions,
+    sides,
+    lanes,
+    aspect: aspect(laid),
+    rows: layers.map((layer) => layer.nodes.length),
+    square: true,
+  };
 }
 
 /**
@@ -1800,6 +1824,7 @@ function foldedGeometry(
     from: edge.from,
     to: edge.to,
     ...(folded.sides.has(index) ? { sides: folded.sides.get(index)! } : {}),
+    ...(folded.lanes?.has(index) ? { lane: folded.lanes.get(index)! } : {}),
   }));
   const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
   const minSteps = new Map<string, number>();
