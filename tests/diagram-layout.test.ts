@@ -47,6 +47,21 @@ describe("diagram layout quality", () => {
     expect(report.edgesThroughContainers).toEqual([]);
   });
 
+  it.each(stressGraphs)("draws every connector on $name the same way", async ({ params }) => {
+    // A board draws its connectors one way. Right angles suit a flow and
+    // bearings suit a ring, and either is fine, but one slanted line on a
+    // board of square ones is the thing a reader picks out before they read
+    // anything, and one square line on a board of bearings looks broken.
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
+    if (arrows.length < 3) return;
+    const square = arrows.filter((arrow) => arrow.roundness === undefined
+      && pointsToSegments(absoluteArrowPoints(arrow))
+        .every((segment) => segment.x1 === segment.x2 || segment.y1 === segment.y2));
+    const share = square.length / arrows.length;
+    expect(share >= 0.8 || share <= 0.2).toBe(true);
+  });
+
   it.each(stressGraphs)("produces complete, finite geometry for $name", async ({ params }) => {
     const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
     expect(plan.nodeCount).toBe(params.nodes.length);
