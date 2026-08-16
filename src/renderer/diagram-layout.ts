@@ -41,6 +41,7 @@ import {
   routeGeometry,
   planRoutes,
   routeDefects,
+  routesCross,
   type Box as RouteBox,
   type PlannedRoute,
   type Point as RoutePoint,
@@ -1208,13 +1209,13 @@ function foldSeat(index: number, columns: number): { row: number; column: number
  * cut that leaves one row carrying the drawing and another carrying a single
  * box is the U-turn a reader sees, and a plain ribbon beats it.
  */
-function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
+function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow[] {
   // A region is a column of the drawing and folding one is not a fold, it is
   // a scramble, so a nested graph keeps the shape it was given.
-  if (input.containers) return null;
+  if (input.containers) return [];
   const alongY = portsSpreadAlongWidth(input.direction);
   const layers = flowLayers(laid, alongY);
-  if (layers.length < MIN_FOLD_LAYERS) return null;
+  if (layers.length < MIN_FOLD_LAYERS) return [];
 
   const rankOf = new Map<string, number>();
   layers.forEach((layer, index) => {
@@ -1224,19 +1225,23 @@ function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
   // a step along the row, and the turn down the outside into the row below,
   // which the alternating rows put in the same column. Both join neighbouring
   // ranks. An edge that reaches further -- a branch skipping past a rank, a
-  // feedback edge closing a loop three ranks back -- has no lane, so it cuts
-  // across the middle of the board, crossing whatever the grid put in its way.
-  // That is the connector sweeping the folded block, and it undoes the fold.
-  // So the fold is for a chain: a decision flow that branches, or a pipeline
-  // that loops back, keeps the shape its direction asked for.
+  // feedback edge closing a loop three ranks back -- has no lane of its own.
+  //
+  // Sending those round the outside of the block and keeping the fold only if
+  // nothing crossed anything was tried and measured. The incident flow folded
+  // and came back with the loop running back underneath the diamond it left,
+  // which is the shape round nine already compared against the ribbon and
+  // lost; the pipeline's replay could not be drawn at all without a crossing,
+  // at every column count that balances. So the rule stays what it was, and
+  // the crossing check below stays as well, because it is what says so.
   const consecutive = input.edges.every((edge) => {
     const from = rankOf.get(edge.from);
     const to = rankOf.get(edge.to);
     return from === undefined || to === undefined || from === to || Math.abs(to - from) === 1;
   });
-  if (!consecutive) return null;
+  if (!consecutive) return [];
 
-  let best: FoldedFlow | null = null;
+  const candidates: FoldedFlow[] = [];
   for (let columns = MIN_FOLD_COLUMNS; columns < layers.length; columns++) {
     const rowCount = Math.ceil(layers.length / columns);
     if (rowCount < 2) continue;
@@ -1258,7 +1263,6 @@ function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
     const width = alongY ? stackSpan : flowSpan;
     const height = alongY ? flowSpan : stackSpan;
     const shape = Math.max(width, height) / Math.max(1, Math.min(width, height));
-    if (best && Math.abs(shape - TARGET_ASPECT) >= Math.abs(best.aspect - TARGET_ASPECT)) continue;
 
     const offsets = (extents: number[], gap: number) => extents.reduce<number[]>(
       (starts, extent, index) => [...starts, starts[index] + extent + gap],
@@ -1304,9 +1308,13 @@ function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
         sides.set(index, turn);
       }
     });
-    best = { positions, sides, aspect: shape, rows: counts };
+    candidates.push({ positions, sides, aspect: shape, rows: counts });
   }
-  return best;
+  // Nearest to a readable page shape first. A fold that cannot be drawn
+  // without a connector crossing another is thrown away by the geometry, and
+  // the next-best shape is worth trying before the ribbon is.
+  return candidates
+    .sort((one, other) => Math.abs(one.aspect - TARGET_ASPECT) - Math.abs(other.aspect - TARGET_ASPECT));
 }
 
 /**
@@ -1907,6 +1915,16 @@ function foldedGeometry(
   // this graph, and one swooping curve across a folded board undoes what the
   // fold was for.
   if (routes.some((route) => route.rounded)) return null;
+  // And nothing crosses anything. The fold buys a readable page shape by
+  // putting the far end of the flow under its own start, which is only worth
+  // having while every connector still has a lane: one line cutting over
+  // another is the first thing a reader picks out, and the ribbon the fold
+  // replaced had none.
+  for (let one = 0; one < routes.length; one++) {
+    for (let other = one + 1; other < routes.length; other++) {
+      if (routesCross(routes[one].points, routes[other].points)) return null;
+    }
+  }
 
   const placed: RouteBox[] = [...boxes.values()];
   const edges: EdgeGeometry[] = input.edges.map((edge, index) => {
@@ -1967,13 +1985,14 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
   // A flow that came out as a ribbon is refolded onto a serpentine grid, and
   // routed by hand: ELK's channels belong to the shape it laid out, not to
   // the one the fold moved the ranks into.
-  const folded = aspect(result) > RIBBON_ASPECT && layerCount(result, input.direction) >= MIN_FOLD_LAYERS
+  const folds = aspect(result) > RIBBON_ASPECT && layerCount(result, input.direction) >= MIN_FOLD_LAYERS
     ? foldFlow(input, result)
-    : null;
-  const foldGeometry = folded && folded.aspect < aspect(result)
-    ? foldedGeometry(input, folded, outcome)
-    : null;
-  if (foldGeometry) return foldGeometry;
+    : [];
+  for (const folded of folds) {
+    if (folded.aspect >= aspect(result)) continue;
+    const foldGeometry = foldedGeometry(input, folded, outcome);
+    if (foldGeometry) return foldGeometry;
+  }
   // A flow that keeps its shape still owes its reader one centre line to
   // follow. The ranks are shifted onto it whole and the connectors redrawn.
   const aligned = alignMainPath(input, result);

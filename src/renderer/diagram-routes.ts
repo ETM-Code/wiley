@@ -272,6 +272,31 @@ export function segmentsVisuallyMerge(a: Segment, b: Segment): boolean {
   return distance < PARALLEL_SEPARATION;
 }
 
+/**
+ * Whether two runs properly cross, as opposed to meeting at a shared end or
+ * lying along each other. Two connectors crossing in mid-air is the thing a
+ * reader picks out of a board before anything else on it.
+ */
+export function segmentsCross(one: Segment, other: Segment): boolean {
+  const side = (p: Point, q: Point, r: Point) => Math.sign(
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x),
+  );
+  const a = { x: one.x1, y: one.y1 };
+  const b = { x: one.x2, y: one.y2 };
+  const c = { x: other.x1, y: other.y1 };
+  const d = { x: other.x2, y: other.y2 };
+  const [first, second, third, fourth] = [side(a, b, c), side(a, b, d), side(c, d, a), side(c, d, b)];
+  return first !== 0 && second !== 0 && third !== 0 && fourth !== 0
+    && first !== second && third !== fourth;
+}
+
+/** Whether any run of one route properly crosses any run of the other. */
+export function routesCross(one: readonly Point[], other: readonly Point[]): boolean {
+  const first = pointsToSegments(one);
+  const second = pointsToSegments(other);
+  return first.some((run) => second.some((run2) => segmentsCross(run, run2)));
+}
+
 export function countBlockers(
   points: readonly Point[],
   rounded: boolean,
