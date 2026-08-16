@@ -134,6 +134,9 @@ async function createWindow(): Promise<BrowserWindow> {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // The page's own <title> would otherwise win, and with it the project name
+  // in the title bar would last only until the renderer finished loading.
+  win.on("page-title-updated", (event) => event.preventDefault());
   const followSystemAppearance = () => {
     if (!win.isDestroyed()) win.setBackgroundColor(windowBackgroundColor());
   };
@@ -232,8 +235,12 @@ async function stopRuntime(): Promise<void> {
  * project's own.
  */
 async function openProject(projectDir: string): Promise<ProjectView> {
+  // The renderer keeps its microphone exactly where it was, so a controller
+  // that came up believing nobody is listening would disagree with the window.
+  const listening = active?.controller.getState().microphoneEnabled ?? false;
   await stopRuntime();
   await startRuntime(projectDir);
+  if (listening) active?.controller.setMicrophoneEnabled(true);
   const settings = requireSettings();
   settings.update({
     lastProject: projectDir,

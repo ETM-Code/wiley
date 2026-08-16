@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { bridge, type ProjectEntry, type ProjectView } from "./bridge";
+import { openedLabel, shortPath } from "./project-path";
 
 function FolderIcon() {
   return (
@@ -8,13 +9,6 @@ function FolderIcon() {
       <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2a1.5 1.5 0 0 1 1.06.44l1.3 1.3a1.5 1.5 0 0 0 1.07.44h6.37A1.5 1.5 0 0 1 20 9.68V17a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 17Z" />
     </svg>
   );
-}
-
-/** Nothing at all rather than a fake date for a folder never opened here. */
-function openedLabel(entry: ProjectEntry): string | undefined {
-  const at = new Date(entry.lastOpenedAt);
-  if (Number.isNaN(at.getTime()) || at.getTime() === 0) return undefined;
-  return at.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function useOpenProject(onOpened?: (view: ProjectView) => void) {
@@ -50,7 +44,7 @@ function RecentList(
             title={entry.missing ? `${entry.path} is no longer on disk` : entry.path}
           >
             <span className="project-item__name">{entry.name}</span>
-            <span className="project-item__path">{entry.path}</span>
+            <span className="project-item__path">{shortPath(entry.path)}</span>
             <span className="project-item__meta">
               {entry.missing ? "Moved or deleted" : openedLabel(entry) ?? ""}
             </span>
