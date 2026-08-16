@@ -33,6 +33,7 @@ import {
   MAX_ROUTE_REPAIR_ITERATIONS,
   PORT_SPACING,
   geometryIntersectsBox,
+  meetOutline,
   placeEdgeLabel,
   type Side,
   routeGeometry,
@@ -1532,12 +1533,40 @@ function assemblePlan(
       ...size,
     };
   });
+  const boxByNode = new Map(nodeBoxes.map((box) => [box.id, box]));
+  const outlineByNode = new Map(params.nodes.map((node) => {
+    const type = nodeToType(node);
+    return [node.id, type === "text" ? "rectangle" : type] as const;
+  }));
+  const captionNodes = new Set(
+    params.nodes.filter((node) => nodeToType(node) === "text").map((node) => node.id),
+  );
+  /**
+   * The route as drawn: shifted to the board's origin, pulled back from a
+   * caption's own text, and seated on the shape each end is drawn as rather
+   * than on the box the layout reasoned about.
+   */
+  const seatRoute = (routed: EdgeGeometry, edge: GraphEdge): RoutePoint[] => {
+    let points = dedupePoints(routed.points.map((point) => ({
+      x: origin.x + point.x,
+      y: origin.y + point.y,
+    })));
+    if (captionNodes.has(edge.from)) points = shortenRouteEnd(points, "start");
+    if (captionNodes.has(edge.to)) points = shortenRouteEnd(points, "end");
+    if (points.length < 2) return points;
+    const meet = (nodeId: string, index: number, neighbour: number) => {
+      const box = boxByNode.get(nodeId);
+      const outline = outlineByNode.get(nodeId);
+      if (!box || !outline || outline === "rectangle") return;
+      points[index] = meetOutline(box, outline, points[index], points[neighbour]);
+    };
+    meet(edge.from, 0, 1);
+    meet(edge.to, points.length - 1, points.length - 2);
+    return points;
+  };
   // Every route is known before any label is placed, so a label can be judged
   // against the lines it does not own as well as the boxes.
-  const absoluteRoutes = geometry.edges.map((routed) => dedupePoints(routed.points.map((point) => ({
-    x: origin.x + point.x,
-    y: origin.y + point.y,
-  }))));
+  const absoluteRoutes = geometry.edges.map((routed, index) => seatRoute(routed, edges[index]));
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
   // A bound label has no skeleton, so its box exists nowhere else. Anything
@@ -1546,17 +1575,9 @@ function assemblePlan(
   /** Standalone label boxes, in the order they were put down. */
   const placedLabelBoxes: RouteBox[] = [];
   let boundLabelCount = 0;
-  const captionNodes = new Set(
-    params.nodes.filter((node) => nodeToType(node) === "text").map((node) => node.id),
-  );
   for (const [index, edge] of edges.entries()) {
     const routed = geometry.edges[index];
-    let absoluteRoute = dedupePoints(routed.points.map((point) => ({
-      x: origin.x + point.x,
-      y: origin.y + point.y,
-    })));
-    if (captionNodes.has(edge.from)) absoluteRoute = shortenRouteEnd(absoluteRoute, "start");
-    if (captionNodes.has(edge.to)) absoluteRoute = shortenRouteEnd(absoluteRoute, "end");
+    const absoluteRoute = absoluteRoutes[index];
     const routeOrigin = absoluteRoute[0];
     const key = edgeKeys[index];
     const edgeId = edgeElementId(diagramId, key);
