@@ -359,24 +359,27 @@ describe("diagram layout quality", () => {
     expect([...plan.explicitColors]).toEqual([]);
   });
 
-  it("brings an unroled node into a board that already uses colour", async () => {
-    const board = (roled: boolean) => planDiagramLayout({
+  it("brings an unroled node into a board that is mostly coloured", async () => {
+    const board = (roledCount: number) => planDiagramLayout({
       theme: "slate",
-      nodes: [
-        { id: "a", label: "Ingest", ...(roled ? { role: "primary" as const } : {}) },
-        { id: "b", label: "Stage" },
-      ],
-      edges: [{ from: "a", to: "b" }],
+      nodes: Array.from({ length: 4 }, (_, index) => ({
+        id: `n${index}`,
+        label: `Stage ${index + 1}`,
+        ...(index < roledCount ? { role: "primary" as const } : {}),
+      })),
+      edges: Array.from({ length: 3 }, (_, index) => ({ from: `n${index}`, to: `n${index + 1}` })),
     }, ORIGIN, DIAGRAM_ID);
     const fill = (plan: Awaited<ReturnType<typeof board>>, id: string) =>
       plan.skeletons.find((skeleton) => skeleton.id === plan.elementIdByNode.get(id))!.backgroundColor;
 
-    // Nothing on the board is coloured, so nothing is: the unfilled look is
-    // the neutral theme working as intended.
-    expect(fill(await board(false), "b")).toBe("transparent");
-    // Beside a coloured node, a bare box reads as an oversight. It takes the
-    // theme's quiet register instead, which says "no emphasis" out loud.
-    expect(fill(await board(true), "b")).toBe(THEMES.slate.entries.muted.fill);
+    // Nothing is coloured, so nothing is: the unfilled look is the neutral
+    // theme working as intended.
+    expect(fill(await board(0), "n3")).toBe("transparent");
+    // One filled box among four is the focal point the request asked for, and
+    // the rest stay out of its way.
+    expect(fill(await board(1), "n3")).toBe("transparent");
+    // Once most of the board is coloured, a bare box reads as an oversight.
+    expect(fill(await board(3), "n3")).toBe(THEMES.slate.entries.muted.fill);
   });
 
   it("keeps explicit colours and records them as deliberate", async () => {
