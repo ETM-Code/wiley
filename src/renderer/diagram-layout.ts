@@ -239,8 +239,15 @@ const TITLE_FONT_SIZE = 28;
 /** Clear band between the title and the top of what it names. */
 const TITLE_HEADROOM = 60;
 export const EDGE_LABEL_FONT_SIZE = 16;
-/** Clear space a bound label needs on either side before auto mode uses one. */
-export const BOUND_LABEL_CLEARANCE = 24;
+/**
+ * Clear run a bound label needs beyond its own width before auto mode will
+ * seat one on the arrow.
+ *
+ * Half of it goes to each end, and an arrowhead is drawn about that long. Any
+ * less and the caption starts where the arrowhead stops: the reader sees one
+ * blob against the box it points at, not a line with a name on it.
+ */
+export const BOUND_LABEL_CLEARANCE = 48;
 /**
  * Clear space two labels owe each other. Below this the reader stops seeing
  * two captions and starts seeing one run of text. Placement and the quality

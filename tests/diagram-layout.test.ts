@@ -470,7 +470,9 @@ describe("diagram layout quality", () => {
   it("binds a label the route can carry and stands a long one beside it", async () => {
     const plan = await planDiagramLayout({
       // The layered engine widens a layer to fit an edge label, so the route
-      // that cannot carry one is a straight run between fixed placements.
+      // that cannot carry one is a straight run between fixed placements. On
+      // a run this short only a caption of two or three characters leaves the
+      // arrowhead room at each end.
       layout: { algorithm: "stress" },
       nodes: [
         { id: "a", label: "Source" },
@@ -478,14 +480,14 @@ describe("diagram layout quality", () => {
         { id: "c", label: "Archive" },
       ],
       edges: [
-        { from: "a", to: "b", label: "emit" },
+        { from: "a", to: "b", label: "ok" },
         { from: "b", to: "c", label: "every accepted revision with its author and timestamp" },
       ],
     }, ORIGIN, DIAGRAM_ID);
 
     const arrows = plan.skeletons.filter((skeleton) => skeleton.type === "arrow");
     expect(arrows[0].label).toEqual({
-      text: "emit",
+      text: "ok",
       strokeColor: "#1e1e1e",
       fontSize: 16,
       fontFamily: 5,
