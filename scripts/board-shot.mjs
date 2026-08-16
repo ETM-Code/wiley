@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Renders a persisted Wiley board (a BOARD_AI_DATA_DIR) to a PNG, fitted to
+ * Renders a persisted Wiley board (a WILEY_DATA_DIR) to a PNG, fitted to
  * the whole scene. No model calls; used to visually inspect e2e artifacts.
  *
  *   node scripts/board-shot.mjs <dataDir> <outPng>
@@ -48,14 +48,14 @@ async function waitFor(probe, timeoutMs = 90_000) {
 
 try {
   spawnStep("npx", ["tsx", "src/server/index.ts"], {
-    BOARD_AI_PORT: String(BACKEND_PORT),
-    BOARD_AI_DATA_DIR: path.resolve(dataDir),
-    BOARD_AI_PROJECT_DIR: root,
+    WILEY_PORT: String(BACKEND_PORT),
+    WILEY_DATA_DIR: path.resolve(dataDir),
+    WILEY_PROJECT_DIR: root,
     VOICE_DISABLED: "1",
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || "unused-for-viewing",
   });
   spawnStep("npx", ["vite", "--config", "vite.browser.config.ts"], {
-    BOARD_AI_PORT: String(BACKEND_PORT),
+    WILEY_PORT: String(BACKEND_PORT),
     WILEY_WEB_PORT: String(WEB_PORT),
   });
   await waitFor(() => fetch(`http://127.0.0.1:${BACKEND_PORT}/api/health`).then((response) => response.ok));

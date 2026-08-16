@@ -10,6 +10,7 @@ import { PiRuntime } from "./pi-runtime";
 import { RuntimeController } from "./runtime-controller";
 import { registerIpc } from "./ipc";
 import { IPC } from "../shared/contracts";
+import { env } from "../shared/env";
 import { isTrustedOrigin } from "./trusted-origin";
 import { resolveSkillsDir } from "./skills";
 import { createSecretStore } from "./settings/secret-store";
@@ -104,7 +105,7 @@ async function createWindow(): Promise<BrowserWindow> {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  if (process.env.BOARD_AI_DEBUG_RENDERER === "1") {
+  if (env("DEBUG_RENDERER") === "1") {
     win.webContents.on("console-message", (details) => {
       const log = details.level === "error" ? console.error : details.level === "warning" ? console.warn : console.log;
       log(`[renderer:${details.level}] ${details.message}`);
@@ -129,13 +130,12 @@ async function createWindow(): Promise<BrowserWindow> {
 async function bootstrap(): Promise<void> {
   installAppProtocol();
   installSecurityPolicy();
+  // Read directly, not through env(): WILEY_CONFIG_DIR points at saved secrets
+  // and never had a board-ai spelling, so it gets no deprecated alias.
   const configDir = process.env.WILEY_CONFIG_DIR?.trim() || app.getPath("userData");
   const settingsStore = SettingsStore.open(configDir, createSecretStore({ dir: configDir, safeStorage }));
-  ledger = new SqliteRuntimeLedger(
-    process.env.BOARD_AI_DATA_DIR
-      ? path.join(process.env.BOARD_AI_DATA_DIR, "runtime.sqlite")
-      : path.join(app.getPath("userData"), "runtime.sqlite"),
-  );
+  const dataDir = env("DATA_DIR")?.trim() || app.getPath("userData");
+  ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
   await ledger.initialize();
   const transcript = new TranscriptStore(ledger);
   const canvasBridge = new CanvasBridge(
@@ -146,9 +146,8 @@ async function bootstrap(): Promise<void> {
   canvas = canvasBridge;
   voice = voiceBridge;
   canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
-  const projectDir = process.env.BOARD_AI_PROJECT_DIR ?? process.cwd();
+  const projectDir = env("PROJECT_DIR")?.trim() || process.cwd();
   const skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
-  const dataDir = process.env.BOARD_AI_DATA_DIR?.trim() || app.getPath("userData");
   pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir, settingsStore, dataDir);
   await pi.initialize();
   const settings = new SettingsService({

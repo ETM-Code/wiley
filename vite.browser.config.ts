@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-const backendPort = Number(process.env.BOARD_AI_PORT?.trim() || 5174);
+const backendPort = Number(process.env.WILEY_PORT?.trim() || 5174);
 const webPort = Number(process.env.WILEY_WEB_PORT?.trim() || 5173);
 
 export default defineConfig({

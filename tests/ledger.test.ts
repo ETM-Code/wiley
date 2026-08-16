@@ -8,7 +8,7 @@ import { TranscriptStore } from "../src/main/transcript";
 const cleanup: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "board-ai-test-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "wiley-test-"));
   cleanup.push(directory);
   return directory;
 }

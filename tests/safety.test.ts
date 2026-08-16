@@ -18,7 +18,7 @@ afterEach(async () => {
 
 describe("catastrophic command guard", () => {
   it("hard-blocks home, root, disk, credential, and fork-bomb destruction", async () => {
-    const project = await mkdtemp(path.join(os.tmpdir(), "board-ai-project-"));
+    const project = await mkdtemp(path.join(os.tmpdir(), "wiley-project-"));
     cleanup.push(project);
     const guard = new CatastrophicCommandGuard(project);
 
@@ -33,7 +33,7 @@ describe("catastrophic command guard", () => {
 
 describe("read-before-edit guard", () => {
   it("allows new files and requires a successful read before existing-file edits", async () => {
-    const project = await mkdtemp(path.join(os.tmpdir(), "board-ai-read-"));
+    const project = await mkdtemp(path.join(os.tmpdir(), "wiley-read-"));
     cleanup.push(project);
     const existing = path.join(project, "existing.ts");
     const fresh = path.join(project, "new.ts");
