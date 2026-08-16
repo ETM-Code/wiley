@@ -508,8 +508,10 @@ export function nodeDimensions(
   const textWidth = lines.reduce((max, line) => Math.max(max, measureText(line, NODE_FONT_SIZE).width), 1);
   const textHeight = lines.length * NODE_FONT_SIZE * LINE_HEIGHT_RATIO;
   // The connector side needs room for every port to stay more than one grid
-  // cell from its neighbour.
-  const portSide = (portDemand + 1) * PORT_SPACING;
+  // cell from its neighbour: n ports are n-1 gaps apart, plus half a gap of
+  // margin at each end. The extra whole gap this used to buy nothing ever
+  // stood in is what made a two-input box 20px taller than the row it is in.
+  const portSide = portDemand * PORT_SPACING;
   const alongWidth = portsSpreadAlongWidth(direction);
   const width = Math.max(
     Math.min(NODE_MAX_WIDTH, Math.max(NODE_MIN_WIDTH, textWidth * factor + NODE_PADDING_X)),
