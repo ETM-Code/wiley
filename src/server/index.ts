@@ -1,6 +1,5 @@
 import "dotenv/config";
 
-import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
@@ -11,12 +10,14 @@ import {
   IPC,
   type BoardSnapshot,
   type CanvasResponse,
+  type ProjectView,
   type RuntimeConfig,
   type TranscriptRole,
   type VoiceToolName,
 } from "../shared/contracts";
 import { env } from "../shared/env";
 import { resolveProjectDir } from "../main/host-environment";
+import { buildProjectView, projectDataDir } from "../main/projects";
 import { SqliteRuntimeLedger } from "../main/ledger";
 import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";
@@ -34,18 +35,6 @@ import { isCliWorkerKind } from "../main/workers/worker-types";
 
 const host = env("HOST")?.trim() || "127.0.0.1";
 const port = Number(env("PORT")?.trim() || 5174);
-
-/**
- * New workspaces get .wiley. One that already holds a .board-ai from before the
- * rename keeps using it, so an existing board and its ledger do not silently
- * vanish behind a fresh empty directory.
- */
-function defaultDataDir(project: string): string {
-  const current = path.join(project, ".wiley");
-  if (existsSync(current)) return current;
-  const legacy = path.join(project, ".board-ai");
-  return existsSync(legacy) ? legacy : current;
-}
 
 type EventEnvelope = {
   sequence: number;
@@ -168,7 +157,7 @@ const projectDir = resolveProjectDir({
   home: os.homedir(),
   configured: settingsStore.get().projectDir,
 });
-const dataDir = env("DATA_DIR")?.trim() || defaultDataDir(projectDir);
+const dataDir = env("DATA_DIR")?.trim() || projectDataDir(projectDir);
 await mkdir(dataDir, { recursive: true });
 const hub = new EventHub();
 const ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
@@ -254,6 +243,13 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/runtime-config") {
       const config: RuntimeConfig = { voiceDisabled: process.env.VOICE_DISABLED === "1" };
       return sendJson(response, 200, config);
+    }
+    // The browser shell serves exactly one project, the one it was started
+    // in. It answers the same call the Electron host does so the renderer has
+    // one code path, and says plainly that it cannot open another.
+    if (request.method === "GET" && url.pathname === "/api/projects") {
+      const view: ProjectView = buildProjectView({ current: projectDir, canOpen: false });
+      return sendJson(response, 200, view);
     }
     if (request.method === "GET" && url.pathname === "/api/status") {
       return sendJson(response, 200, runtime.getState());

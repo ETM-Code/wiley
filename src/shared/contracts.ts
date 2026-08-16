@@ -116,6 +116,25 @@ export interface RuntimeConfig {
   voiceDisabled: boolean;
 }
 
+/** One project folder, as the launch picker and the project chip show it. */
+export interface ProjectEntry {
+  path: string;
+  /** The folder's own name, which is what a person calls the project. */
+  name: string;
+  lastOpenedAt: string;
+  /** The folder is no longer on disk. Listed anyway, so it can say so. */
+  missing: boolean;
+}
+
+export interface ProjectView {
+  /** Absent when nothing is open yet and the picker should be shown. */
+  current?: ProjectEntry;
+  /** Folders opened before, newest first. */
+  recent: ProjectEntry[];
+  /** Whether this host can open another project at all. */
+  canOpen: boolean;
+}
+
 export interface RuntimeState {
   microphoneEnabled: boolean;
   agentRunning: boolean;

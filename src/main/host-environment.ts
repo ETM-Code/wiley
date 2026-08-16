@@ -10,7 +10,7 @@ import { augmentPath } from "./workers/cli-detect";
 export const DEFAULT_WORKSPACE_NAME = "Wiley";
 
 /** Leading ~ is what a person types in a text field; nothing else expands it. */
-function expandHome(value: string, home: string): string {
+export function expandHome(value: string, home: string): string {
   if (value === "~") return home;
   if (value.startsWith("~/")) return path.join(home, value.slice(2));
   return value;
