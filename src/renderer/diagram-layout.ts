@@ -1011,15 +1011,35 @@ function elkSection(result: ElkNode, index: number) {
 }
 
 /**
- * Longest side over shortest, over the whole graph ELK reports: the boxes plus
- * the channels and label room it reserved around them. That is the drawing a
- * reader is handed, and a flow whose connectors need as much room as its boxes
- * is not a ribbon however narrow the boxes are.
+ * Longest side over shortest, over the ink: the boxes plus every route drawn
+ * between them. A flow whose connectors need as much room as its boxes is not
+ * a ribbon however narrow the boxes are, but the room ELK reserves and does
+ * not use is not part of the drawing a reader is handed, and counting it
+ * called a perfectly square dependency graph a ribbon and folded it into
+ * swooping arcs.
  */
 function aspect(node: ElkNode): number {
-  const width = finiteNumber(node.width);
-  const height = finiteNumber(node.height);
-  if (width <= 0 || height <= 0) return 1;
+  const drawn = resolveAbsolute(node);
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  const cover = (x: number, y: number, width = 0, height = 0) => {
+    left = Math.min(left, x);
+    right = Math.max(right, x + width);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y + height);
+  };
+  for (const [id, box] of drawn.boxes) {
+    if (id === node.id) continue;
+    cover(box.x, box.y, box.width, box.height);
+  }
+  for (const route of drawn.routes.values()) {
+    for (const point of route) cover(point.x, point.y);
+  }
+  const width = right - left;
+  const height = bottom - top;
+  if (!(width > 0) || !(height > 0)) return 1;
   return Math.max(width, height) / Math.min(width, height);
 }
 
@@ -1262,6 +1282,11 @@ function foldedGeometry(
     for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
     routes = planRoutes(boxes, requests, { minSteps });
   }
+  // A grid is drawn with straight runs and square corners. An edge that had to
+  // be bent onto an arc to get anywhere is the grid saying it does not suit
+  // this graph, and one swooping curve across a folded board undoes what the
+  // fold was for.
+  if (routes.some((route) => route.rounded)) return null;
 
   const placed: RouteBox[] = [...boxes.values()];
   const edges: EdgeGeometry[] = input.edges.map((edge, index) => {
