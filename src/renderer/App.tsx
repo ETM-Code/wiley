@@ -124,7 +124,12 @@ function AgentSidebar(
             {status.subagents.map((worker) => (
               <li key={worker.id}>
                 <span>{worker.task || "Working"}</span>
-                <small>{worker.status}</small>
+                <small>
+                  {worker.kind && worker.kind !== "pi"
+                    ? <span className="worker-chip">{worker.kind}</span>
+                    : null}
+                  {worker.status.replace("_", " ")}
+                </small>
               </li>
             ))}
           </ul>

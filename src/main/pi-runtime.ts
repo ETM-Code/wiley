@@ -10,7 +10,7 @@ import {
   INTERRUPT_NOTE,
   SUBAGENT_SYSTEM_PROMPT,
 } from "./agent-prompt";
-import type { AgentEvent, JobSummary, WorkerProbes } from "../shared/contracts";
+import type { AgentEvent, AgentSummary, JobSummary, WorkerProbes } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
@@ -43,6 +43,7 @@ import { createWorkerManager, createWorkerProbes, reapStaleWorkerProcesses } fro
 import { assertWorkerSpawnAllowed, resolveWorkerModel } from "./workers/worker-spawn";
 import { isCliWorkerKind, type WorkerEvent, type WorkerHandle, type WorkerKind } from "./workers/worker-types";
 
+
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
 type SubStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -50,13 +51,7 @@ type SubStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 /** How long a probe answer is trusted before the CLIs are checked again. */
 const PROBE_CACHE_MS = 60_000;
 
-export interface AgentListing {
-  id: string;
-  kind: WorkerKind;
-  status: string;
-  task: string;
-  report?: string;
-}
+export type AgentListing = AgentSummary;
 
 interface Subagent {
   id: string;
@@ -395,6 +390,14 @@ export class PiRuntime {
       (sub) => (sub.status === "queued" || sub.status === "running") && (!jobId || sub.parentJobId === jobId),
     );
     return pi || Boolean(this.#workers?.hasActive(jobId));
+  }
+
+  /**
+   * The last-resort sweep for process.on("exit"), where nothing asynchronous
+   * runs. Signals every worker process group and returns immediately.
+   */
+  killWorkersSync(): void {
+    this.#workers?.killAllSync();
   }
 
   onEvent(listener: (event: AgentEvent) => void): () => void {

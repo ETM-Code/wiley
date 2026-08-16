@@ -97,12 +97,29 @@ describe("SettingsService.models", () => {
   });
 });
 
-describe("probeWorkersStub", () => {
-  it("reports both worker kinds as unavailable with a reason", () => {
+describe("worker probes", () => {
+  it("reports both worker kinds as unavailable when no host wired a probe up", () => {
     expect(probeWorkersStub()).toEqual({
-      claude: { available: false, reason: "probe not implemented" },
-      codex: { available: false, reason: "probe not implemented" },
+      claude: { available: false, reason: "this host does not check for worker CLIs" },
+      codex: { available: false, reason: "this host does not check for worker CLIs" },
     });
+  });
+
+  it("uses the host's own probe, and puts its answer in the view", async () => {
+    const probes = {
+      claude: { available: true, version: "2.1.233", path: "/opt/homebrew/bin/claude" },
+      codex: { available: false, reason: "codex is installed but not signed in." },
+    };
+    const settings = new SettingsService({
+      store: SettingsStore.open(mkdtempSync(path.join(tmpdir(), "wiley-probe-")), new FileSecretStore({
+        dir: mkdtempSync(path.join(tmpdir(), "wiley-probe-secrets-")),
+      })),
+      env: {},
+      probeWorkers: () => probes,
+    });
+
+    expect(await settings.probeWorkers()).toEqual(probes);
+    expect((await settings.view()).probes).toEqual(probes);
   });
 });
 

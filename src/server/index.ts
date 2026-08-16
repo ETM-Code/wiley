@@ -25,6 +25,7 @@ import { mintRealtimeToken } from "../main/voice-token";
 import { createSecretStore, isLoopbackHost } from "../main/settings/secret-store";
 import { assertSecretName, SettingsService } from "../main/settings/settings-service";
 import { resolveConfigDir, SettingsStore } from "../main/settings/settings-store";
+import { createWorkerProbes } from "../main/workers/worker-runtime";
 
 const host = process.env.BOARD_AI_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.BOARD_AI_PORT?.trim() || 5174);
@@ -171,9 +172,14 @@ const pi = new PiRuntime(
   voice,
   resolveSkillsDir({ isPackaged: false, appRoot: projectDir }),
   settingsStore,
+  dataDir,
 );
 await pi.initialize();
-const settings = new SettingsService({ store: settingsStore, modelRuntime: () => pi.modelRuntime });
+const settings = new SettingsService({
+  store: settingsStore,
+  modelRuntime: () => pi.modelRuntime,
+  probeWorkers: createWorkerProbes(() => settingsStore.get()),
+});
 const runtime = new RuntimeController(
   ledger,
   transcript,
@@ -315,3 +321,6 @@ async function shutdown(): Promise<void> {
 
 process.once("SIGINT", () => void shutdown().finally(() => process.exit(0)));
 process.once("SIGTERM", () => void shutdown().finally(() => process.exit(0)));
+// Nothing asynchronous survives here, so this is the sweep that guarantees a
+// crash or a hard exit does not leave a worker running against a dead session.
+process.on("exit", () => pi.killWorkersSync());
