@@ -8,6 +8,8 @@ import {
   PALETTE,
   THEMES,
   THEME_NAMES,
+  colorChroma,
+  colorDifference,
   contrastRatio,
   isNodeRole,
   isThemeName,
@@ -139,6 +141,36 @@ describe("diagram themes", () => {
     }
   });
 
+  it("keeps the forest board's greens from collapsing into one colour", () => {
+    // What three panels read as one colour: the green the primary used to be
+    // against the lime the success used to be, under the bar a board is now
+    // held to. The greens are still in the palette, so the pair is still
+    // measurable and still the reason the theme moved.
+    expect(colorDifference(HUES.green.fill, HUES.lime.fill)).toBeCloseTo(9.99, 1);
+    const forest = THEMES.forest;
+    for (const [a, b] of [["primary", "success"], ["primary", "muted"], ["success", "muted"]] as const) {
+      expect(colorDifference(forest.entries[a].fill, forest.entries[b].fill), `${a} vs ${b}`)
+        .toBeGreaterThan(10.5);
+    }
+  });
+
+  it("pins both ends of the bracket the fill distance is calibrated in", () => {
+    // The quality check asks 10.5 of two fills on one board. The floor is the
+    // forest pair above at 9.99; the ceiling is the tightest coloured pair any
+    // theme still puts on a board, sunset's primary against its warning. Move
+    // a palette across either and the number stops meaning what it says.
+    expect(colorDifference(THEMES.sunset.entries.primary.fill, THEMES.sunset.entries.warning.fill))
+      .toBeCloseTo(11.21, 1);
+    // And the measure has to see a grayscale theme's two weights as near in
+    // colour, since it is weight that separates them, not colour.
+    expect(colorDifference(HUES.graphite.fill, HUES.gray.fill)).toBeLessThan(10.5);
+    expect(colorChroma(HUES.graphite.fill)).toBeLessThan(5);
+    expect(Math.min(...Object.values(HUES).map((hue) => colorChroma(hue.fill)))).toBeLessThan(5);
+    for (const hue of ["red", "green", "blue", "cyan", "violet", "yellow"] as const) {
+      expect(colorChroma(HUES[hue].fill), hue).toBeGreaterThan(20);
+    }
+  });
+
   it("keeps the quiet register inside each theme's own family", () => {
     // A cold gray on a warm board is the one fill that belongs to no family,
     // and a reader cannot tell whether it means something or was forgotten.
@@ -232,7 +264,7 @@ describe("resolveNodeStyle", () => {
   });
 
   it("tints containers with the soft shade regardless of emphasis", () => {
-    expect(resolveContainerTint(THEMES.forest, "primary")).toBe("#ebfbee");
+    expect(resolveContainerTint(THEMES.forest, "primary")).toBe("#e3fafc");
     expect(resolveContainerTint(THEMES.slate, undefined)).toBe("transparent");
   });
 

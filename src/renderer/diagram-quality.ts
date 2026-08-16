@@ -19,7 +19,7 @@ import {
   type Point,
   type Segment,
 } from "./diagram-routes";
-import { contrastRatio, resolveTheme, themeColors } from "./diagram-theme";
+import { colorChroma, colorDifference, contrastRatio, resolveTheme, themeColors } from "./diagram-theme";
 
 export { absoluteArrowPoints, arrowGeometry, segmentsVisuallyMerge } from "./diagram-routes";
 
@@ -92,6 +92,27 @@ const MIN_DISTINCT_FILLS = 5;
 const FILLS_PER_NODE = 1.5;
 const MAX_DISTINCT_NODE_STROKE_WIDTHS = 2;
 
+/**
+ * How far apart in CIEDE2000 two fills on one board have to be before they
+ * read as two decisions rather than one colour printed twice.
+ *
+ * Calibrated on the palettes themselves, which are constants, so the bracket
+ * is exact rather than approximate. The tightest coloured pair any of the six
+ * themes puts on a board is sunset's primary against its warning at 11.21.
+ * The pair three panels read as one colour is the forest board's old primary
+ * against its success at 9.99. Anything between the two separates them; this
+ * sits in the middle. Move a palette and one of those two numbers moves, so
+ * the theme test pins both.
+ */
+const MIN_FILL_DIFFERENCE = 10.5;
+
+/**
+ * Below this chroma a fill is a gray, and the grayscale theme separates its
+ * roles by weight rather than by hue. Every hue in the palette carries more
+ * than twenty; every gray, under four.
+ */
+const COLOURED_CHROMA = 5;
+
 function boxesOverlap(a: Box, b: Box, margin = 0): boolean {
   return a.x < b.x + b.width + margin
     && b.x < a.x + a.width + margin
@@ -161,6 +182,24 @@ function evaluateStyleCoherence(plan: DiagramPlan, report: DiagramQualityReport)
     const ratio = contrastRatio(String(ink), surface);
     if (ratio < MIN_LABEL_CONTRAST) {
       report.styleCoherence.push(`${id} label ${String(ink)} on ${surface} contrasts ${ratio.toFixed(2)}:1`);
+    }
+  }
+
+  // Two fills on one board that a reader cannot tell apart are two roles that
+  // say nothing by differing. Explicitly requested colours are left alone: a
+  // caller who named two near neighbours meant to.
+  const themed = [...fills].filter((fill) => allowed.has(fill) && !plan.explicitColors.has(fill));
+  for (let a = 0; a < themed.length; a++) {
+    for (let b = a + 1; b < themed.length; b++) {
+      // A grayscale theme separates its roles by weight rather than by hue,
+      // and two grays a value apart are as legible as two hues. Only fills
+      // actually carrying colour are held to a colour distance.
+      if (colorChroma(themed[a]) < COLOURED_CHROMA || colorChroma(themed[b]) < COLOURED_CHROMA) continue;
+      const apart = colorDifference(themed[a], themed[b]);
+      if (apart >= MIN_FILL_DIFFERENCE) continue;
+      report.styleCoherence.push(
+        `${themed[a]} and ${themed[b]} differ by ${apart.toFixed(2)}, under ${MIN_FILL_DIFFERENCE}`,
+      );
     }
   }
 

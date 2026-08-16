@@ -14,6 +14,7 @@ import {
   rainbowPlan,
   strayColorPlan,
   strokeWidthSoupPlan,
+  twoFillsOneColourPlan,
   type PlanPart,
 } from "./fixtures/diagram-gallery";
 
@@ -415,8 +416,32 @@ describe("styleCoherence", () => {
 
   it("flags a palette too wide for the number of nodes", () => {
     expect(evaluateDiagramPlan(rainbowPlan).styleCoherence).toEqual([
+      // Nine fills drawn from one palette is also nine fills with two pale
+      // washes among them that no reader separates.
+      "#e7f5ff and #e6fcf5 differ by 9.26, under 10.5",
       "9 distinct fills across 10 nodes exceeds 7",
     ]);
+  });
+
+  it("flags two roles whose fills a reader cannot tell apart", () => {
+    expect(evaluateDiagramPlan(twoFillsOneColourPlan).styleCoherence).toEqual([
+      "#ffc9c9 and #fcc2d7 differ by 7.33, under 10.5",
+    ]);
+  });
+
+  it("leaves a grayscale board's two weights of gray alone", () => {
+    // The mono theme separates its roles by weight, not by hue. Its two grays
+    // are nearer in colour than the pair above and further apart to read,
+    // which is why the check asks for colour before it asks for distance.
+    const grays = handBuiltPlan(
+      ["#ced4da", "#e9ecef"].map((fill, index): PlanPart => ({
+        role: "node",
+        key: `n${index}`,
+        skeleton: { id: `n${index}`, type: "rectangle", x: index * 300, y: 0, width: 160, height: 80, backgroundColor: fill },
+      })),
+      { theme: "mono" },
+    );
+    expect(evaluateDiagramPlan(grays).styleCoherence).toEqual([]);
   });
 
   it("flags more than two node stroke weights", () => {

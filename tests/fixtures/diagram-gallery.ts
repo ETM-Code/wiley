@@ -125,6 +125,17 @@ export const rainbowPlan: DiagramPlan = handBuiltPlan(
   { theme: "ocean" },
 );
 
+/**
+ * Two roles of one theme whose fills a reader cannot tell apart: sunset's
+ * danger against its accent, a pale red beside a pale pink. Both are honest
+ * theme colours, which is what makes it a palette fault rather than a stray
+ * hex, and two nodes differing in a way nobody can see say nothing by it.
+ */
+export const twoFillsOneColourPlan: DiagramPlan = handBuiltPlan(
+  ["#ffc9c9", "#fcc2d7"].map((fill, index) => dirtyNode(`n${index}`, { x: index * 300, backgroundColor: fill })),
+  { theme: "sunset" },
+);
+
 /** Three stroke weights on nodes reads as three unrelated diagrams. */
 export const strokeWidthSoupPlan: DiagramPlan = handBuiltPlan(
   [1, 2, 4].map((strokeWidth, index) => dirtyNode(`n${index}`, { x: index * 300, strokeWidth })),
