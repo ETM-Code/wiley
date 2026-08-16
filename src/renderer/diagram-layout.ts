@@ -1958,19 +1958,33 @@ const MIN_TREE_GAP = 24;
  * the space between two groups says they are two groups.
  */
 const TREE_GROUP_SPREAD = 1.75;
+/**
+ * How far apart two boxes on one rank may be before a common width is the
+ * wrong answer.
+ *
+ * A rank of an org chart is a rank of peers, and peers are drawn the same
+ * size: what a reader takes from one box being half again as wide as the one
+ * beside it is that the two are different kinds of thing. Widening every box
+ * to the widest is only the right answer while the widest is not so much
+ * wider that the narrow ones become boxes of air, so a rank carrying one
+ * outlier keeps its own widths.
+ */
+const TREE_COMMON_WIDTH_RATIO = 2;
 
 /**
- * Re-seats a tree across the axis its siblings stack on.
+ * Re-seats a tree across the axis its siblings stack on, and gives one rank
+ * one width.
  *
  * The ranks ELK laid out are kept exactly: this changes only how much room
- * each subtree is given beside the next, and where a parent stands over the
- * children it owns. Anything that is not a plain tree -- a node with two
- * parents, a cycle, a node no root reaches -- is handed back untouched.
+ * each subtree is given beside the next, where a parent stands over the
+ * children it owns, and how wide the boxes on one rank are drawn. Anything
+ * that is not a plain tree -- a node with two parents, a cycle, a node no
+ * root reaches -- is handed back untouched.
  */
 function tidyTree(
   input: GeometryInput,
   positions: ReadonlyMap<string, RoutePoint>,
-): Map<string, RoutePoint> | null {
+): { positions: Map<string, RoutePoint>; sizes: Map<string, Size> } | null {
   const parentOf = new Map<string, string>();
   for (const edge of input.edges) {
     if (edge.from === edge.to || parentOf.has(edge.to)) return null;
@@ -2000,6 +2014,32 @@ function tidyTree(
   };
   if (!roots.every((id) => walk(id, 0)) || depth.size !== ids.length) return null;
 
+  // One rank, one width. Bare text is left out of it: a caption is drawn at
+  // its own left edge, so padding its box out to a common width moves the
+  // words off the line the rest of the rank is drawn on rather than centring
+  // them in anything.
+  const sized = new Map<string, Size>(ids.map((id) => [id, { ...sizeOf(id) }]));
+  const ranks = new Map<number, string[]>();
+  for (const id of ids) {
+    if (nodeToType(input.params.nodes.find((node) => node.id === id)!) === "text") continue;
+    ranks.set(depth.get(id)!, [...(ranks.get(depth.get(id)!) ?? []), id]);
+  }
+  for (const rank of ranks.values()) {
+    const extents = rank.map(extentOf);
+    const widest = Math.max(...extents);
+    if (widest > Math.min(...extents) * TREE_COMMON_WIDTH_RATIO) continue;
+    for (const id of rank) {
+      const size = sized.get(id)!;
+      if (alongWidth) size.width = widest;
+      else size.height = widest;
+    }
+  }
+  // The room two neighbours owe each other is measured against the ink, not
+  // against the padding a common width just added: a rank widened to its
+  // widest box and then spaced as if every box were that wide is a board that
+  // grew twice for one change.
+  const commonExtent = (id: string) => (alongWidth ? sized.get(id)!.width : sized.get(id)!.height);
+
   const heightOf = new Map<string, number>();
   const measure = (id: string): number => {
     const own = (childrenOf.get(id) ?? []).reduce((tallest, child) => Math.max(tallest, measure(child) + 1), 0);
@@ -2018,7 +2058,7 @@ function tidyTree(
     seats.set(id, (seats.get(id) ?? 0) + delta);
     for (const child of childrenOf.get(id) ?? []) shift(child, delta);
   };
-  const centreOf = (id: string) => (seats.get(id) ?? 0) + extentOf(id) / 2;
+  const centreOf = (id: string) => (seats.get(id) ?? 0) + commonExtent(id) / 2;
   // Bottom up: a subtree takes the room its children need, and the parent
   // stands opposite the middle of its first and last child rather than the
   // middle of everything hanging off them. A deeper subtree on one side pulls
@@ -2026,7 +2066,7 @@ function tidyTree(
   // connectors that comes out of it doubles back over itself.
   const place = (id: string, start: number): number => {
     const children = childrenOf.get(id) ?? [];
-    const own = extentOf(id);
+    const own = commonExtent(id);
     if (children.length === 0) {
       seats.set(id, start);
       return own;
@@ -2053,11 +2093,41 @@ function tidyTree(
     at += place(id, at);
   });
 
-  return new Map(ids.map((id) => {
+  // Every node of one rank starts on one line along the flow, so a fan of
+  // leaves is entered at one depth however long the words on it are. mrtree
+  // centres a node inside its layer, which leaves a short caption further from
+  // its parent than a long one and gives every connector in the fan a
+  // different length.
+  const flowSize = (id: string) => (alongWidth ? sized.get(id)!.height : sized.get(id)!.width);
+  const flowSeat = (id: string) => {
     const point = positions.get(id) ?? { x: 0, y: 0 };
-    const seat = snapModelCoordinate(seats.get(id) ?? 0);
-    return [id, alongWidth ? { x: seat, y: point.y } : { x: point.x, y: seat }];
-  }));
+    return alongWidth ? point.y : point.x;
+  };
+  const forwards = input.direction === "DOWN" || input.direction === "RIGHT";
+  const lineOf = new Map<number, number>();
+  for (const id of ids) {
+    const level = depth.get(id)!;
+    const leading = forwards ? flowSeat(id) : flowSeat(id) + flowSize(id);
+    const found = lineOf.get(level);
+    lineOf.set(level, found === undefined ? leading
+      : forwards ? Math.min(found, leading) : Math.max(found, leading));
+  }
+
+  return {
+    positions: new Map(ids.map((id) => {
+      // Bare text is not a box and does not stand on the box grid, so it keeps
+      // the exact seat it was given. Rounding it would cost a fan of two
+      // leaves its symmetry: a caption is twenty-six pixels tall, so the pair
+      // straddling its parent's centre line rounds one way and then the other.
+      const text = nodeToType(input.params.nodes.find((node) => node.id === id)!) === "text";
+      const raw = seats.get(id) ?? 0;
+      const seat = text ? raw : snapModelCoordinate(raw);
+      const line = lineOf.get(depth.get(id)!)!;
+      const along = forwards ? line : line - flowSize(id);
+      return [id, alongWidth ? { x: seat, y: along } : { x: along, y: seat }];
+    })),
+    sizes: sized,
+  };
 }
 
 /** Which sides a parent leaves and a child is entered on, per flow direction. */
@@ -2348,8 +2418,12 @@ async function nonLayeredGeometry(
     }];
   }));
   // mrtree spaces every neighbour alike; a hierarchy is read from the space
-  // between its parts, so the tree is re-seated across the axis it stacks on.
-  const positions = (algorithm === "tree" ? tidyTree(input, spread) : null) ?? spread;
+  // between its parts, so the tree is re-seated across the axis it stacks on
+  // and every rank is drawn one width.
+  const tidied = algorithm === "tree" ? tidyTree(input, spread) : null;
+  const positions = tidied?.positions ?? spread;
+  const sizes = tidied?.sizes ?? input.sizes;
+  const drawnSize = (id: string) => sizes.get(id) ?? sizeOf(id);
   const snapDeltas = new Map<string, SnapDelta>();
   // A ring is our own placement, so ELK's routes and the deltas that would
   // carry them across no longer describe anything on the board.
@@ -2360,7 +2434,7 @@ async function nonLayeredGeometry(
   }
   const boxes = new Map<string, RouteBox>(input.params.nodes.map((node) => {
     const position = positions.get(node.id) ?? { x: 0, y: 0 };
-    return [node.id, { id: node.id, x: position.x, y: position.y, ...sizeOf(node.id) }];
+    return [node.id, { id: node.id, x: position.x, y: position.y, ...drawnSize(node.id) }];
   }));
   const placedBoxes = [...boxes.values()];
   for (let a = 0; a < placedBoxes.length; a++) {
@@ -2430,7 +2504,7 @@ async function nonLayeredGeometry(
   return {
     geometry: {
       positions,
-      sizes: input.sizes,
+      sizes,
       edges: edgeGeometry,
       outcome: {
         requested: algorithm,
