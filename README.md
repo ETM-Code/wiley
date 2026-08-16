@@ -8,10 +8,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/voice-gpt--realtime--2.1-4C6EF5" alt="voice model" />
-  <img src="https://img.shields.io/badge/agent-gpt--5.6--luna%20%C3%97%20Pi-E8590C" alt="agent model" />
+  <img src="https://img.shields.io/badge/voice-gpt--realtime--mini--2.1-4C6EF5" alt="voice model" />
+  <img src="https://img.shields.io/badge/agent-Pi%20orchestrator%20%C3%97%20Claude%20Code%20%2F%20Codex-E8590C" alt="agent stack" />
   <img src="https://img.shields.io/badge/canvas-Excalidraw-2F9E44" alt="canvas" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20web-1E1E2E" alt="platform" />
+  <img src="https://img.shields.io/badge/license-Apache--2.0-5F3DC4" alt="license" />
+  <a href="https://github.com/ETM-Code/wiley/actions/workflows/ci.yml"><img src="https://github.com/ETM-Code/wiley/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
 </p>
 
 ---
@@ -33,6 +35,7 @@ One voice, one board, real hands.
 - "Build it." Wiley writes the site, screenshots it headlessly, and places the screenshot on the board next to your wireframe.
 - "Open it." It runs `open site/index.html`. Your browser appears with the real page.
 - "What have you done so far?" It actually knows: current work, queued work, and the final report of every recent task.
+- Want the keyboard back? Hand the running coding session to your own terminal and pick it up mid-thread in Terminal, iTerm, Ghostty, kitty, or Alacritty, same session id, same working directory, same context.
 - When the diagram is done, Wiley talks you through it, pointing at the board: what flows where and why.
 - Done with a topic? Say "fresh board" (or hit the New session button) and you get a clean board and a clean working memory in one step. The old session stays archived in the ledger.
 
@@ -50,58 +53,88 @@ The whole time, you can interrupt mid-sentence. Interruption is the default at e
 
 **The board is shared ground truth, not a render target.** Humans and agents edit the same Excalidraw scene through a serialized transaction gateway with revision checks and leases. Human edits win conflicts. The agent can move, resize, recolor, relabel, and connect your hand-drawn elements as first-class citizens, and every mutation lands as a coherent undo step.
 
-**Drawing quality is engineered, not prompted.** Diagram layout runs through ELK with node sizes measured in the actual rendered font, connector ports spread by edge degree, and edge labels placed in reserved space. A stress suite asserts zero node overlaps, zero label collisions, zero edges through nodes, zero shared ports, and zero merged parallel runs across adversarial graphs, measured against the real Excalifont glyph metrics.
+**Drawing quality is engineered, not prompted.** Diagram layout runs through ELK with node sizes measured in the actual rendered font, connector ports spread by edge degree, and edge labels placed in reserved space. An eleven-check quality evaluator runs in production on every drawn diagram, twice: once on the plan and again on the converted Excalidraw scene, because bound labels and arrow bindings move during conversion. Node overlaps, edges through nodes, and containment breaks fail the tool call outright; the softer findings (label collisions, shared and crowded ports, merged parallel runs, off-grid drift, style incoherence) are reported. A stress suite holds the same line across adversarial graphs, measured against real Excalifont glyph metrics.
+
+**The picture stays a picture, not a redraw.** Six themes and seven node roles keep a diagram coherent, with label ink auto-chosen for 4.5:1 contrast against whatever it sits on. Nodes group into labelled containers and real Excalidraw frames, one level of nesting deep. `update_diagram` evolves a diagram in place: element ids are derived from the graph, so a diff falls out of set arithmetic and survivors tween to their new positions while additions fade in and removals fade out. And `tidy_diagram` straightens **your** sketch without ever replacing it, snapping sizes to the grid, evening out spacing, moving captions onto their shapes, and giving freehand arrows real bindings. Every element keeps its id, its colors, and its text. Only geometry moves.
 
 **The agent has real hands.** Behind the voice sits a persistent [Pi](https://github.com/earendil-works/pi) orchestrator with full read, bash, edit, write, grep, find, and ls tools plus up to four parallel subagent sessions, all sharing the canonical conversation and the board. It codes, tests, screenshots, and opens things on your machine.
 
-**Safety without ceremony.** A hard guard unconditionally blocks catastrophic destruction (home, root, disks, credential stores, fork bombs). Above it, a cheap approval model reviews risky bash, edit, and write calls against your recent spoken requests, fails open, and announces every block out loud so you hear "I stopped myself" in real time. Blocked agents must escalate to you by voice; they are forbidden to retry or work around it.
+**It can also hire.** For heavier code work Wiley drives the CLIs you already have logged in: Claude Code and Codex. Those workers are code-only, with no board access and no way to speak; they take a task, they can be steered mid-run, and they report back. Claude is steered by pushing another message onto the same live session. Codex has no mid-turn channel, so a correction interrupts the turn and resumes the thread with the new instruction. Either one can be handed off to your terminal when you would rather drive it yourself.
+
+**Safety without ceremony, described honestly.** A hard guard unconditionally blocks catastrophic destruction (home, root, disks, credential stores, fork bombs). Above it, a cheap approval model reviews risky bash, edit, and write calls against your recent spoken requests, fails open, and announces every block out loud so you hear "I stopped myself" in real time. Blocked agents must escalate to you by voice; they are forbidden to retry or work around it.
+
+The two workers get different tiers, and the difference is real:
+
+| | Claude Code worker | Codex worker |
+| --- | --- | --- |
+| Before a call runs | `canUseTool` gating on prompt-worthy calls, plus a `PreToolUse` hook as an unconditional hard floor that sees every call | nothing: Codex exposes no permission callback |
+| Containment | permission mode never escalates to bypass | runs in the CLI's own sandbox, read-only or workspace-write, never full access |
+| After a call runs | nothing needed; it was already gated | a command tripwire checks what already started, against the hard guard and the deny rules only |
+
+So Claude gets prevention, and Codex gets containment plus detection. The tripwire tells you what happened; it cannot stop it happening. That is a property of the CLI, not a thing we hid.
+
+**Your models, your keys.** A settings panel picks the voice model (`gpt-realtime-mini-2.1` by default, `gpt-realtime-2.1` when you want the bigger ears), the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Fast mode is one switch that pins the root session to low thinking when you want answers at conversation speed. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
 
 **One persona.** Voice model, orchestrator, and subagents present as a single coworker. Progress is first-person, at most one short sentence, and never narrates internal machinery.
 
 ## Architecture in one breath
 
-`gpt-realtime-2.1` handles ears and mouth over WebRTC and holds no power beyond dispatch, status, and answers. Every real action flows through the root Pi session (`gpt-5.6-luna`, medium thinking), which owns coding tools, board tools (`draw_diagram`, `connect_shapes`, `edit_canvas`, `place_image`, ...), subagents, and the safety stack. A SQLite WAL ledger persists the transcript, jobs, agent events, and board snapshots. The renderer is a sandboxed Excalidraw surface; the silent `[board update]` channel keeps the voice model passively aware of what you just drew, so "connect these two" simply resolves.
+A Realtime model (`gpt-realtime-mini-2.1` by default) handles ears and mouth over WebRTC and holds no power beyond dispatch, status, answers, and a read-only look at the board. Every real action flows through the root Pi session (`gpt-5.6-luna`, low thinking while fast mode is on), which owns coding tools, board tools (`draw_diagram`, `update_diagram`, `tidy_diagram`, `connect_shapes`, `edit_canvas`, `place_image`, ...), subagents, the Claude Code and Codex workers, and the safety stack. A SQLite WAL ledger persists the transcript, jobs, agent events, and board snapshots. The renderer is a sandboxed Excalidraw surface; the silent `[board update]` channel keeps the voice model passively aware of what you just drew, so "connect these two" simply resolves.
 
 ## Run it
 
-Requirements: macOS Apple Silicon, Node 22.19+, and an OpenAI API key with access to the configured models.
+Requirements: macOS Apple Silicon, Node 24+ (the ledger uses `node:sqlite`, unflagged from 23.4), and an OpenAI API key with access to the configured models. Claude Code and Codex are optional: install and log in to either CLI and it shows up as an available worker.
 
 ```bash
 cp .env.example .env   # set OPENAI_API_KEY
 npm install
 npm run dev:web        # browser shell at http://localhost:5173
 npm run dev            # or the Electron shell
+npm run package:mac    # or a real signed app: arm64 DMG in release/
 ```
 
-The renderer never sees your API key; the backend mints short-lived Realtime client secrets. Pi can also use credentials already configured in `~/.pi/agent/auth.json`.
+Your OpenAI API key never leaves the main process. The renderer receives only a short-lived Realtime client secret scoped to the voice session. Keys entered in the settings panel are stored through the OS keychain when it is available, and a `0600` file otherwise. Pi can also use credentials already configured in `~/.pi/agent/auth.json`.
 
-Optional settings:
+`package:mac` signs with the Developer ID identity in your own login keychain, so the DMG is yours, not ours. Notarizing it needs your own Apple credentials too; the packaging table below has the variants.
+
+> **The browser shell binds loopback for a reason.** Its local API is unauthenticated: anything that can reach the port can drive the agent, read the board, and spend your key. It listens on `127.0.0.1` by default. Do not put it on `0.0.0.0`, a tunnel, or a LAN address, and do not set `WILEY_ALLOW_REMOTE_SECRETS`.
+
+Optional settings, for the cases the panel does not cover:
 
 | Variable | Effect |
 | --- | --- |
-| `WILEY_PROJECT_DIR` | Workspace the coding tools may edit (default: launch directory) |
+| `WILEY_PROJECT_DIR` | Workspace the coding tools may edit (default: launch directory, `~/Wiley` when packaged) |
 | `WILEY_DATA_DIR` | Directory for the SQLite ledger |
+| `WILEY_CONFIG_DIR` | Where `settings.json` and the secret store live |
 | `VOICE_DISABLED=1` | Keeps Realtime offline and shows a text input for harness testing |
 | `WILEY_APPROVAL_MODEL` | Reviewer model for risky tool calls (default `gpt-5.4-mini`) |
 | `WILEY_APPROVAL_DISABLED=1` | Disables the reviewer; the catastrophic guard always stays on |
+| `WILEY_HOST`, `WILEY_PORT`, `WILEY_WEB_PORT` | Browser shell bind address and ports; read the warning above first |
 
-The only persistent voice control is the microphone button in the bottom-right. Muting stops capture only; playback and background work continue.
+The full list, including the end-to-end and packaging variables, is in [`.env.example`](.env.example).
+
+Everything else is in the settings panel. The persistent controls on the board are the microphone button in the bottom-right, the music toggle beside it, and the settings and new-session buttons. Muting stops capture only; playback and background work continue.
+
+**Wiley Cloud.** The app supports a relay mode: point it at a relay base URL, sign in with a token, and models are proxied instead of billed to your own key. The relay service itself is a separate piece of infrastructure and still in progress. Bring-your-own key is the default and the supported path, and cloud mode never silently falls back to your own key when the relay fails.
 
 ## Verify and package
 
 ```bash
 npm run typecheck
-npm test               # unit + layout stress suite, real font metrics, no tokens
+npm test               # 1000+ unit and layout-stress tests, real font metrics, no tokens
+npm run lint
 npm run build
 npm run package:mac    # signed arm64 DMG in release/
 ```
+
+The first three are what CI runs on every push and pull request.
 
 Packaging targets, all arm64 DMG in `release/`:
 
 | Command | Result |
 | --- | --- |
 | `npm run package:mac` | Signed with the Developer ID identity in your login keychain |
-| `npm run package:mac:notarized` | Also submitted to Apple and stapled; needs notarytool credentials exported (see `.env.example`) |
+| `npm run package:mac:notarized` | Also submitted to Apple and stapled; needs your own notarytool credentials exported (see `.env.example`) |
 | `npm run package:mac:unsigned` | No signing at all, for a quick local check |
 
 ### The scenarios that have to work
@@ -109,12 +142,27 @@ Packaging targets, all arm64 DMG in `release/`:
 ```bash
 npm run test:e2e:landing      # full build loop: sketch to shipped site
 npm run test:e2e:interactive  # co-presence: narration, live drawing, corrections, resets
+npm run test:e2e:worker       # a real Claude Code worker: spawn, work, report, exit clean
 ```
 
-Both run against the real model and a real browser canvas and cost tokens. The landing scenario drives sketch-to-shipped end to end: chat context, architecture diagram, a hand-drawn wireframe injected through the app's own pipeline, label fill-in on the human's boxes with nothing cleared, website generation, screenshot placed on the board, and a real `open` of the built page. The interactive scenario verifies the coworker feel: narration while hands are busy, the board growing in visible steps, in-place correction of a wrong diagram without clearing, session-scoped status, and a full new-session reset. Artifacts (logs, board JSON, voice feed, screenshots) land in `.e2e/`. Render any run's persisted board with `node scripts/board-shot.mjs <run>/data out.png`. Both screenshots above came straight out of the landing scenario.
+All three run against real models and a real browser canvas and cost tokens. The landing scenario drives sketch-to-shipped end to end: chat context, architecture diagram, a hand-drawn wireframe injected through the app's own pipeline, label fill-in on the human's boxes with nothing cleared, website generation, screenshot placed on the board, and a real `open` of the built page. The interactive scenario verifies the coworker feel: narration while hands are busy, the board growing in visible steps, in-place correction of a wrong diagram without clearing, session-scoped status, and a full new-session reset. The worker scenario delegates one small job to a real Claude Code worker in a throwaway workspace, then checks the file it was asked for exists, its events reached the ledger, it reported completion, and no process it started outlived the run. Artifacts (logs, board JSON, voice feed, screenshots) land in `.e2e/`. Render any run's persisted board with `node scripts/board-shot.mjs <run>/data out.png`. Both screenshots above came straight out of the landing scenario.
 
 ## Runtime boundaries
 
 The renderer is sandboxed with no Node access; it owns WebRTC audio and Excalidraw rendering. The Electron main process owns credentials, the ledger, Pi sessions, job interruption, safety guards, and the serialized board transaction gateway. The Realtime capability manifest contains no mutation, shell, filesystem, git, or subagent-spawn tool.
 
 Implementation details and the deterministic/real-model test matrix: [docs/pi-harness-guide.md](docs/pi-harness-guide.md) and [docs/agent-test-procedure.md](docs/agent-test-procedure.md).
+
+## Where it came from
+
+Wiley won the internal hackathon of [Null Fellows](https://www.nullfellows.com) Cohort 02, a cohort of 35 fellows selected from more than 3000 applications. The program places exceptional young European builders into top startups, so the room it beat was the interesting part.
+
+Built with Akshith Alluri, Noel Matero, and Bendik Norli.
+
+The thing we were actually chasing: make collaborating with an AI agent as seamless as collaborating with a genius friend at a whiteboard.
+
+## Contributing and license
+
+Setup, the verify commands, and a map of the modules: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Apache-2.0. See [LICENSE](LICENSE).
