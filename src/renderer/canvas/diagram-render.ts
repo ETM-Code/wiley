@@ -11,6 +11,7 @@ import {
   nodeToType,
   planBounds,
   planDiagramLayout,
+  restoreTextNodeGeometry,
   snapModelCoordinate,
   snapModelSize,
   translatePlan,
@@ -298,6 +299,7 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     plan.skeletons as Parameters<typeof convertToExcalidrawElements>[0],
     { regenerateIds: false },
   );
+  restoreTextNodeGeometry(plan, created as unknown as Parameters<typeof restoreTextNodeGeometry>[1]);
   const createdIds = new Set(created.map((element) => element.id));
   // The human may draw while ELK runs or while elements stream in. Always
   // rebase onto the live scene instead of a snapshot captured at entry.

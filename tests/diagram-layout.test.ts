@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  CAPTION_ENDPOINT_GAP,
   MODEL_GRID_SIZE,
   boundLabelAnchor,
   boundLabelRoom,
   measureText,
   nodeDimensions,
   planDiagramLayout,
+  restoreTextNodeGeometry,
   wrapLabel,
   type LayoutParams,
 } from "../src/renderer/diagram-layout";
@@ -659,6 +661,71 @@ describe("diagram layout quality", () => {
 
   it("sizes an emoji label wider than the same label without it", () => {
     expect(measureText("🚀 Ship", 20).width).toBeGreaterThan(measureText("Ship", 20).width + 20);
+  });
+
+  it("puts a text-shaped node back where the layout drew it after conversion", async () => {
+    const params: LayoutParams = {
+      layout: { algorithm: "tree", direction: "RIGHT" },
+      nodes: [
+        { id: "root", label: "Launch" },
+        { id: "leaf", label: "Story", shape: "text" },
+      ],
+      edges: [{ from: "root", to: "leaf" }],
+    };
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    const leafId = plan.elementIdByNode.get("leaf")!;
+    const skeleton = plan.skeletons.find((candidate) => candidate.id === leafId)!;
+    const centre = (skeleton.y as number) + (skeleton.height as number) / 2;
+    // What the converter hands back: it drags the bound caption onto the
+    // arrow's far endpoint and re-measures the line box.
+    const created = [{ id: leafId, type: "text", x: skeleton.x as number, y: -400, height: 25 }];
+    restoreTextNodeGeometry(plan, created);
+    expect(created[0].x).toBe(skeleton.x);
+    expect(created[0].y + created[0].height / 2).toBeCloseTo(centre, 6);
+  });
+
+  it("stops an arrow short of a caption instead of landing on its first glyph", async () => {
+    const params: LayoutParams = {
+      layout: { algorithm: "tree", direction: "RIGHT" },
+      nodes: [
+        { id: "root", label: "Launch" },
+        { id: "leaf", label: "Story", shape: "text" },
+        { id: "boxed", label: "Docs" },
+      ],
+      edges: [{ from: "root", to: "leaf" }, { from: "root", to: "boxed" }],
+    };
+    const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    const skeletonOf = (node: string) => plan.skeletons.find(
+      (candidate) => candidate.id === plan.elementIdByNode.get(node),
+    )!;
+    const tipOf = (target: string) => {
+      const arrow = plan.skeletons.find((skeleton) => skeleton.type === "arrow"
+        && (skeleton.end as { id?: string }).id === plan.elementIdByNode.get(target))!;
+      const points = arrow.points as number[][];
+      return { x: (arrow.x as number) + points.at(-1)![0], y: (arrow.y as number) + points.at(-1)![1] };
+    };
+    const caption = skeletonOf("leaf");
+    const tip = tipOf("leaf");
+    const clearance = Math.hypot(
+      Math.max(caption.x as number, tip.x) - tip.x,
+      Math.max(caption.y as number, Math.min(tip.y, (caption.y as number) + (caption.height as number)))
+        - tip.y,
+    );
+    // A diagonal approach spends part of the gap on the other axis, so the
+    // clearance from the box is a shade under the gap along the route.
+    expect(clearance).toBeGreaterThan(CAPTION_ENDPOINT_GAP * 0.6);
+    expect(clearance).toBeLessThanOrEqual(CAPTION_ENDPOINT_GAP);
+    // A boxed node has a border to meet, so it keeps the contact.
+    const boxed = skeletonOf("boxed");
+    expect(tipOf("boxed").x).toBeCloseTo(boxed.x as number, 6);
+  });
+
+  it("leaves elements that are not text nodes alone when restoring captions", async () => {
+    const plan = await planDiagramLayout(planningDiagram, ORIGIN, DIAGRAM_ID);
+    const boxed = plan.skeletons.find((skeleton) => skeleton.type === "rectangle")!;
+    const created = [{ id: String(boxed.id), type: "rectangle", x: 999, y: 999, height: 60 }];
+    restoreTextNodeGeometry(plan, created);
+    expect(created[0]).toMatchObject({ x: 999, y: 999 });
   });
 
   it("keeps a flow reading forwards when a feedback edge closes the loop", async () => {
