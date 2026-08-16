@@ -26,6 +26,7 @@ import { createSecretStore, isLoopbackHost } from "../main/settings/secret-store
 import { assertSecretName, SettingsService } from "../main/settings/settings-service";
 import { resolveConfigDir, SettingsStore } from "../main/settings/settings-store";
 import { createWorkerProbes } from "../main/workers/worker-runtime";
+import { isCliWorkerKind } from "../main/workers/worker-types";
 
 const host = process.env.BOARD_AI_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.BOARD_AI_PORT?.trim() || 5174);
@@ -295,6 +296,16 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/settings/probe") {
       return sendJson(response, 200, await settings.probeWorkers());
+    }
+    // The backend runs on the same machine as the browser tab, so opening a
+    // terminal from here puts it on the user's own desktop, as it should.
+    if (request.method === "POST" && url.pathname === "/api/workers/open-terminal") {
+      if (typeof body.workerId !== "string" || !body.workerId.trim()) throw new Error("A worker id is required");
+      return sendJson(response, 200, await pi.openWorkerTerminal(body.workerId.trim()));
+    }
+    if (request.method === "POST" && url.pathname === "/api/workers/new-terminal-session") {
+      if (!isCliWorkerKind(body.kind)) throw new Error("kind must be claude or codex");
+      return sendJson(response, 200, await pi.startTerminalSession(body.kind));
     }
     if (request.method === "POST" && url.pathname === "/api/canvas-response") {
       canvas.acceptResponse(body as unknown as CanvasResponse);

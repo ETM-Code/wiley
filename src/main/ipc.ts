@@ -16,6 +16,7 @@ import { type CanvasBridge } from "./canvas-bridge";
 import { type VoiceBridge } from "./voice-bridge";
 import { callVoiceTool } from "./voice-tools";
 import { isTrustedOrigin } from "./trusted-origin";
+import { isCliWorkerKind } from "./workers/worker-types";
 import type { RuntimeLedger } from "./ledger";
 import type { PiRuntime } from "./pi-runtime";
 
@@ -83,6 +84,14 @@ export function registerIpc(options: {
   });
   handle(IPC.settingsSecretClear, (_event, name: unknown) => settings.clearSecret(assertSecretName(name)));
   handle(IPC.settingsProbe, () => settings.probeWorkers());
+  handle(IPC.workersOpenTerminal, (_event, input: { workerId?: unknown }) => {
+    if (typeof input?.workerId !== "string" || !input.workerId.trim()) throw new Error("A worker id is required");
+    return pi.openWorkerTerminal(input.workerId.trim());
+  });
+  handle(IPC.workersNewTerminalSession, (_event, input: { kind?: unknown }) => {
+    if (!isCliWorkerKind(input?.kind)) throw new Error("kind must be claude or codex");
+    return pi.startTerminalSession(input.kind);
+  });
 
   // A change from any source (this window, a hand edit, a future CLI) reaches
   // every renderer through the same channel the panel already listens on.
