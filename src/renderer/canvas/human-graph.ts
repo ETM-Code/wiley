@@ -115,13 +115,19 @@ export function distanceToBounds(point: { x: number; y: number }, bounds: HumanB
   return Math.hypot(dx, dy);
 }
 
-/** An element the person drew: on the board, not deleted, and unstamped. */
-export function isHumanElement(element: SketchElement): boolean {
-  return !element.isDeleted && readDiagramStamp(element) === undefined;
-}
-
+/**
+ * Everything the person drew: on the board, not deleted, and unstamped. A
+ * label bound into a stamped shape carries no stamp of its own, so it has to
+ * be excluded by its owner rather than by its own customData.
+ */
 export function humanElements(elements: readonly SketchElement[]): SketchElement[] {
-  return elements.filter(isHumanElement);
+  const stamped = new Set<string>();
+  for (const element of elements) {
+    if (readDiagramStamp(element) !== undefined) stamped.add(element.id);
+  }
+  return elements.filter((element) => !element.isDeleted
+    && !stamped.has(element.id)
+    && !(typeof element.containerId === "string" && stamped.has(element.containerId)));
 }
 
 /** Absolute polyline of an arrow or line, from its origin and its points. */
@@ -197,9 +203,9 @@ export function inferHumanGraph(
   const edgeLabelTolerance = options.edgeLabelTolerance ?? HUMAN_EDGE_LABEL_TOLERANCE;
 
   const scope = options.elementIds ? new Set(options.elementIds) : undefined;
-  const mine = elements.filter((element) => isHumanElement(element)
-    && (!scope || scope.has(element.id)
-      || (typeof element.containerId === "string" && scope.has(element.containerId))));
+  const mine = humanElements(elements).filter((element) => !scope
+    || scope.has(element.id)
+    || (typeof element.containerId === "string" && scope.has(element.containerId)));
 
   const shapes = mine.filter((element) => NODE_TYPES.has(element.type));
   const shapeById = new Map(shapes.map((shape) => [shape.id, shape]));

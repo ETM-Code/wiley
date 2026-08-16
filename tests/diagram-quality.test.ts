@@ -5,6 +5,7 @@ import {
   evaluateConvertedScene,
   evaluateDiagramPlan,
   mergeQualityReports,
+  isObstacleFinding,
   segmentsVisuallyMerge,
 } from "../src/renderer/diagram-quality";
 import {
@@ -345,5 +346,94 @@ describe("styleCoherence", () => {
     expect(evaluateDiagramPlan(strokeWidthSoupPlan).styleCoherence).toEqual([
       "3 distinct node stroke widths exceeds 2",
     ]);
+  });
+});
+
+describe("obstacles: the person's own drawing", () => {
+  function obstacle(
+    id: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    kind: "shape" | "text" = "shape",
+  ) {
+    return { id, bounds: { x, y, width, height }, kind };
+  }
+
+  it("flags an agent node landing on one of their shapes, marked as theirs", () => {
+    const plan = handBuiltPlan([node("mine", 0, 0)]);
+    const report = evaluateDiagramPlan(plan, undefined, {
+      obstacles: [obstacle("theirs", 40, 20, 200, 100)],
+    });
+    expect(report.nodeOverlaps).toEqual(["mine x theirs [obstacle]"]);
+    expect(report.nodeOverlaps.every(isObstacleFinding)).toBe(true);
+  });
+
+  it("flags an agent route driven through one of their shapes", () => {
+    const plan = handBuiltPlan([
+      node("a", 0, 0),
+      node("b", 600, 0),
+      arrow("edge", [[160, 40], [600, 40]], { start: "a", end: "b" }),
+    ]);
+    const report = evaluateDiagramPlan(plan, undefined, {
+      obstacles: [obstacle("theirs", 300, 0, 100, 100)],
+    });
+    expect(report.edgesThroughNodes).toEqual(["edge x theirs [obstacle]"]);
+  });
+
+  it("flags an agent label sitting on one of their captions", () => {
+    const plan = handBuiltPlan([
+      { role: "title", skeleton: { id: "title", type: "text", x: 0, y: 0, width: 200, height: 40 } },
+    ]);
+    const report = evaluateDiagramPlan(plan, undefined, {
+      obstacles: [obstacle("their-note", 20, 10, 80, 20, "text")],
+    });
+    expect(report.labelCollisions).toEqual(["title x their-note [obstacle]"]);
+  });
+
+  it("lets a route graze one of their captions", () => {
+    const plan = handBuiltPlan([
+      node("a", 0, 0),
+      node("b", 600, 0),
+      arrow("edge", [[160, 40], [600, 40]], { start: "a", end: "b" }),
+    ]);
+    const report = evaluateDiagramPlan(plan, undefined, {
+      obstacles: [obstacle("their-note", 300, 20, 100, 40, "text")],
+    });
+    expect(report.edgesThroughNodes).toEqual([]);
+  });
+
+  it("never judges their drawing against itself", () => {
+    const plan = handBuiltPlan([node("mine", 0, 0)]);
+    const report = evaluateDiagramPlan(plan, undefined, {
+      obstacles: [
+        obstacle("theirs-a", 900, 900, 200, 200),
+        obstacle("theirs-b", 950, 950, 200, 200),
+        obstacle("their-note", 960, 960, 40, 20, "text"),
+      ],
+    });
+    expect(report.nodeOverlaps).toEqual([]);
+    expect(report.labelCollisions).toEqual([]);
+  });
+
+  it("leaves a drawing that clears them alone", () => {
+    const plan = handBuiltPlan([
+      node("a", 0, 0),
+      node("b", 600, 0),
+      arrow("edge", [[160, 40], [600, 40]], { start: "a", end: "b" }),
+    ]);
+    const report = evaluateDiagramPlan(plan, undefined, {
+      obstacles: [obstacle("theirs", 0, 900, 200, 100)],
+    });
+    expect(report.nodeOverlaps).toEqual([]);
+    expect(report.edgesThroughNodes).toEqual([]);
+    expect(report.labelCollisions).toEqual([]);
+  });
+
+  it("costs nothing when the board has no sketch on it", () => {
+    const plan = handBuiltPlan([node("mine", 0, 0)]);
+    expect(evaluateDiagramPlan(plan, undefined, { obstacles: [] }))
+      .toEqual(evaluateDiagramPlan(plan));
   });
 });

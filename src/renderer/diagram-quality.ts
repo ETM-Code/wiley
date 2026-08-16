@@ -37,6 +37,29 @@ export interface DiagramQualityReport {
   edgesThroughContainers: string[];
 }
 
+/**
+ * Something on the board the agent did not draw and may not touch: one of the
+ * person's shapes or captions. Obstacles are judged in one direction only.
+ * The agent's work has to keep clear of them; a messy sketch overlapping
+ * itself is the person's business and never a defect in the agent's drawing.
+ */
+export type DiagramObstacle = {
+  id: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  kind: "shape" | "text";
+};
+
+/**
+ * How a finding says it is about somebody else's drawing. The report is eight
+ * arrays of strings that a dozen callers already read, summarize, and merge,
+ * so the marker rides in the string rather than splitting the shape.
+ */
+export const OBSTACLE_MARKER = " [obstacle]";
+
+export function isObstacleFinding(finding: string): boolean {
+  return finding.endsWith(OBSTACLE_MARKER);
+}
+
 /** How far inside a container's border its members have to stay. */
 export const CONTAINER_INSET = 12;
 
@@ -282,10 +305,16 @@ function evaluateContainers(
   }
 }
 
+export type EvaluationOptions = {
+  /** The person's shapes and captions, which the agent's work must clear. */
+  obstacles?: readonly DiagramObstacle[];
+};
+
 export function evaluateDiagramPlan(
   plan: DiagramPlan,
   /** Measured bound-label boxes, when the caller has the real ones to hand. */
   boundLabelBoxes?: ReadonlyMap<string, Box>,
+  options: EvaluationOptions = {},
 ): DiagramQualityReport {
   const report: DiagramQualityReport = {
     nodeOverlaps: [],
@@ -421,8 +450,58 @@ export function evaluateDiagramPlan(
 
   evaluateContainers(containerView(plan, boxById), boxById, arrows, report);
   evaluateStyleCoherence(plan, report);
+  evaluateObstacles(options.obstacles ?? [], { nodes, labels, arrows, boxById, plan }, report);
 
   return report;
+}
+
+/**
+ * The agent's drawing against the person's. Every finding is marked, because
+ * the caller treats a route driven through someone's box as a hard failure
+ * and a box landing on their caption as a placement to try again.
+ */
+function evaluateObstacles(
+  obstacles: readonly DiagramObstacle[],
+  drawing: {
+    nodes: readonly Box[];
+    labels: readonly LabelBox[];
+    arrows: readonly JsonObject[];
+    boxById: ReadonlyMap<string, Box>;
+    plan: DiagramPlan;
+  },
+  report: DiagramQualityReport,
+): void {
+  if (obstacles.length === 0) return;
+  const boxes = obstacles.map((obstacle) => ({ obstacle, box: { id: obstacle.id, ...obstacle.bounds } }));
+  const regions = [...drawing.plan.containers.values()]
+    .map((entry) => drawing.boxById.get(entry.elementId))
+    .filter((box): box is Box => Boolean(box));
+
+  for (const box of [...drawing.nodes, ...regions]) {
+    for (const { box: other } of boxes) {
+      if (boxesOverlap(box, other)) {
+        report.nodeOverlaps.push(`${box.id} x ${other.id}${OBSTACLE_MARKER}`);
+      }
+    }
+  }
+  for (const label of drawing.labels) {
+    for (const { box: other } of boxes) {
+      if (boxesOverlap(label, other)) {
+        report.labelCollisions.push(`${label.id} x ${other.id}${OBSTACLE_MARKER}`);
+      }
+    }
+  }
+  // A route grazing a caption is normal; driving one through somebody's box
+  // is the thing the whole obstacle pass exists to stop.
+  for (const arrow of drawing.arrows) {
+    const geometry = arrowGeometry(arrow);
+    for (const { obstacle, box } of boxes) {
+      if (obstacle.kind !== "shape") continue;
+      if (geometryIntersectsBox(geometry, box, 4)) {
+        report.edgesThroughNodes.push(`${String(arrow.id)} x ${box.id}${OBSTACLE_MARKER}`);
+      }
+    }
+  }
 }
 
 /** The shape of a converted element the checks actually read. */
@@ -452,6 +531,7 @@ type ConvertedElement = {
 export function evaluateConvertedScene(
   elements: readonly ConvertedElement[],
   plan: DiagramPlan,
+  options: EvaluationOptions = {},
 ): DiagramQualityReport {
   const boundLabelBoxes = new Map<string, Box>();
   const boundTextByArrow = new Map<string, string>();
@@ -484,7 +564,7 @@ export function evaluateConvertedScene(
           }
         : {}),
     }));
-  return evaluateDiagramPlan({ ...plan, skeletons }, boundLabelBoxes);
+  return evaluateDiagramPlan({ ...plan, skeletons }, boundLabelBoxes, options);
 }
 
 /** Union of two reports, with each check's findings deduplicated. */

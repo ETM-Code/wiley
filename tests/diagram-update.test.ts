@@ -57,7 +57,13 @@ import { handleCanvasRequest } from "../src/renderer/canvas-handlers";
 import type { SceneElement } from "../src/renderer/canvas/types";
 import { mergeSpec, reconstructSpec, resolveTargetDiagram } from "../src/renderer/canvas/diagram-reconstruct";
 import { placeUpdatedPlan } from "../src/renderer/canvas/diagram-update";
-import { planDiagramLayout } from "../src/renderer/diagram-layout";
+import {
+  assertDiagramQuality,
+  assertQualityClearOfHuman,
+  diagramDefects,
+  placementCollisions,
+} from "../src/renderer/canvas/diagram-render";
+import { planBounds, planDiagramLayout } from "../src/renderer/diagram-layout";
 import { resampleRoute, tweenGeometry } from "../src/renderer/diagram-diff";
 
 type SceneRecord = Record<string, unknown> & {
@@ -593,5 +599,90 @@ describe("update-diagram reaching into the human's sketch", () => {
         edges: [{ from: "deliver", to: "human:nothing" }],
       },
     })).rejects.toThrow(/human:nothing/);
+  });
+});
+
+describe("keeping the agent's drawing clear of the person's", () => {
+  async function flowPlan() {
+    const plan = await planDiagramLayout(flow, { x: 0, y: 0 }, "wd-clear");
+    return plan;
+  }
+
+  function boxOf(plan: Awaited<ReturnType<typeof flowPlan>>, key: string) {
+    const id = plan.elementIdByNode.get(key)!;
+    const skeleton = plan.skeletons.find((entry) => entry.id === id)!;
+    return {
+      x: skeleton.x as number,
+      y: skeleton.y as number,
+      width: skeleton.width as number,
+      height: skeleton.height as number,
+    };
+  }
+
+  it("does not fail a drawing merely for landing on the person's box", async () => {
+    const plan = await flowPlan();
+    const box = boxOf(plan, "queue");
+    const obstacles = [{ id: "theirs", bounds: box, kind: "shape" as const }];
+    const quality = assertDiagramQuality(plan, obstacles)!;
+    expect(placementCollisions(quality).length).toBeGreaterThan(0);
+    expect(diagramDefects(quality)).toEqual([]);
+  });
+
+  it("fails a route driven through the person's box", async () => {
+    const plan = await flowPlan();
+    const accept = boxOf(plan, "accept");
+    const queue = boxOf(plan, "queue");
+    const gap = {
+      x: accept.x + accept.width + 10,
+      y: accept.y,
+      width: Math.max(20, queue.x - accept.x - accept.width - 20),
+      height: accept.height,
+    };
+    expect(() => assertDiagramQuality(plan, [{ id: "theirs", bounds: gap, kind: "shape" }]))
+      .toThrow(/quality check failed/);
+  });
+
+  it("shifts once to get out of the way and reports the move", async () => {
+    const plan = await flowPlan();
+    const obstacles = [{ id: "theirs", bounds: boxOf(plan, "queue"), kind: "shape" as const }];
+    const { quality, shifted } = assertQualityClearOfHuman(plan, obstacles, true);
+    expect(shifted?.dx).toBeGreaterThan(0);
+    expect(shifted?.dy).toBe(0);
+    expect(placementCollisions(quality!)).toEqual([]);
+  });
+
+  it("gives up after one shift rather than sliding forever", async () => {
+    const plan = await flowPlan();
+    const first = boxOf(plan, "queue");
+    const here = planBounds(plan);
+    // Clear of the diagram now, squarely in its way once it has slid past the
+    // first obstacle. Text, so arriving on it is a placement problem rather
+    // than a crossed route.
+    const landing = {
+      x: here.maxX + 20,
+      y: here.minY,
+      width: 200,
+      height: here.maxY - here.minY,
+    };
+    expect(() => assertQualityClearOfHuman(plan, [
+      { id: "theirs", bounds: first, kind: "shape" },
+      { id: "their-note", bounds: landing, kind: "text" },
+    ], true)).toThrow(/sit on the user's own drawing/);
+  });
+
+  it("places a new diagram beside a hand-drawn box without touching it", async () => {
+    const sketch: SceneRecord = { id: "sketch", type: "rectangle", x: 0, y: 0, width: 300, height: 200 };
+    const target = board([sketch]);
+    await drawFlow(target, { ...flow, anchor: "sketch", anchorDirection: "right" });
+
+    const survivor = target.elements().find((element) => element.id === "sketch")!;
+    expect(survivor).toMatchObject({ x: 0, y: 0, width: 300, height: 200 });
+    const drawn = target.elements().filter((element) => element.customData?.wiley);
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const element of drawn) {
+      const overlaps = element.x < 300 && 0 < element.x + element.width
+        && element.y < 200 && 0 < element.y + element.height;
+      expect(overlaps).toBe(false);
+    }
   });
 });

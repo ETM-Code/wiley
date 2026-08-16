@@ -20,12 +20,16 @@ import {
 import {
   evaluateConvertedScene,
   evaluateDiagramPlan,
+  isObstacleFinding,
   mergeQualityReports,
+  type DiagramObstacle,
   type DiagramQualityReport,
 } from "../diagram-quality";
 import { readDiagramStamp } from "../../shared/diagram-stamp";
 import { deriveDiagramId, titleElementId } from "../diagram-spec";
-import { asRecord, gridResult, resolveDiagramOrigin } from "./geometry";
+import { asRecord, gridResult, resolveDiagramOrigin, shiftClearOf } from "./geometry";
+import { humanObstacles } from "./human-merge";
+import type { SketchElement } from "./human-graph";
 import {
   diagramPreviewElementIds,
   diagramPreviewStream,
@@ -105,19 +109,75 @@ export const QUALITY_EVALUATION_LIMIT = 120;
  * upstream is broken, so they fail the call rather than shipping a diagram the
  * user has to squint at.
  */
-export function assertDiagramQuality(plan: DiagramPlan): DiagramQualityReport | undefined {
+export function assertDiagramQuality(
+  plan: DiagramPlan,
+  obstacles: readonly DiagramObstacle[] = [],
+): DiagramQualityReport | undefined {
   if (plan.skeletons.length > QUALITY_EVALUATION_LIMIT) return undefined;
-  const quality = evaluateDiagramPlan(plan);
-  const defects = [
-    ...quality.nodeOverlaps,
-    ...quality.edgesThroughNodes,
-    ...quality.containerContainment,
-    ...quality.edgesThroughContainers,
-  ];
+  const quality = evaluateDiagramPlan(plan, undefined, { obstacles });
+  const defects = diagramDefects(quality);
   if (defects.length > 0) {
     throw new Error(`Diagram quality check failed: ${defects.slice(0, 3).join("; ")}`);
   }
   return quality;
+}
+
+/**
+ * The findings that mean the picture is actually wrong. A box landing on the
+ * user's own work is deliberately not one of them: that is a placement the
+ * caller gets to try again before it counts as a failure.
+ */
+export function diagramDefects(quality: DiagramQualityReport): string[] {
+  return [
+    ...quality.nodeOverlaps.filter((finding) => !isObstacleFinding(finding)),
+    ...quality.edgesThroughNodes,
+    ...quality.containerContainment,
+    ...quality.edgesThroughContainers,
+  ];
+}
+
+/** Where the drawing landed on top of the person's, which a shift can fix. */
+export function placementCollisions(quality: DiagramQualityReport): string[] {
+  return [...quality.nodeOverlaps, ...quality.labelCollisions].filter(isObstacleFinding);
+}
+
+/**
+ * One attempt to get out of the way, then a real failure.
+ *
+ * Placing a diagram beside a sketch can still land on it once the layout
+ * decides how big the diagram actually is, so the plan slides along the axis
+ * it grew on until it clears everything it hit. A second failure is not a
+ * placement problem any shift is going to solve.
+ */
+export function assertQualityClearOfHuman(
+  plan: DiagramPlan,
+  obstacles: readonly DiagramObstacle[],
+  horizontal: boolean,
+): { quality: DiagramQualityReport | undefined; shifted?: { dx: number; dy: number } } {
+  const quality = assertDiagramQuality(plan, obstacles);
+  if (!quality) return { quality };
+  const collisions = placementCollisions(quality);
+  if (collisions.length === 0) return { quality };
+
+  const hit = obstacles
+    .filter((obstacle) => collisions.some((finding) => finding.includes(` x ${obstacle.id}`)))
+    .map((obstacle) => ({
+      minX: obstacle.bounds.x,
+      minY: obstacle.bounds.y,
+      maxX: obstacle.bounds.x + obstacle.bounds.width,
+      maxY: obstacle.bounds.y + obstacle.bounds.height,
+    }));
+  const shift = shiftClearOf(planBounds(plan), hit, horizontal);
+  if (!shift) {
+    throw new Error(`Diagram would sit on the user's own drawing: ${collisions.slice(0, 3).join("; ")}`);
+  }
+  translatePlan(plan, shift.dx, shift.dy);
+  const retried = assertDiagramQuality(plan, obstacles);
+  const remaining = retried ? placementCollisions(retried) : [];
+  if (remaining.length > 0) {
+    throw new Error(`Diagram would sit on the user's own drawing: ${remaining.slice(0, 3).join("; ")}`);
+  }
+  return { quality: retried, shifted: shift };
 }
 
 /** Monotonic even when two diagrams are requested within the same millisecond. */
@@ -158,7 +218,13 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   guardFrameAutoFit(plan);
   // Previews are redrawn on every JSON delta and are throwaway by design, so
   // they never pay for the checks.
-  const quality = preview ? undefined : assertDiagramQuality(plan);
+  const obstacles = preview
+    ? []
+    : humanObstacles(withoutDiagramPreviewElements([...api.getSceneElements()]) as unknown as SketchElement[]);
+  const direction = params.anchorDirection ?? "right";
+  const quality = preview
+    ? undefined
+    : assertQualityClearOfHuman(plan, obstacles, direction === "right" || direction === "left").quality;
   const title = params.title?.trim();
 
   // Derived ids are only safe while nothing else owns them. The converter
@@ -267,7 +333,11 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   const rendered = quality && created.length <= QUALITY_EVALUATION_LIMIT
     ? mergeQualityReports(
         quality,
-        evaluateConvertedScene(created as unknown as Parameters<typeof evaluateConvertedScene>[0], plan),
+        evaluateConvertedScene(
+          created as unknown as Parameters<typeof evaluateConvertedScene>[0],
+          plan,
+          { obstacles },
+        ),
       )
     : quality;
   const titleElement = title ? convertedById.get(titleElementId(diagramId)) : undefined;
