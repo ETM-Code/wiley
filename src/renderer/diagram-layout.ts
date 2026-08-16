@@ -230,6 +230,10 @@ export interface DiagramPlan {
 export const MODEL_GRID_SIZE = 20;
 
 const NODE_FONT_SIZE = 20;
+/** A title has to read as the name of the drawing, not as one more caption. */
+const TITLE_FONT_SIZE = 28;
+/** Clear band between the title and the top of what it names. */
+const TITLE_HEADROOM = 60;
 export const EDGE_LABEL_FONT_SIZE = 16;
 /** Clear space a bound label needs on either side before auto mode uses one. */
 export const BOUND_LABEL_CLEARANCE = 24;
@@ -1474,10 +1478,14 @@ function assemblePlan(
   ]);
 
   const title = params.title?.trim();
-  // Top-left, its own measured width, and a full band of headroom: a title
+  // Top-left, its own measured width, and one clear band of headroom: a title
   // centered across the graph sits exactly where inbound arrows and
-  // neighboring clusters land.
-  const titleSize = title ? measureText(title, 24) : { width: 0, height: 0 };
+  // neighboring clusters land. The band is measured from the top of what was
+  // actually drawn rather than from the origin, so a graph whose first row
+  // starts low does not leave the title stranded in white space.
+  const titleSize = title ? measureText(title, TITLE_FONT_SIZE) : { width: 0, height: 0 };
+  const drawnTop = Math.min(origin.y, ...[...regionSkeletons, ...nodeSkeletons, ...edgeLabelSkeletons]
+    .map((skeleton) => finiteNumber(skeleton.y, origin.y)));
   const titleId = titleElementId(diagramId);
   if (title) roles.set(titleId, { role: "title" });
   const skeletons: JsonObject[] = [
@@ -1486,11 +1494,11 @@ function assemblePlan(
       type: "text",
       ...stamp("title"),
       x: origin.x,
-      y: snapModelCoordinate(origin.y - 100),
+      y: snapModelCoordinate(drawnTop - TITLE_HEADROOM - titleSize.height),
       width: titleSize.width,
-      height: 40,
+      height: titleSize.height,
       text: title,
-      fontSize: 24,
+      fontSize: TITLE_FONT_SIZE,
       fontFamily: 5,
       textAlign: "left",
       verticalAlign: "middle",

@@ -338,7 +338,13 @@ export function resolveNodeStyle(
   overrides: NodeStyleOverrides = {},
 ): ResolvedNodeStyle {
   const entry = theme.entries[role ?? theme.defaultRole];
-  const themed = emphasis === "quiet" ? entry.soft : entry.fill;
+  // A node that named no role is the page, not the point. Themes whose
+  // default role is the primary hue would otherwise paint the whole board in
+  // the same fill the request uses to say "this one matters", and nothing
+  // would stand out from anything. The wash keeps the theme's family without
+  // spending its strongest colour on a node that asked for nothing.
+  const wash = emphasis === "quiet" || (role === undefined && emphasis === "normal");
+  const themed = wash ? entry.soft : entry.fill;
   const backgroundColor = overrides.backgroundColor ?? themed;
   return {
     backgroundColor,
