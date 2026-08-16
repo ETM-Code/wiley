@@ -338,6 +338,33 @@ function nearMissEndpoints(): MessyScene {
   };
 }
 
+function groupedCluster(): MessyScene {
+  return {
+    name: "grouped-cluster",
+    expect: {
+      nodes: 5,
+      edges: 3,
+      loose: 1,
+      unattached: 0,
+      attachments: [["g-a", "g-b"], ["g-b", "g-c"]],
+      labels: [["g-ring", "Ingest"]],
+    },
+    elements: [
+      // The ring somebody drew around the three steps, captioned at the top.
+      box("g-ring", 40, 40, 640, 240),
+      note("g-ring-note", 52, 48, "Ingest"),
+      ...labelled("g-a", 80, 120, 150, 70, "Read"),
+      ...labelled("g-b", 290, 128, 150, 70, "Clean"),
+      ...labelled("g-c", 500, 116, 150, 70, "Write"),
+      ...labelled("g-out", 300, 420, 150, 70, "Report"),
+      line("g-1", [232, 155], [286, 163]),
+      line("g-2", [442, 163], [496, 151]),
+      // Leaves the ring and reaches nothing.
+      line("g-3", [575, 190], [590, 360]),
+    ],
+  };
+}
+
 function tidyControl(): MessyScene {
   return {
     name: "already-tidy",
@@ -374,6 +401,7 @@ const BUILDERS = [
   mixedStrokes,
   shapeMix,
   nearMissEndpoints,
+  groupedCluster,
   tidyControl,
 ];
 

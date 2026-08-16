@@ -18,7 +18,7 @@ vi.mock("../src/renderer/bridge", () => ({
 import { handleCanvasRequest } from "../src/renderer/canvas-handlers";
 import { MODEL_GRID_SIZE } from "../src/renderer/diagram-layout";
 import { alignBoxes, clusterAxis, tidyTargets } from "../src/renderer/canvas/tidy";
-import type { SketchElement } from "../src/renderer/canvas/human-graph";
+import { inferHumanGraph, type SketchElement } from "../src/renderer/canvas/human-graph";
 import { messyScene, type MessyElement } from "./fixtures/messy-scenes";
 
 type Board = {
@@ -286,6 +286,101 @@ describe("tidying a named handful of shapes", () => {
       const shape = target.elements().find((candidate) => candidate.id === containerId)!;
       expect(element.x).toBeGreaterThanOrEqual(shape.x);
       expect(element.x + element.width).toBeLessThanOrEqual(shape.x + shape.width);
+    }
+  });
+});
+
+describe("a shape drawn around other shapes", () => {
+  const scene = messyScene("grouped-cluster");
+
+  it("is read as framing rather than as a step in the flow", () => {
+    const graph = inferHumanGraph(scene.elements as unknown as SketchElement[]);
+    const ring = graph.nodes.find((node) => node.elementId === "g-ring")!;
+    expect(ring.encloses).toEqual(["g-a", "g-b", "g-c"]);
+    expect(graph.nodes.filter((node) => node.encloses)).toHaveLength(1);
+    // The arrows inside it connect the boxes, not the ring they sit in.
+    expect(graph.edges.find((edge) => edge.elementId === "g-1"))
+      .toMatchObject({ fromElementId: "g-a", toElementId: "g-b" });
+  });
+
+  it("keeps it around whatever it ends up holding", async () => {
+    const target = board(scene.elements);
+    const result = await tidy(target);
+    expect(defects(result)).toEqual([]);
+
+    const ring = target.elements().find((element) => element.id === "g-ring")!;
+    for (const id of ["g-a", "g-b", "g-c"]) {
+      const member = target.elements().find((element) => element.id === id)!;
+      expect(member.x).toBeGreaterThan(ring.x);
+      expect(member.y).toBeGreaterThan(ring.y);
+      expect(member.x + member.width).toBeLessThan(ring.x + ring.width);
+      expect(member.y + member.height).toBeLessThan(ring.y + ring.height);
+    }
+  });
+
+  it("does the same when the whole thing is laid out again", async () => {
+    const target = board(scene.elements);
+    expect(defects(await tidy(target, { layout: "relayout" }))).toEqual([]);
+    const ring = target.elements().find((element) => element.id === "g-ring")!;
+    const member = target.elements().find((element) => element.id === "g-b")!;
+    expect(member.x).toBeGreaterThan(ring.x);
+    expect(member.x + member.width).toBeLessThan(ring.x + ring.width);
+  });
+});
+
+describe("what tidy refuses to break", () => {
+  it("never records a line as a bound arrow on a shape", async () => {
+    const scene = messyScene("crooked-signup");
+    const asLines = scene.elements.map((element) => element.type === "arrow"
+      ? { ...element, type: "line" }
+      : element);
+    const target = board(asLines);
+    const result = await tidy(target);
+
+    expect(result.bound).toBe(0);
+    for (const element of target.elements()) {
+      expect(element.boundElements ?? []).not.toContainEqual(
+        expect.objectContaining({ type: "arrow" }),
+      );
+      if (element.type !== "line") continue;
+      expect((element as { startBinding?: unknown }).startBinding).toBeUndefined();
+    }
+  });
+
+  it("carries a loose note along with the shape it was written beside", async () => {
+    const scene = messyScene("half-connected-flow");
+    const target = board(scene.elements);
+    const before = scene.elements.find((element) => element.id === "h-aside")!;
+    await tidy(target);
+    const after = target.elements().find((element) => element.id === "h-aside")!;
+    // Review is the box it sits nearest, so that is the one it follows,
+    // rather than staying put while the grid packs together on top of it.
+    const nearestBefore = scene.elements.find((element) => element.id === "h-b")!;
+    const nearestAfter = target.elements().find((element) => element.id === "h-b")!;
+    expect({ dx: after.x - before.x, dy: after.y - before.y })
+      .toEqual({ dx: nearestAfter.x - nearestBefore.x, dy: nearestAfter.y - nearestBefore.y });
+  });
+
+  it("takes a re-pointed arrow off the shape it left", async () => {
+    const scene = messyScene("crooked-signup");
+    // The person had already bound this arrow to the wrong box by hand.
+    const seeded = scene.elements.map((element) => {
+      if (element.id === "a-1") {
+        return { ...element, startBinding: { elementId: "s-home" } };
+      }
+      if (element.id === "s-home") {
+        return { ...element, boundElements: [{ id: "a-1", type: "arrow" }] };
+      }
+      return element;
+    });
+    const target = board(seeded);
+    await tidy(target);
+
+    const arrow = target.elements().find((element) => element.id === "a-1")!;
+    const start = (arrow as { startBinding?: { elementId?: string } }).startBinding!.elementId;
+    const abandoned = target.elements().find((element) => element.id === "s-home")!;
+    if (start !== "s-home") {
+      expect(abandoned.boundElements ?? []).not.toContainEqual({ id: "a-1", type: "arrow" });
     }
   });
 });
