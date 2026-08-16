@@ -112,6 +112,21 @@ describe("diagram themes", () => {
     expect(style.backgroundColor).toBe("transparent");
     expect(style.strokeColor).toBe("#1e1e1e");
   });
+
+  it("keeps a themed board's strongest fill for the nodes that asked for it", () => {
+    // Every colour-forward theme defaults unroled nodes to its primary hue,
+    // so the wash is the only thing between "this one matters" and "all of
+    // them look like they matter".
+    for (const theme of [THEMES.ocean, THEMES.forest, THEMES.sunset, THEMES.grape]) {
+      const anonymous = resolveNodeStyle(theme, undefined);
+      const named = resolveNodeStyle(theme, "primary");
+      expect(anonymous.backgroundColor).toBe(theme.entries[theme.defaultRole].soft);
+      expect(anonymous.backgroundColor).not.toBe(named.backgroundColor);
+      // Saying so out loud still gets the full fill, whatever the role.
+      expect(resolveNodeStyle(theme, undefined, "strong").backgroundColor)
+        .toBe(theme.entries[theme.defaultRole].fill);
+    }
+  });
 });
 
 describe("resolveNodeStyle", () => {
