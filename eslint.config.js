@@ -6,7 +6,8 @@ import tseslint from "typescript-eslint";
 // stylistic rules: only correctness and dead-code checks.
 export default tseslint.config(
   {
-    ignores: ["out/**", "release/**", "coverage/**", "node_modules/**", "site/**", ".e2e/**"],
+    // relay/ is a separate project with its own tsconfig and test runner.
+    ignores: ["out/**", "release/**", "coverage/**", "node_modules/**", "site/**", ".e2e/**", "relay/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
