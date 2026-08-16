@@ -77,4 +77,10 @@ describe("assertSpawnModelAllowed", () => {
     expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-9-secret"))
       .toThrow(/gpt-9-secret.*gpt-5\.6-luna, gpt-5\.4-mini.*Settings/s);
   });
+
+  it("leaves an external engine's own model names alone", () => {
+    expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "haiku", "claude")).not.toThrow();
+    expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-5.3-codex", "codex")).not.toThrow();
+    expect(() => assertSpawnModelAllowed(DEFAULT_SETTINGS, "gpt-9-secret", "pi")).toThrow();
+  });
 });

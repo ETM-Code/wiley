@@ -24,13 +24,6 @@ import { ClaudeStreamParser } from "./claude-protocol";
 import { workerEnv } from "./cli-detect";
 import type { WorkerEventDraft, WorkerExit, WorkerSpec, WorkerTransport } from "./worker-types";
 
-/**
- * An unpinned run inherits whatever model the installed CLI defaults to,
- * which measured 7 to 17 times the cost of a pinned cheap one. Workers do
- * delegated legwork, so the floor is deliberately the cheap fast model.
- */
-export const DEFAULT_CLAUDE_WORKER_MODEL = "haiku";
-
 const PERMISSION_MODES: readonly PermissionMode[] = [
   "default",
   "acceptEdits",
@@ -73,7 +66,6 @@ export function claudeQueryOptions(input: ClaudeOptionsInput): Options {
   const { spec, worker, cwd, env, home } = input;
   const options: Options = {
     cwd,
-    model: spec.model ?? worker.model ?? DEFAULT_CLAUDE_WORKER_MODEL,
     permissionMode: claudePermissionMode(worker.permissionMode),
     // The env REPLACES the child's environment wholesale, so the augmented
     // PATH has to be built on top of ours rather than instead of it.
@@ -83,6 +75,11 @@ export function claudeQueryOptions(input: ClaudeOptionsInput): Options {
     // belong to their interactive sessions, not to Wiley's background work.
     settingSources: [],
   };
+  // No pinned model means no --model at all, so the run lands on whatever the
+  // user's own CLI is configured to use. Pinning a cheap one is much cheaper
+  // per turn (7 to 17 times, measured), but that is the user's call to make.
+  const model = spec.model ?? worker.model;
+  if (model) options.model = model;
   if (input.executable) options.pathToClaudeCodeExecutable = input.executable;
   if (worker.allowedTools?.length) options.allowedTools = worker.allowedTools;
   if (worker.disallowedTools?.length) options.disallowedTools = worker.disallowedTools;

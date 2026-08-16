@@ -9,22 +9,19 @@
 import type { WorkerProbes } from "../../shared/contracts";
 import { assertSpawnModelAllowed } from "../pi/session-models";
 import type { WileySettings } from "../settings/settings-schema";
-import { DEFAULT_CLAUDE_WORKER_MODEL } from "./claude-worker";
 import type { CliWorkerKind, WorkerKind } from "./worker-types";
 import { isCliWorkerKind } from "./worker-types";
 
-/** What a worker actually runs on, before the allowlist has its say. */
+/**
+ * What a worker runs on. Unset means unset: no model flag reaches the CLI, so
+ * the run lands on whatever the user configured that engine to default to.
+ */
 export function resolveWorkerModel(
   kind: CliWorkerKind,
   settings: WileySettings,
   requested?: string,
 ): string | undefined {
-  const configured = requested ?? settings.workers[kind].model;
-  if (configured) return configured;
-  // Codex without a pinned model uses the user's own codex default, which is
-  // their choice. Claude without one inherits an expensive CLI default, so it
-  // gets a cheap floor instead.
-  return kind === "claude" ? DEFAULT_CLAUDE_WORKER_MODEL : undefined;
+  return requested ?? settings.workers[kind].model;
 }
 
 export interface WorkerSpawnRequest {
@@ -51,6 +48,8 @@ export function assertWorkerSpawnAllowed(request: WorkerSpawnRequest): void {
   if (probe && !probe.available) {
     throw new Error(`A ${kind} worker cannot start on this machine: ${probe.reason ?? "it is unavailable."}`);
   }
+  // Kind-aware by design: this is a no-op for an external engine, whose model
+  // names belong to the user's CLI rather than to the agent provider's catalog.
   const model = resolveWorkerModel(kind, settings, request.model);
-  if (model) assertSpawnModelAllowed(settings, model);
+  if (model) assertSpawnModelAllowed(settings, model, kind);
 }

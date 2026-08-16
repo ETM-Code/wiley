@@ -8,7 +8,6 @@ import {
   claudeQueryOptions,
   claudeThinkingTokens,
   claudeUserMessage,
-  DEFAULT_CLAUDE_WORKER_MODEL,
 } from "../src/main/workers/claude-worker";
 import { codexArgs } from "../src/main/workers/codex-worker";
 import type { WorkerSpec } from "../src/main/workers/worker-types";
@@ -36,8 +35,9 @@ function options(worker: WorkerSettings, workerSpec: WorkerSpec = spec) {
 }
 
 describe("claude query options", () => {
-  it("always pins a model, falling back to the cheap one", () => {
-    expect(options(claudeSettings()).model).toBe(DEFAULT_CLAUDE_WORKER_MODEL);
+  it("sends no model at all until one is pinned, so the CLI's own default wins", () => {
+    expect(options(claudeSettings()).model).toBeUndefined();
+    expect("model" in options(claudeSettings())).toBe(false);
     expect(options(claudeSettings({ model: "sonnet" })).model).toBe("sonnet");
     expect(options(claudeSettings({ model: "sonnet" }), { ...spec, model: "opus" }).model).toBe("opus");
   });
