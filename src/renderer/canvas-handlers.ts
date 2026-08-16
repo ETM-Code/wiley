@@ -7,7 +7,7 @@ import { updateDiagram } from "./canvas/diagram-update";
 import { exportScenePng } from "./canvas/export";
 import { applyPatch, connectElements } from "./canvas/patch";
 import { clearDiagramPreview } from "./canvas/preview-state";
-import { diagramIndex, sceneSummary } from "./canvas/scene-summary";
+import { diagramIndex, humanGraphOf, sceneSummary } from "./canvas/scene-summary";
 import { addElements } from "./canvas/skeletons";
 
 export { MODEL_GRID_SIZE, snapModelCoordinate } from "./diagram-layout";
@@ -35,7 +35,7 @@ export async function handleCanvasRequest(
       return sceneSummary(api.getSceneElements());
     case "get-scene-full": {
       const elements = api.getSceneElements();
-      return { elements, diagrams: diagramIndex(elements) };
+      return { elements, diagrams: diagramIndex(elements), humanGraph: humanGraphOf(elements) };
     }
     case "export-png":
       return exportScenePng(api);

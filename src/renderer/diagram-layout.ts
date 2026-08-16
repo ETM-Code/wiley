@@ -70,6 +70,20 @@ export type GraphNode = {
   rounded?: boolean;
   /** The container this node is a member of. */
   container?: string;
+  /**
+   * Set to "human" when this node stands for an element the person drew. Such
+   * a node is never emitted: it is already on the board, and the layout only
+   * treats its box as occupied. See canvas/human-merge.
+   */
+  origin?: "human";
+  /** The real element a human-origin node stands for. */
+  elementId?: string;
+  /**
+   * An exact box to lay the node out at, instead of one measured from its
+   * label. Tidy mode uses it to rearrange the person's own shapes without
+   * resizing them.
+   */
+  size?: { width: number; height: number };
 };
 
 export type ContainerRender = DiagramContainerRender;
@@ -531,6 +545,12 @@ function validateGraph(params: LayoutParams): void {
     }
     requireMember(node.role, NODE_ROLES, `node ${node.id} role`);
     requireMember(node.emphasis, NODE_EMPHASES, `node ${node.id} emphasis`);
+    if (node.origin === "human" && !node.elementId) {
+      throw new Error(`Diagram node ${node.id} claims a human element without naming one`);
+    }
+    if (node.origin === "human" && node.container !== undefined) {
+      throw new Error(`Diagram node ${node.id} is the user's own and cannot join a container`);
+    }
     nodeIds.add(node.id);
   }
   validateContainers(params, nodeIds);
@@ -1061,7 +1081,9 @@ export async function planDiagramLayout(
   }
   const sizes = new Map(params.nodes.map((node) => [
     node.id,
-    nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0), direction),
+    node.size
+      ? { width: snapUpSize(node.size.width), height: snapUpSize(node.size.height) }
+      : nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0), direction),
   ]));
   const containers = planContainers(params);
   const input: GeometryInput = {
