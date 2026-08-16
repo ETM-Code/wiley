@@ -4,6 +4,8 @@ import type {
   BoardSnapshot,
   CanvasRequest,
   CanvasResponse,
+  ProjectEntry,
+  ProjectView,
   RuntimeConfig,
   SecretName,
   SettingsPatch,
@@ -22,6 +24,8 @@ export type {
   BoardSnapshot,
   CanvasRequest,
   CanvasResponse,
+  ProjectEntry,
+  ProjectView,
   RuntimeConfig,
   SecretName,
   SettingsPatch,
@@ -82,6 +86,9 @@ type PreloadApi = {
   onRuntimeState?: (listener: (status: RuntimeStateLike) => void) => Unsubscribe | void;
   submitBoardSnapshot?: (snapshot: BoardSnapshot) => Promise<unknown>;
   getRuntimeConfig?: () => Promise<Partial<RuntimeConfig>>;
+  getProjects?: () => Promise<ProjectView>;
+  openProject?: (path?: string) => Promise<ProjectView>;
+  onProjectChanged?: (listener: (view: ProjectView) => void) => Unsubscribe | void;
   getSettings?: () => Promise<SettingsView>;
   updateSettings?: (patch: SettingsPatch) => Promise<SettingsView>;
   setSecret?: (name: SecretName, value: string) => Promise<SettingsView>;
@@ -156,6 +163,10 @@ function createBrowserApi(): PreloadApi {
     onAgentEvent: (listener) => subscribe("agent:events", listener),
     submitBoardSnapshot: (snapshot) => fetchJson("/api/board-snapshot", { method: "POST", body: JSON.stringify(snapshot) }),
     getRuntimeConfig: () => fetchJson<RuntimeConfig>("/api/runtime-config"),
+    // No openProject: the browser shell serves the project it was started in,
+    // and the view it returns says so, so the picker never appears in a tab.
+    getProjects: () => fetchJson<ProjectView>("/api/projects"),
+    onProjectChanged: (listener) => subscribe("projects:changed", listener),
     getSettings: () => fetchJson<SettingsView>("/api/settings"),
     updateSettings: (patch) => fetchJson<SettingsView>("/api/settings", { method: "POST", body: JSON.stringify(patch) }),
     setSecret: (name, value) =>
@@ -328,6 +339,25 @@ export const bridge = {
 
   onSettingsChanged(listener: (settings: SettingsView) => void): Unsubscribe {
     return optionalSubscription(preload()?.onSettingsChanged?.(listener));
+  },
+
+  /**
+   * The open project and the ones opened before it. A host with no project
+   * flow at all reports none open and no way to open one, which reads the
+   * same as a host that simply cannot switch.
+   */
+  async getProjects(): Promise<ProjectView> {
+    return (await preload()?.getProjects?.()) ?? { recent: [], canOpen: false };
+  },
+
+  async openProject(path?: string): Promise<ProjectView> {
+    const open = preload()?.openProject;
+    if (!open) throw new Error("This host works in one project and cannot open another");
+    return open(path);
+  },
+
+  onProjectChanged(listener: (view: ProjectView) => void): Unsubscribe {
+    return optionalSubscription(preload()?.onProjectChanged?.(listener));
   },
 
   async isVoiceDisabled(): Promise<boolean> {

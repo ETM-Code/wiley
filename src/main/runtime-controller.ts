@@ -9,6 +9,7 @@ import { type SettingsStore } from "./settings/settings-store";
 export class RuntimeController {
   #microphoneEnabled = false;
   #sessionStartedAt = new Date().toISOString();
+  #unsubscribe: Array<() => void> = [];
 
   constructor(
     private readonly ledger: RuntimeLedger,
@@ -18,10 +19,20 @@ export class RuntimeController {
     private readonly send: (channel: string, payload: unknown) => void,
     private readonly settings: SettingsStore,
   ) {
-    this.pi.onEvent((event) => void this.#onAgentEvent(event));
+    this.#unsubscribe.push(this.pi.onEvent((event) => void this.#onAgentEvent(event)));
     // Status is what the voice model reads back to the user, so a settings
     // change has to show up there immediately rather than at the next job.
-    this.settings.onChange(() => this.#broadcastState());
+    this.#unsubscribe.push(this.settings.onChange(() => this.#broadcastState()));
+  }
+
+  /**
+   * Lets go of the settings store and the Pi runtime. Both outlive a project
+   * switch, and a controller still subscribed to them would keep broadcasting
+   * the state of a project nobody has open any more.
+   */
+  dispose(): void {
+    for (const unsubscribe of this.#unsubscribe) unsubscribe();
+    this.#unsubscribe = [];
   }
 
   get sessionStartedAt(): string {

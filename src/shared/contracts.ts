@@ -38,6 +38,9 @@ export const IPC = {
   settingsSecretClear: "settings:secret-clear",
   settingsProbe: "settings:probe",
   settingsChooseDirectory: "settings:choose-directory",
+  projectsGet: "projects:get",
+  projectsOpen: "projects:open",
+  projectsChanged: "projects:changed",
   cloudTestConnection: "cloud:test-connection",
   workersOpenTerminal: "workers:open-terminal",
   workersNewTerminalSession: "workers:new-terminal-session",
@@ -280,6 +283,9 @@ export interface BoardApi {
    */
   activateCanvas(): Promise<{ ok: true }>;
   getRuntimeConfig(): Promise<RuntimeConfig>;
+  getProjects(): Promise<ProjectView>;
+  /** Opens a project folder, asking with a native picker when none is named. */
+  openProject(path?: string): Promise<ProjectView>;
   getSettings(): Promise<SettingsView>;
   updateSettings(patch: SettingsPatch): Promise<SettingsView>;
   setSecret(name: SecretName, value: string): Promise<SettingsView>;
@@ -291,6 +297,7 @@ export interface BoardApi {
   openWorkerTerminal(workerId: string): Promise<TerminalHandoff>;
   newTerminalSession(kind: WorkerKind): Promise<TerminalHandoff>;
   onSettingsChanged(callback: (settings: SettingsView) => void): () => void;
+  onProjectChanged(callback: (view: ProjectView) => void): () => void;
   onVoiceMessage(callback: (message: VoiceInjection) => void): () => void;
   onCanvasRequest(callback: (request: CanvasRequest) => void): () => void;
   respondCanvasRequest(response: CanvasResponse): void;

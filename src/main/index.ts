@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { app, BrowserWindow, dialog, nativeTheme, net, protocol, safeStorage, session } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeTheme, net, protocol, safeStorage, session } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SqliteRuntimeLedger } from "./ledger";
@@ -8,23 +8,36 @@ import { CanvasBridge } from "./canvas-bridge";
 import { VoiceBridge } from "./voice-bridge";
 import { PiRuntime } from "./pi-runtime";
 import { RuntimeController } from "./runtime-controller";
-import { registerIpc } from "./ipc";
-import { IPC } from "../shared/contracts";
+import { appMenuTemplate } from "./app-menu";
+import { chooseProjectDirectory, registerIpc, type RuntimeHandles } from "./ipc";
+import { IPC, type ProjectView } from "../shared/contracts";
 import { env } from "../shared/env";
 import { isTrustedOrigin } from "./trusted-origin";
 import { resolveSkillsDir } from "./skills";
-import { resolvePackagedPath, resolveProjectDir, sweepStaleHandoffs } from "./host-environment";
+import { resolvePackagedPath, sweepStaleHandoffs } from "./host-environment";
+import {
+  adoptGlobalLedger,
+  buildProjectView,
+  projectDataDir,
+  projectName,
+  resolveLaunchProject,
+  toProjectPath,
+} from "./projects";
 import { createSecretStore } from "./settings/secret-store";
 import { SettingsService } from "./settings/settings-service";
 import { SettingsStore } from "./settings/settings-store";
+import { recordRecentProject } from "./settings/settings-schema";
 import { createWorkerProbes } from "./workers/worker-runtime";
 
 let mainWindow: BrowserWindow | undefined;
-let pi: PiRuntime | undefined;
-let ledger: SqliteRuntimeLedger | undefined;
-let canvas: CanvasBridge | undefined;
-let voice: VoiceBridge | undefined;
+/** Everything bound to the open project, or nothing while the picker is up. */
+let active: RuntimeHandles | undefined;
 let disposeIpc: (() => void) | undefined;
+let settingsStore: SettingsStore | undefined;
+let settingsService: SettingsService | undefined;
+let skillsDir: string | undefined;
+/** Where the pre-project global ledger lived, and still lives as a .bak. */
+let legacyDataDir: string | undefined;
 
 /** Reports delivery so callers with no live window fail fast instead of waiting for a timeout. */
 function sendToRenderer(channel: string, payload: unknown): boolean {
@@ -99,6 +112,11 @@ function windowBackgroundColor(): string {
   return nativeTheme.shouldUseDarkColors ? "#121212" : "#ffffff";
 }
 
+/** Which project this is, so two open Wileys are not the same window twice. */
+function windowTitle(): string {
+  return active ? `Wiley — ${projectName(active.projectDir)}` : "Wiley";
+}
+
 async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
@@ -106,7 +124,7 @@ async function createWindow(): Promise<BrowserWindow> {
     minWidth: 900,
     minHeight: 620,
     backgroundColor: windowBackgroundColor(),
-    title: "Wiley",
+    title: windowTitle(),
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -143,6 +161,113 @@ async function createWindow(): Promise<BrowserWindow> {
   return win;
 }
 
+function requireSettings(): SettingsStore {
+  if (!settingsStore) throw new Error("Settings are not open yet");
+  return settingsStore;
+}
+
+/** The open project, the ones opened before it, and whether more can be opened. */
+function projectView(): ProjectView {
+  return buildProjectView({
+    current: active?.projectDir,
+    recent: requireSettings().get().recentProjects,
+    canOpen: true,
+  });
+}
+
+/**
+ * Builds everything a project needs, in the order it needs it. Nothing here
+ * outlives the project: the ledger, the board, the voice bridge and the Pi
+ * runtime are all rebuilt against the new folder when the user switches, which
+ * is what makes the catastrophic-command guard and the worker sandbox point at
+ * the project actually open rather than the one opened at launch.
+ */
+async function startRuntime(projectDir: string): Promise<void> {
+  const settings = requireSettings();
+  const dataDir = env("DATA_DIR")?.trim() || projectDataDir(projectDir);
+  if (legacyDataDir) {
+    const adopted = adoptGlobalLedger({ legacyDir: legacyDataDir, dataDir });
+    if (adopted) {
+      console.log(`Adopted the previous shared ledger into ${adopted.to}; the original is kept at ${adopted.backup}`);
+    }
+  }
+  const ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
+  await ledger.initialize();
+  const transcript = new TranscriptStore(ledger);
+  const canvas = new CanvasBridge(ledger, (request) => sendToRenderer(IPC.canvasRequest, request));
+  const voice = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
+  canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
+  const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice, skillsDir, settings, dataDir);
+  await pi.initialize();
+  // The agent changes settings through exactly the service the panel uses, so
+  // a change it makes normalizes, persists, and broadcasts the same way.
+  if (settingsService) pi.useSettingsService(settingsService);
+  const controller = new RuntimeController(ledger, transcript, pi, canvas, sendToRenderer, settings);
+  await controller.recoverInterruptedJobs();
+  active = { projectDir, controller, transcript, canvas, voice, ledger, pi };
+  console.log(`Workspace: ${projectDir} (data in ${dataDir})`);
+}
+
+/**
+ * Winds the open project down completely. Awaiting the Pi runtime's disposal
+ * is the part that matters: it kills every worker process group, and a worker
+ * from the old project still writing files while a new one starts is exactly
+ * the failure the project boundary exists to prevent.
+ */
+async function stopRuntime(): Promise<void> {
+  const current = active;
+  if (!current) return;
+  active = undefined;
+  current.controller.dispose();
+  current.voice.close();
+  current.canvas.failPending("Wiley is switching projects");
+  await current.pi.dispose();
+  current.ledger.close();
+}
+
+/**
+ * Switches to a project without restarting the app: the old runtime is gone
+ * before the new one exists, the registry records the opening, and the
+ * renderer is told to drop the board it was showing and read the new
+ * project's own.
+ */
+async function openProject(projectDir: string): Promise<ProjectView> {
+  await stopRuntime();
+  await startRuntime(projectDir);
+  const settings = requireSettings();
+  settings.update({
+    lastProject: projectDir,
+    recentProjects: recordRecentProject(settings.get().recentProjects, projectDir),
+  });
+  const view = projectView();
+  mainWindow?.setTitle(windowTitle());
+  installAppMenu();
+  sendToRenderer(IPC.projectsChanged, view);
+  return view;
+}
+
+function installAppMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(projectView(), {
+    openProject: () => void promptForProject(),
+    openRecent: (target) => void openProject(target).catch(reportProjectFailure),
+  })));
+}
+
+/** Asks for a folder and opens it. Cancelling leaves everything as it was. */
+async function promptForProject(owner?: BrowserWindow): Promise<ProjectView> {
+  const chosen = await chooseProjectDirectory(owner ?? mainWindow ?? null, active?.projectDir);
+  if (!chosen) return projectView();
+  return openProject(chosen);
+}
+
+function reportProjectFailure(error: unknown): void {
+  console.error("Could not open the project", error);
+  dialog.showErrorBox(
+    "Wiley could not open that project",
+    error instanceof Error ? error.stack ?? error.message : String(error),
+  );
+}
+
 async function bootstrap(): Promise<void> {
   installAppProtocol();
   installSecurityPolicy();
@@ -151,25 +276,11 @@ async function bootstrap(): Promise<void> {
   // Read directly, not through env(): WILEY_CONFIG_DIR points at saved secrets
   // and never had a board-ai spelling, so it gets no deprecated alias.
   const configDir = process.env.WILEY_CONFIG_DIR?.trim() || app.getPath("userData");
-  const settingsStore = SettingsStore.open(configDir, createSecretStore({ dir: configDir, safeStorage }));
-  const dataDir = env("DATA_DIR")?.trim() || app.getPath("userData");
-  ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
-  await ledger.initialize();
-  const transcript = new TranscriptStore(ledger);
-  const canvasBridge = new CanvasBridge(
-    ledger,
-    (request) => sendToRenderer(IPC.canvasRequest, request),
-  );
-  const voiceBridge = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
-  canvas = canvasBridge;
-  voice = voiceBridge;
-  canvasBridge.onHumanChange = (summary) => voiceBridge.pushBoardUpdate(summary);
-  const projectDir = resolveProjectDir({
-    packaged: app.isPackaged,
-    home: app.getPath("home"),
-    configured: settingsStore.get().projectDir,
-  });
-  const skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
+  settingsStore = SettingsStore.open(configDir, createSecretStore({ dir: configDir, safeStorage }));
+  // Where every workspace's ledger used to live, before a project carried its
+  // own. Only consulted to hand that history to the first project opened.
+  legacyDataDir = app.getPath("userData");
+  skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
   // A packaged app inherits launchd's PATH, which knows about none of the
   // places a CLI actually gets installed. Ask the user's login shell before
   // anything spawns a worker.
@@ -177,32 +288,42 @@ async function bootstrap(): Promise<void> {
     process.env.PATH = resolvePackagedPath({ currentPath: process.env.PATH, home: app.getPath("home") });
     console.log(`PATH for this run: ${process.env.PATH.split(path.delimiter).length} entries, ${process.env.PATH.length} characters`);
   }
-  console.log(`Workspace: ${projectDir}`);
-  pi = new PiRuntime(projectDir, ledger, transcript, canvasBridge, voiceBridge, skillsDir, settingsStore, dataDir);
-  await pi.initialize();
-  const settings = new SettingsService({
+  settingsService = new SettingsService({
     store: settingsStore,
-    modelRuntime: () => pi?.modelRuntime,
-    probeWorkers: createWorkerProbes(() => settingsStore.get()),
+    modelRuntime: () => active?.pi.modelRuntime,
+    probeWorkers: createWorkerProbes(() => requireSettings().get()),
   });
-  // The agent changes settings through exactly the service the panel uses, so
-  // a change it makes normalizes, persists, and broadcasts the same way.
-  pi.useSettingsService(settings);
-  const runtime = new RuntimeController(ledger, transcript, pi, canvasBridge, sendToRenderer, settingsStore);
-  await runtime.recoverInterruptedJobs();
   disposeIpc = registerIpc({
-    runtime,
-    transcript,
-    canvas: canvasBridge,
-    voice: voiceBridge,
-    ledger,
-    pi,
-    settings,
+    runtime: () => active,
+    projects: {
+      view: projectView,
+      open: (input, owner) => (input.path
+        ? openProject(toProjectPath(input.path, app.getPath("home")) ?? input.path)
+        : promptForProject(owner)),
+    },
+    settings: settingsService,
     sendToRenderer,
   });
+
+  const launch = resolveLaunchProject({
+    settings: settingsStore.get(),
+    home: app.getPath("home"),
+  });
+  if (launch) await startRuntime(launch);
+  installAppMenu();
   mainWindow = await createWindow();
+  if (launch) {
+    // Recorded after the window exists, so a project that fails to start is
+    // never remembered as the one to reopen next time.
+    requireSettings().update({
+      lastProject: launch,
+      recentProjects: recordRecentProject(requireSettings().get().recentProjects, launch),
+    });
+  } else {
+    console.log("No project to reopen: the window opens on the project picker");
+  }
   mainWindow.on("closed", () => {
-    canvasBridge.failPending();
+    active?.canvas.failPending();
     mainWindow = undefined;
   });
 }
@@ -235,12 +356,15 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   disposeIpc?.();
-  voice?.close();
-  canvas?.failPending("Application is closing");
-  void pi?.dispose();
-  ledger?.close();
+  const current = active;
+  if (!current) return;
+  current.controller.dispose();
+  current.voice.close();
+  current.canvas.failPending("Application is closing");
+  void current.pi.dispose();
+  current.ledger.close();
 });
 
 // dispose() is asynchronous and quitting does not wait for it, so this is the
 // sweep that guarantees no worker process group outlives the app.
-process.on("exit", () => pi?.killWorkersSync());
+process.on("exit", () => active?.pi.killWorkersSync());
