@@ -47,6 +47,10 @@ export interface PiToolHost {
   spawnSubagent(input: { task: string; kind?: WorkerKind; model?: string; effort?: string }): Promise<string>;
   checkSubagent(id: string): { status: string; report?: string; kind?: string };
   answerSubagent(qid: string, answer: string): void;
+  /** The settings the panel shows, with no secret value in them. */
+  readSettings(): Promise<unknown>;
+  /** Applies a patch and answers with the paths that actually changed. */
+  writeSettings(patch: unknown, summary?: string): Promise<string[]>;
 }
 
 export function toolText(value: unknown) {
@@ -345,6 +349,26 @@ function rootOnlyTools(host: PiToolHost): ToolDefinition[] {
       execute: async (_id, params) => {
         host.answerSubagent(params.qid, params.answer);
         return toolText("Delivered.");
+      },
+    }),
+    defineTool({
+      name: "get_settings",
+      label: "Get Settings",
+      description: "Read the user's current settings: the agent model and thinking level, fast mode, the voice model and voice, the claude and codex worker configuration, which terminal a handoff opens in, and which CLIs this machine actually has. Secret values are never included; the API key shows only as present or absent. Read this before changing a setting so you know what it is now.",
+      parameters: Type.Object({}),
+      execute: async () => toolText(await host.readSettings()),
+    }),
+    defineTool({
+      name: "update_settings",
+      label: "Update Settings",
+      description: "Change the user's settings when they ask, rather than telling them to open the panel. patch carries only the fields to change, in the same shape get_settings returns: {\"agent\":{\"fastMode\":false}}, {\"voice\":{\"model\":\"gpt-realtime-2.1\"}}, {\"workers\":{\"claude\":{\"enabled\":true,\"model\":\"haiku\"}}}, {\"terminalApp\":\"Ghostty\"}. null clears an optional field back to its default, and leaving a worker model unset means that engine runs on whatever this machine defaults to. API keys and tokens cannot be set here. summary is the one short sentence spoken to the user, in first person, past tense, such as \"Switched fast mode off.\". The result lists the settings that actually changed, which can be fewer than you asked for when a value was out of range or not recognised.",
+      parameters: Type.Object({
+        patch: Type.Any(),
+        summary: Type.Optional(Type.String()),
+      }, { additionalProperties: false }),
+      execute: async (_id, params) => {
+        const changed = await host.writeSettings(params.patch, params.summary);
+        return toolText(changed.length ? { changed } : "Nothing changed; the settings already had those values.");
       },
     }),
   ];

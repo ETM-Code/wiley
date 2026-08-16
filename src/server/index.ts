@@ -181,6 +181,9 @@ const settings = new SettingsService({
   modelRuntime: () => pi.modelRuntime,
   probeWorkers: createWorkerProbes(() => settingsStore.get()),
 });
+// The agent changes settings through exactly the service the panel uses, so a
+// change it makes normalizes, persists, and broadcasts the same way.
+pi.useSettingsService(settings);
 const runtime = new RuntimeController(
   ledger,
   transcript,
