@@ -29,6 +29,7 @@ import type { Box } from "../diagram-routes";
 import {
   assertDiagramQuality,
   assertQualityClearOfHuman,
+  assertRenderedQuality,
   humanCollisionError,
   placementCollisions,
   QUALITY_EVALUATION_LIMIT,
@@ -382,6 +383,7 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
         evaluateConvertedScene(created as unknown as Parameters<typeof evaluateConvertedScene>[0], plan),
       )
     : quality;
+  if (rendered) assertRenderedQuality(rendered);
 
   const createdIds = new Set(created.map((element) => element.id));
   // Always rebased on the live scene: the human may be drawing while this runs.
