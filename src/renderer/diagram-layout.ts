@@ -32,7 +32,9 @@ import {
 import {
   MAX_ROUTE_REPAIR_ITERATIONS,
   PORT_SPACING,
+  geometryIntersectsBox,
   placeEdgeLabel,
+  routeGeometry,
   planRoutes,
   routeDefects,
   type Box as RouteBox,
@@ -237,6 +239,13 @@ const TITLE_HEADROOM = 60;
 export const EDGE_LABEL_FONT_SIZE = 16;
 /** Clear space a bound label needs on either side before auto mode uses one. */
 export const BOUND_LABEL_CLEARANCE = 24;
+/**
+ * Clear space two labels owe each other. Below this the reader stops seeing
+ * two captions and starts seeing one run of text. Placement and the quality
+ * checks read the same number, so a label is never put somewhere the checks
+ * will then complain about.
+ */
+export const LABEL_MIN_GAP = 10;
 /** A curved arrow's midpoint sits off the polyline; allow for the sag. */
 export const CURVED_LABEL_SLACK = 4;
 // fontFamily 5 in Excalidraw's FONT_FAMILY map; the editor loads this face,
@@ -642,7 +651,18 @@ function dedupePoints(points: Array<{ x: number; y: number }>): Array<{ x: numbe
     || point.y !== points[index - 1].y);
 }
 
-type EdgeGeometry = { points: RoutePoint[]; rounded: boolean; label?: RoutePoint };
+type EdgeGeometry = {
+  points: RoutePoint[];
+  rounded: boolean;
+  label?: RoutePoint;
+  /**
+   * Set when the layout deliberately reserved no room for this edge's label,
+   * because it is short enough to ride the arrow. Without it, "no label came
+   * back" would be read as "the layout could not place one", which forces the
+   * label onto the arrow even when it does not fit.
+   */
+  placeLabel?: boolean;
+};
 
 type LayoutGeometry = {
   /** Snapped top-left corners in layout-local coordinates. */
@@ -805,6 +825,12 @@ type GeometryInput = {
   layerSpacing: number;
   containers: ContainerPlan | null;
   containerLabelWidths: ReadonlyMap<string, number>;
+  /**
+   * Whether this edge's label needs room of its own in the layout. Reserving
+   * room for a centred label costs a whole extra layer, so a label that will
+   * ride its arrow answers false and the flow keeps one rhythm.
+   */
+  reserveLabel?: (edge: GraphEdge) => boolean;
 };
 
 const CONTAINER_PADDING_OPTION = `[top=${CONTAINER_PADDING.top},left=${CONTAINER_PADDING.left},bottom=${CONTAINER_PADDING.bottom},right=${CONTAINER_PADDING.right}]`;
@@ -821,7 +847,7 @@ function elkGraph(input: GeometryInput, layoutOptions: Record<string, string>): 
     id: `edge-${index}`,
     sources: [edge.from],
     targets: [edge.to],
-    ...(edge.label?.trim()
+    ...(edge.label?.trim() && (input.reserveLabel?.(edge) ?? true)
       ? {
           labels: [{
             text: edge.label.trim(),
@@ -882,28 +908,44 @@ function elkSection(result: ElkNode, index: number) {
  * arrows into one line.
  */
 async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutcome): Promise<LayoutGeometry> {
-  const result = await elk.layout(elkGraph(input, {
-    "elk.algorithm": "layered",
-    "elk.direction": input.direction,
-    "elk.edgeRouting": "ORTHOGONAL",
-    "elk.spacing.nodeNode": String(input.nodeSpacing),
-    "elk.layered.spacing.nodeNodeBetweenLayers": String(input.layerSpacing),
-    // Channel spacing stays above one grid cell so snapping can never merge
-    // two parallel routes or a route into a node border.
-    "elk.spacing.edgeNode": "40",
-    "elk.spacing.edgeEdge": "24",
-    "elk.layered.spacing.edgeNodeBetweenLayers": "32",
-    "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
-    "elk.spacing.edgeLabel": "10",
-    // A request lists its edges in the order the story is told, so the edge
-    // that closes a loop is the later one. ELK's default greedy cycle breaker
-    // ignores that and is free to reverse the forward edge instead, which
-    // turns a flow chart upside down and sends the retry edge the long way
-    // around the whole drawing. Model order breaks exactly the edges that
-    // point backwards against the declared order.
-    "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
-    "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-  }));
+  // A label only needs room of its own when it cannot fit in the channel the
+  // layer gap already provides. Asking ELK to reserve room for a centred
+  // label costs an entire extra layer, which is what made a chart carrying
+  // "yes" and "no" twice as long as the same chart without them.
+  const ridesTheArrow = (edge: GraphEdge): boolean => {
+    const text = edge.label?.trim();
+    if (!text || edge.labelMode === "standalone") return false;
+    // Inside a region the reserved room is also what keeps the label within
+    // its own borders, so a region's edges always pay for it.
+    if (input.containers && lowestCommonContainer(input.containers, edge.from, edge.to)) return false;
+    return measureText(text, EDGE_LABEL_FONT_SIZE).width + BOUND_LABEL_CLEARANCE <= input.layerSpacing;
+  };
+  const withheld = new Set(input.edges.filter(ridesTheArrow));
+  const result = await elk.layout(elkGraph(
+    { ...input, reserveLabel: (edge) => !withheld.has(edge) },
+    {
+      "elk.algorithm": "layered",
+      "elk.direction": input.direction,
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.spacing.nodeNode": String(input.nodeSpacing),
+      "elk.layered.spacing.nodeNodeBetweenLayers": String(input.layerSpacing),
+      // Channel spacing stays above one grid cell so snapping can never merge
+      // two parallel routes or a route into a node border.
+      "elk.spacing.edgeNode": "40",
+      "elk.spacing.edgeEdge": "24",
+      "elk.layered.spacing.edgeNodeBetweenLayers": "32",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
+      "elk.spacing.edgeLabel": "10",
+      // A request lists its edges in the order the story is told, so the edge
+      // that closes a loop is the later one. ELK's default greedy cycle breaker
+      // ignores that and is free to reverse the forward edge instead, which
+      // turns a flow chart upside down and sends the retry edge the long way
+      // around the whole drawing. Model order breaks exactly the edges that
+      // point backwards against the declared order.
+      "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
+      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+    },
+  ));
   const absolute = resolveAbsolute(result);
   const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
     const box = absolute.boxes.get(node.id);
@@ -930,7 +972,12 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
         exitPoint(fromPosition, fromSize, input.direction),
         entryPoint(toPosition, toSize, input.direction),
       ]);
-      return { points, rounded: false, ...(label ? { label } : {}) };
+      return {
+        points,
+        rounded: false,
+        ...(label ? { label } : {}),
+        ...(withheld.has(edge) ? { placeLabel: true } : {}),
+      };
     }),
   };
 }
@@ -1123,7 +1170,15 @@ export async function planDiagramLayout(
   const requested = params.layout?.algorithm ?? "layered";
   const direction = params.layout?.direction ?? "RIGHT";
   const nodeSpacing = Math.min(240, Math.max(60, snapModelCoordinate(params.layout?.nodeSpacing, 80)));
-  const layerSpacing = Math.min(360, Math.max(80, snapModelCoordinate(params.layout?.layerSpacing, 140)));
+  // A layer gap reads against the side of the node it separates. Nodes are
+  // wide and short, so the same number that looks right between two columns
+  // leaves a vertical flow strung out down the page: curated flow charts run
+  // roughly one node height between rows and one node width between columns.
+  const defaultLayerSpacing = portsSpreadAlongWidth(direction) ? 100 : 140;
+  const layerSpacing = Math.min(
+    360,
+    Math.max(80, snapModelCoordinate(params.layout?.layerSpacing, defaultLayerSpacing)),
+  );
 
   const degreeIn = new Map<string, number>();
   const degreeOut = new Map<string, number>();
@@ -1288,11 +1343,19 @@ function assemblePlan(
       ...size,
     };
   });
+  // Every route is known before any label is placed, so a label can be judged
+  // against the lines it does not own as well as the boxes.
+  const absoluteRoutes = geometry.edges.map((routed) => dedupePoints(routed.points.map((point) => ({
+    x: origin.x + point.x,
+    y: origin.y + point.y,
+  }))));
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
   // A bound label has no skeleton, so its box exists nowhere else. Anything
   // that places more labels against this plan later needs to see them.
   const boundLabelBoxes: RouteBox[] = [];
+  /** Standalone label boxes, in the order they were put down. */
+  const placedLabelBoxes: RouteBox[] = [];
   let boundLabelCount = 0;
   const captionNodes = new Set(
     params.nodes.filter((node) => nodeToType(node) === "text").map((node) => node.id),
@@ -1312,6 +1375,10 @@ function assemblePlan(
     // An edge belongs to the deepest container holding both of its ends, so a
     // connector inside a region moves and reads with that region.
     const owner = containerPlan ? lowestCommonContainer(containerPlan, edge.from, edge.to) : undefined;
+    const ownerChain: string[] = [];
+    for (let ancestor = owner; ancestor; ancestor = containerPlan?.ownerOf.get(ancestor)) {
+      ownerChain.push(ancestor);
+    }
     const ownerGroups = owner && boxes.has(owner) ? groupsFor(owner) : [];
     const edgeGroups: JsonObject = ownerGroups.length ? { groupIds: ownerGroups } : {};
     roles.set(edgeId, { role: "edge", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
@@ -1321,10 +1388,28 @@ function assemblePlan(
     // carry it, and stands beside the route when it is not. A label the
     // layout never found a place for rides the arrow rather than vanishing.
     const labelMode = edge.labelMode ?? "auto";
+    // Labels are placed one after another, so each one has to clear the boxes
+    // and every label already put down, not just the nodes.
+    const labelGround = [...boundLabelBoxes, ...placedLabelBoxes];
+    const anchor = boundLabelAnchor(absoluteRoute);
+    const labelBox = {
+      id: `${edgeId}:label`,
+      x: anchor.x - labelSize.width / 2,
+      y: anchor.y - labelSize.height / 2,
+      ...labelSize,
+    };
+    const roomOnTheArrow = boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
+      && boundLabelClears(absoluteRoute, labelSize, nodeBoxes)
+      && boundLabelClears(absoluteRoute, labelSize, labelGround, LABEL_MIN_GAP)
+      // A label rides its own arrow by construction; landing on somebody
+      // else's line is the same kind of mess as landing on a box.
+      && absoluteRoutes.every((other, otherIndex) => otherIndex === index
+        || !geometryIntersectsBox(routeGeometry(other, geometry.edges[otherIndex].rounded), labelBox, 0));
     const bound = Boolean(text) && (labelMode === "bound" || (labelMode === "auto" && (
-      routed.label === undefined
-      || (boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
-        && boundLabelClears(absoluteRoute, labelSize, nodeBoxes))
+      // No spot back from the layout and none withheld means the layout could
+      // not place this label at all; riding the arrow beats vanishing.
+      (routed.label === undefined && !routed.placeLabel)
+      || roomOnTheArrow
     )));
     edgeSkeletons.push({
       id: edgeId,
@@ -1353,13 +1438,7 @@ function assemblePlan(
     const edgeLabelId = edgeLabelElementId(diagramId, key);
     if (bound) {
       boundLabelCount += 1;
-      const anchor = boundLabelAnchor(absoluteRoute);
-      boundLabelBoxes.push({
-        id: edgeLabelId,
-        x: anchor.x - labelSize.width / 2,
-        y: anchor.y - labelSize.height / 2,
-        ...labelSize,
-      });
+      boundLabelBoxes.push({ ...labelBox, id: edgeLabelId });
       roles.set(edgeLabelId, {
         role: "edgeLabel",
         key,
@@ -1369,15 +1448,37 @@ function assemblePlan(
       });
       continue;
     }
-    if (!routed.label) continue;
+    // A label the layout kept no room for still has to go somewhere: beside
+    // the route, clear of the boxes, the way every unlayered algorithm places
+    // one.
+    const spot = routed.label
+      ? { x: origin.x + routed.label.x, y: origin.y + routed.label.y }
+      : placeEdgeLabel(absoluteRoute, labelSize, [
+        // A region the edge is not a member of is not a place its label may
+        // land: inside one, it reads as belonging to that region.
+        ...[...boxes.entries()]
+          .filter(([id]) => !ownerChain.includes(id))
+          .map(([, box]) => box),
+        ...nodeBoxes,
+        // Only the labels claim clear space around themselves; a caption may
+        // sit right against a box, but never right against another caption.
+        ...labelGround.map((box) => ({
+          id: box.id,
+          x: box.x - LABEL_MIN_GAP,
+          y: box.y - LABEL_MIN_GAP,
+          width: box.width + LABEL_MIN_GAP * 2,
+          height: box.height + LABEL_MIN_GAP * 2,
+        })),
+      ]);
+    placedLabelBoxes.push({ id: edgeLabelId, x: spot.x, y: spot.y, ...labelSize });
     roles.set(edgeLabelId, { role: "edgeLabel", key, edgeIndex: index, ...(owner ? { container: owner } : {}) });
     edgeLabelSkeletons.push({
       id: edgeLabelId,
       type: "text",
       ...stamp("edgeLabel", key, owner),
       ...edgeGroups,
-      x: origin.x + routed.label.x,
-      y: origin.y + routed.label.y,
+      x: spot.x,
+      y: spot.y,
       width: labelSize.width,
       height: labelSize.height,
       text,
