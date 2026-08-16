@@ -216,7 +216,7 @@ class ClaudeWorker implements WorkerTransport {
         stderr: (data) => this.#raw?.(`[stderr] ${data.trimEnd()}`),
       },
     });
-    this.#stream.push(claudeUserMessage(spec.task));
+    this.#stream.push(claudeUserMessage(spec.prompt ?? spec.task));
     void this.#pump();
   }
 

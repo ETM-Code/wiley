@@ -114,7 +114,7 @@ class CodexWorker implements WorkerTransport {
   }
 
   async start(spec: WorkerSpec): Promise<void> {
-    this.#runTurn(spec.task);
+    this.#runTurn(spec.prompt ?? spec.task);
   }
 
   async send(text: string): Promise<void> {

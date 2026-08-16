@@ -4,8 +4,13 @@ import {
   type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { BOARD_AGENT_SYSTEM_PROMPT, INTERRUPT_NOTE, SUBAGENT_SYSTEM_PROMPT } from "./agent-prompt";
-import type { AgentEvent, JobSummary } from "../shared/contracts";
+import {
+  BOARD_AGENT_SYSTEM_PROMPT,
+  EXTERNAL_WORKER_BRIEF,
+  INTERRUPT_NOTE,
+  SUBAGENT_SYSTEM_PROMPT,
+} from "./agent-prompt";
+import type { AgentEvent, JobSummary, WorkerProbes } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
 import { type TranscriptStore } from "./transcript";
 import { type CanvasBridge } from "./canvas-bridge";
@@ -13,7 +18,7 @@ import type { ApprovalJudge } from "./safety";
 import { type VoiceBridge } from "./voice-bridge";
 import { MAX_ACTIVE_SUBAGENTS } from "./pi/constants";
 import { lastAssistantText } from "./pi/messages";
-import { buildSubagentMessage, buildTaskMessage } from "./pi/prompt-context";
+import { buildSubagentMessage, buildTaskMessage, buildWorkerMessage } from "./pi/prompt-context";
 import {
   clearsPreviewWhenDone,
   DiagramPreviewQueue,
@@ -32,10 +37,26 @@ import { createPiTools, type CanvasMutation, type PiToolHost } from "./pi/tools"
 import { resolveOpenAiKey } from "./settings/secret-store";
 import { DEFAULT_SETTINGS, type WileySettings } from "./settings/settings-schema";
 import { type SettingsStore } from "./settings/settings-store";
+import { WorkerCursors } from "./workers/worker-context";
+import type { WorkerManager } from "./workers/worker-manager";
+import { createWorkerManager, createWorkerProbes, reapStaleWorkerProcesses } from "./workers/worker-runtime";
+import { assertWorkerSpawnAllowed, resolveWorkerModel } from "./workers/worker-spawn";
+import { isCliWorkerKind, type WorkerEvent, type WorkerHandle, type WorkerKind } from "./workers/worker-types";
 
 export { DEFAULT_APPROVAL_MODEL, PI_MODEL, PI_PROVIDER, PI_THINKING_LEVEL } from "./pi/constants";
 
 type SubStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+/** How long a probe answer is trusted before the CLIs are checked again. */
+const PROBE_CACHE_MS = 60_000;
+
+export interface AgentListing {
+  id: string;
+  kind: WorkerKind;
+  status: string;
+  task: string;
+  report?: string;
+}
 
 interface Subagent {
   id: string;
@@ -78,6 +99,12 @@ export class PiRuntime {
   #pendingRootPlan?: SessionModelPlan;
   #unsubscribeSettings?: () => void;
   #apiKey?: string;
+  #workers?: WorkerManager;
+  /** Per-worker transcript cursors; the root's is never touched by these. */
+  #workerCursors = new WorkerCursors();
+  #probes?: WorkerProbes;
+  #probedAt = 0;
+  #probeWorkers = createWorkerProbes(() => this.#settings());
 
   constructor(
     private readonly projectDir: string,
@@ -87,6 +114,8 @@ export class PiRuntime {
     private readonly voice: VoiceBridge,
     private readonly skillsDir?: string,
     private readonly settings?: SettingsStore,
+    /** Where worker transcripts and the pid registry live. */
+    private readonly dataDir?: string,
   ) {
     this.#diagramPreviews = new DiagramPreviewQueue(canvas);
   }
@@ -104,9 +133,114 @@ export class PiRuntime {
       throw new Error(`Pi model not found: ${this.#plan.provider}/${this.#plan.rootModel}`);
     }
     this.#approvalJudge = this.#buildApprovalJudge();
+    this.#startWorkerRuntime();
     this.#unsubscribeSettings = this.settings?.onChange((next) => this.#onSettingsChanged(next));
     await this.#createRootSession();
     await this.#ensureWarmSubagent();
+  }
+
+  /**
+   * External workers are optional: a machine with neither CLI installed runs
+   * exactly as before, and the reaper only has to look where a previous run
+   * would have recorded something.
+   */
+  #startWorkerRuntime(): void {
+    const reaped = reapStaleWorkerProcesses(this.dataDir);
+    if (reaped > 0) console.log(`Stopped ${reaped} worker process group(s) left by a previous run`);
+    this.#workers = createWorkerManager({
+      projectDir: this.projectDir,
+      dataDir: this.dataDir,
+      settings: () => this.#settings(),
+      voice: this.voice,
+      recentUserRequests: () => this.ledger.getTranscript()
+        .filter((entry) => entry.role === "user")
+        .slice(-6)
+        .map((entry) => entry.text),
+      approvalJudge: () => this.#approvalJudge,
+      emit: (event) => this.#onWorkerEvent(event),
+      executables: () => ({
+        claude: this.#probes?.claude.path,
+        codex: this.#probes?.codex.path,
+      }),
+    });
+  }
+
+  /** Cached briefly: a spawn should not wait on two process probes every time. */
+  async #workerProbes(): Promise<WorkerProbes | undefined> {
+    if (this.#probes && Date.now() - this.#probedAt < PROBE_CACHE_MS) return this.#probes;
+    try {
+      this.#probes = await this.#probeWorkers();
+      this.#probedAt = Date.now();
+    } catch (error) {
+      console.error("Could not check which worker CLIs are available", error);
+    }
+    return this.#probes;
+  }
+
+  async #spawnWorker(input: { task: string; kind: WorkerKind; model?: string; effort?: string }): Promise<string> {
+    const manager = this.#workers;
+    if (!manager || !isCliWorkerKind(input.kind)) {
+      throw new Error(`Background ${input.kind} workers are not available in this session.`);
+    }
+    const settings = this.#settings();
+    assertWorkerSpawnAllowed({
+      kind: input.kind,
+      settings,
+      probes: await this.#workerProbes(),
+      model: input.model,
+    });
+    const id = `${input.kind}-${crypto.randomUUID().slice(0, 8)}`;
+    const worker = settings.workers[input.kind];
+    manager.register({
+      id,
+      kind: input.kind,
+      parentJobId: this.#currentJobId ?? "system",
+      task: input.task,
+      prompt: buildWorkerMessage({
+        brief: EXTERNAL_WORKER_BRIEF,
+        task: input.task,
+        // The worker's own cursor opens here. The root's delivery cursor is
+        // deliberately untouched: it must still see every entry exactly once.
+        transcriptContext: this.#workerCursors.open(id, this.transcript),
+        peerEvents: this.ledger.getAgentEvents(this.#eventBaseline),
+      }),
+      model: resolveWorkerModel(input.kind, settings, input.model),
+      effort: input.effort ?? worker.effort,
+    });
+    return id;
+  }
+
+  #worker(id: string): WorkerHandle | undefined {
+    return this.#workers?.get(id);
+  }
+
+  /**
+   * A worker's terminal event is the coordinator's cue, exactly as an
+   * in-process subagent's is, so both arrive on the root in the same envelope.
+   */
+  async #onWorkerEvent(event: WorkerEvent): Promise<void> {
+    await this.#emit(event);
+    const payload = event.payload as { report?: string; error?: string; fatal?: boolean } | undefined;
+    if (event.type === "completed") {
+      await this.#deliverWorkerResult(event.agentId, "done", payload?.report ?? "");
+    } else if (event.type === "error" && payload?.fatal) {
+      await this.#deliverWorkerResult(event.agentId, "failed", payload?.error ?? "The worker stopped.");
+    }
+  }
+
+  async #deliverWorkerResult(id: string, status: string, report: string): Promise<void> {
+    this.#workerCursors.close(id);
+    if (!this.#main) return;
+    try {
+      await this.#injectMain(
+        this.#main,
+        "[update from your own background work]",
+        `<subagent_result id="${id}" status="${status}">\n${report}\n</subagent_result>`,
+        true,
+      );
+    } catch (error) {
+      console.error(`Could not deliver the report from ${id}`, error);
+    }
   }
 
   #settings(): WileySettings {
@@ -223,6 +357,8 @@ export class PiRuntime {
     this.#pendingSubQuestions.clear();
     this.#warmSubagent?.session.dispose();
     this.#warmSubagent = undefined;
+    await this.#workers?.killAll();
+    this.#workerCursors.clear();
     this.#main?.dispose();
     this.#main = undefined;
     this.#currentJobId = undefined;
@@ -235,14 +371,30 @@ export class PiRuntime {
     return Boolean(this.#main?.isStreaming);
   }
 
-  listSubagents(): Array<{ id: string; status: SubStatus; task: string; report?: string }> {
-    return [...this.#subagents.values()].map(({ id, status, task, report }) => ({ id, status, task, report }));
+  /** Every worker the coordinator can address, in-process ones and CLI ones. */
+  listSubagents(): AgentListing[] {
+    const pi: AgentListing[] = [...this.#subagents.values()].map(({ id, status, task, report }) => ({
+      id,
+      kind: "pi",
+      status,
+      task,
+      report,
+    }));
+    const external: AgentListing[] = (this.#workers?.list() ?? []).map((worker) => ({
+      id: worker.spec.id,
+      kind: worker.spec.kind,
+      status: worker.status,
+      task: worker.spec.task,
+      report: worker.report,
+    }));
+    return [...pi, ...external];
   }
 
   hasActiveSubagents(jobId?: string): boolean {
-    return [...this.#subagents.values()].some(
+    const pi = [...this.#subagents.values()].some(
       (sub) => (sub.status === "queued" || sub.status === "running") && (!jobId || sub.parentJobId === jobId),
     );
+    return pi || Boolean(this.#workers?.hasActive(jobId));
   }
 
   onEvent(listener: (event: AgentEvent) => void): () => void {
@@ -270,11 +422,14 @@ export class PiRuntime {
     this.#clearDiagramPreview();
     const main = this.#main;
     if (main?.isStreaming) await main.abort();
-    await Promise.allSettled(
-      [...this.#subagents.values()]
+    await Promise.allSettled([
+      ...[...this.#subagents.values()]
         .filter((sub) => sub.status === "running" && sub.session?.isStreaming)
         .map((sub) => this.#interruptSubagent(sub, reason, false)),
-    );
+      // Wind-down rather than kill: an external worker keeps its session, so
+      // the same work can be resumed instead of restarted from nothing.
+      this.#workers?.interruptAll(reason, { windDown: true }) ?? Promise.resolve(),
+    ]);
     this.voice.endWork();
   }
 
@@ -286,6 +441,8 @@ export class PiRuntime {
     for (const sub of this.#subagents.values()) sub.session?.dispose();
     this.#warmSubagent?.session.dispose();
     this.#warmSubagent = undefined;
+    await this.#workers?.killAll();
+    this.#workerCursors.clear();
     this.#subagents.clear();
   }
 
@@ -388,15 +545,30 @@ export class PiRuntime {
       askRoot: (subagentId, question, signal) => this.#askRoot(subagentId, question, signal),
       listSubagents: () => this.listSubagents(),
       messageSubagent: async (id, message) => {
+        const worker = this.#worker(id);
+        if (worker) {
+          // The worker reads the conversation on its own cursor, so anything
+          // said since it last heard from us rides along with the correction.
+          const delta = this.#workerCursors.delta(id, this.transcript);
+          const text = delta.length
+            ? `${message}\n\n<voice_conversation_update>\n${JSON.stringify(delta)}\n</voice_conversation_update>`
+            : message;
+          await worker.send(text);
+          return;
+        }
         const sub = this.#subagents.get(id);
-        if (!sub) throw new Error(`No such subagent: ${id}`);
+        if (!sub) throw new Error(`No such background task: ${id}`);
         await this.#interruptSubagent(sub, message, true);
       },
-      spawnSubagent: (task) => this.#spawnSubagent(task, this.#currentJobId ?? "system"),
+      spawnSubagent: (input) => (input.kind && input.kind !== "pi"
+        ? this.#spawnWorker({ task: input.task, kind: input.kind, model: input.model, effort: input.effort })
+        : this.#spawnSubagent(input.task, this.#currentJobId ?? "system")),
       checkSubagent: (id) => {
+        const worker = this.#worker(id);
+        if (worker) return { status: worker.status, report: worker.report, kind: worker.spec.kind };
         const sub = this.#subagents.get(id);
-        if (!sub) throw new Error(`No such subagent: ${id}`);
-        return { status: sub.status, report: sub.report };
+        if (!sub) throw new Error(`No such background task: ${id}`);
+        return { status: sub.status, report: sub.report, kind: "pi" as const };
       },
       answerSubagent: (qid, answer) => {
         const resolve = this.#pendingSubQuestions.get(qid);
