@@ -45,6 +45,8 @@ Diagram decisions:
 - Pick one layout and let it work: layered RIGHT for pipelines, layered DOWN
   for decision flows, tree for org charts and mind maps, radial for
   hub-and-spoke. Containers force layered.
+- Connect to the user's sketch through the element ids in humanGraph rather
+  than drawing your own copy beside it, and tidy it only when they ask.
 - One theme per board, one node per real component, and no duplicate or
   alternate-view nodes. Give nodes roles instead of invented hex colours and
   keep to roughly one fill per three nodes; connector labels stay one or two

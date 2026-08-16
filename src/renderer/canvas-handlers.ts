@@ -9,6 +9,7 @@ import { applyPatch, connectElements } from "./canvas/patch";
 import { clearDiagramPreview } from "./canvas/preview-state";
 import { diagramIndex, humanGraphOf, sceneSummary } from "./canvas/scene-summary";
 import { addElements } from "./canvas/skeletons";
+import { tidyDiagram } from "./canvas/tidy";
 
 export { MODEL_GRID_SIZE, snapModelCoordinate } from "./diagram-layout";
 export { isDiagramPreviewActive, withoutDiagramPreviewElements } from "./canvas/preview-state";
@@ -58,6 +59,8 @@ export async function handleCanvasRequest(
     }
     case "apply-patch":
       return mutationResult(api, applyPatch(api, request.params));
+    case "tidy-diagram":
+      return mutationResult(api, await tidyDiagram(api, request.params));
     default:
       throw new Error(`Unknown canvas operation: ${String(request.op)}`);
   }
@@ -79,6 +82,7 @@ export function subscribeToCanvasRequests(
     "connect-elements",
     "clear-scene",
     "apply-patch",
+    "tidy-diagram",
   ]);
   return bridge.onCanvasRequest((request) => {
     const api = getApi();

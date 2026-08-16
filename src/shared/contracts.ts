@@ -181,7 +181,8 @@ export interface CanvasRequest {
     | "add-elements"
     | "connect-elements"
     | "clear-scene"
-    | "apply-patch";
+    | "apply-patch"
+    | "tidy-diagram";
   params?: unknown;
 }
 
@@ -206,7 +207,8 @@ export interface BoardTransaction {
     | "add-elements"
     | "connect-elements"
     | "clear-scene"
-    | "apply-patch";
+    | "apply-patch"
+    | "tidy-diagram";
   params: unknown;
 }
 
