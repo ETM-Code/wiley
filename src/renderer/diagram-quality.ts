@@ -11,6 +11,7 @@ import {
 import {
   absoluteArrowPoints,
   arrowGeometry,
+  geometryCrowdsBox,
   geometryIntersectsBox,
   pointsToSegments,
   segmentsVisuallyMerge,
@@ -446,7 +447,7 @@ export function evaluateDiagramPlan(
     const endNode = String((arrow.end as { id?: string } | undefined)?.id ?? "");
     for (const node of nodes) {
       if (node.id === startNode || node.id === endNode) continue;
-      if (geometryIntersectsBox(geometry, node, 4)) {
+      if (geometryCrowdsBox(geometry, node)) {
         report.edgesThroughNodes.push(`${String(arrow.id)} x ${node.id}`);
       }
     }

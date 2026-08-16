@@ -12,6 +12,7 @@ import {
   wrapLabel,
   type LayoutParams,
 } from "../src/renderer/diagram-layout";
+import { PASSING_CLEARANCE, absoluteArrowPoints, pointsToSegments } from "../src/renderer/diagram-routes";
 import { evaluateDiagramPlan } from "../src/renderer/diagram-quality";
 import { THEMES } from "../src/renderer/diagram-theme";
 import { installExcalifontMeasurer, uninstallExcalifontMeasurer } from "./helpers/excalifont";
@@ -625,6 +626,57 @@ describe("diagram layout quality", () => {
       expect(node.x as number).toBeGreaterThanOrEqual(box.x as number);
       expect((node.x as number) + (node.width as number))
         .toBeLessThanOrEqual((box.x as number) + (box.width as number));
+    }
+  });
+
+  it("spaces a region's members like the rest of the board and keeps crossings clear", async () => {
+    const nodeSpacing = 100;
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "layered", direction: "RIGHT", nodeSpacing },
+      containers: [
+        { id: "client", label: "Client" },
+        { id: "edge", label: "Edge" },
+      ],
+      nodes: [
+        { id: "browser", label: "Browser", container: "client" },
+        { id: "mobile", label: "Mobile app", container: "client" },
+        { id: "cdn", label: "CDN", container: "edge" },
+        { id: "gateway", label: "API gateway", container: "edge" },
+      ],
+      edges: [
+        { from: "browser", to: "cdn" },
+        // Skips a layer, so it has to pass whatever sits in the one between.
+        { from: "mobile", to: "gateway" },
+        { from: "cdn", to: "gateway" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const node = (id: string) => byId.get(plan.elementIdByNode.get(id)!)!;
+    // ELK does not hand a region the root's spacing on its own, and its own
+    // default is a quarter of this. Members of a region are members of the
+    // same board and stand the same distance apart.
+    const browser = node("browser");
+    const mobile = node("mobile");
+    const gap = (mobile.y as number) - ((browser.y as number) + (browser.height as number));
+    expect(gap).toBeGreaterThanOrEqual(nodeSpacing - MODEL_GRID_SIZE);
+    // The default is 10px, which is what let a connector tuck under the box
+    // it was passing and still read as going through it.
+    expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
+    const cdn = node("cdn");
+    const crossing = plan.skeletons.find((skeleton) => skeleton.type === "arrow"
+      && (skeleton.start as { id: string }).id === plan.elementIdByNode.get("mobile")
+      && (skeleton.end as { id: string }).id === plan.elementIdByNode.get("gateway"))!;
+    const left = cdn.x as number;
+    const right = left + (cdn.width as number);
+    const top = cdn.y as number;
+    const bottom = top + (cdn.height as number);
+    const runs = pointsToSegments(absoluteArrowPoints(crossing));
+    // Measured independently of the check itself: no part of the route that
+    // lies across the box's width may sit within the halo above or below it.
+    for (const run of runs.filter((one) => Math.max(one.x1, one.x2) > left && Math.min(one.x1, one.x2) < right)) {
+      for (const y of [run.y1, run.y2]) {
+        expect(y < top - PASSING_CLEARANCE || y > bottom + PASSING_CLEARANCE).toBe(true);
+      }
     }
   });
 
