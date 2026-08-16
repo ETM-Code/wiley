@@ -14,6 +14,8 @@ import {
   DIAGRAM_THEME_NAMES,
 } from "../../shared/diagram-stamp";
 
+import type { WorkerKind } from "../workers/worker-types";
+
 import { IMAGE_MIME_BY_EXT, sniffImageSize } from "./image";
 
 export type CanvasMutation =
@@ -42,8 +44,8 @@ export interface PiToolHost {
   askRoot(subagentId: string, question: string, signal?: AbortSignal): Promise<string>;
   listSubagents(): unknown;
   messageSubagent(id: string, message: string): Promise<void>;
-  spawnSubagent(task: string): Promise<string>;
-  checkSubagent(id: string): { status: string; report?: string };
+  spawnSubagent(input: { task: string; kind?: WorkerKind; model?: string; effort?: string }): Promise<string>;
+  checkSubagent(id: string): { status: string; report?: string; kind?: string };
   answerSubagent(qid: string, answer: string): void;
 }
 
@@ -315,18 +317,23 @@ function rootOnlyTools(host: PiToolHost): ToolDefinition[] {
   return [
     defineTool({
       name: "spawn_agent",
-      label: "Spawn Subagent",
-      description: "Start a Luna-medium worker with the complete voice conversation and shared canvas access. Returns immediately after dispatch.",
-      parameters: Type.Object({ task: Type.String() }),
+      label: "Spawn Worker",
+      description: "Start background work and return immediately. kind pi (the default) is an in-process worker that shares the canvas and can draw. kind claude or codex is an external coding engine with its own tools and no board access: prefer one for large multi-file coding, refactors, and wide research, and draw whatever it reports yourself. Every worker receives the complete voice conversation. model and effort override the configured defaults for this worker only; a refusal explains itself in plain words and should be relayed, not retried.",
+      parameters: Type.Object({
+        task: Type.String(),
+        kind: Type.Optional(Type.Union([Type.Literal("pi"), Type.Literal("claude"), Type.Literal("codex")])),
+        model: Type.Optional(Type.String()),
+        effort: Type.Optional(Type.String()),
+      }, { additionalProperties: false }),
       execute: async (_id, params) => {
-        const id = await host.spawnSubagent(params.task);
+        const id = await host.spawnSubagent(params);
         return toolText(`${id} started`);
       },
     }),
     defineTool({
       name: "check_agent",
-      label: "Check Subagent",
-      description: "Non-blocking status check; completion is delivered automatically.",
+      label: "Check Worker",
+      description: "Non-blocking status check on any worker, in-process or external; completion is delivered automatically.",
       parameters: Type.Object({ id: Type.String() }),
       execute: async (_id, params) => toolText(host.checkSubagent(params.id)),
     }),
@@ -388,8 +395,8 @@ export function createPiTools(host: PiToolHost, agentId: string): ToolDefinition
     agentId === "root" ? rootAskTool(host) : subagentAskTool(host, agentId),
     defineTool({
       name: "list_agents",
-      label: "List Agents",
-      description: "List current peer work and status.",
+      label: "List Workers",
+      description: "List current peer work with each worker's kind and status.",
       parameters: Type.Object({}),
       execute: async () => toolText(host.listSubagents()),
     }),
@@ -402,8 +409,8 @@ export function createPiTools(host: PiToolHost, agentId: string): ToolDefinition
     }),
     defineTool({
       name: "send_agent_message",
-      label: "Message Agent",
-      description: "Interrupt a running peer with a correction or useful context.",
+      label: "Message Worker",
+      description: "Steer a running worker of any kind with a correction or useful context. Use it as soon as the user changes course rather than letting wrong work finish.",
       parameters: Type.Object({ id: Type.String(), message: Type.String() }),
       execute: async (_id, params) => {
         await host.messageSubagent(params.id, params.message);

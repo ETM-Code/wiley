@@ -81,6 +81,34 @@ export function buildTaskMessage(input: {
   ].join("\n");
 }
 
+/**
+ * The envelope an external CLI worker is handed. It has none of Wiley's own
+ * tools, so what it needs is the identity, the boundary, and the shape of the
+ * report that comes back; the brief itself lives in agent-prompt.
+ */
+export function buildWorkerMessage(input: {
+  brief: string;
+  task: string;
+  transcriptContext: unknown;
+  peerEvents: unknown;
+}): string {
+  return [
+    input.brief,
+    "",
+    "<task>",
+    input.task,
+    "</task>",
+    "",
+    "<voice_conversation_context>",
+    JSON.stringify(input.transcriptContext),
+    "</voice_conversation_context>",
+    "",
+    "<peer_agent_events>",
+    JSON.stringify(input.peerEvents),
+    "</peer_agent_events>",
+  ].join("\n");
+}
+
 export function buildSubagentMessage(input: {
   task: string;
   transcriptContext: unknown;

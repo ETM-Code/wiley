@@ -51,7 +51,10 @@ export interface WorkerSpec {
   id: string;
   kind: WorkerKind;
   parentJobId: string;
+  /** The human-readable task, which is what status surfaces show. */
   task: string;
+  /** The full envelope the engine receives; falls back to task. */
+  prompt?: string;
   /** Pinned from settings at spawn time; an unpinned run picks its own model. */
   model?: string;
   effort?: string;
