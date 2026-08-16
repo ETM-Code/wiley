@@ -23,6 +23,7 @@ import {
   evaluateDiagramPlan,
   isObstacleFinding,
   mergeQualityReports,
+  OBSTACLE_MARKER,
   type DiagramObstacle,
   type DiagramQualityReport,
 } from "../diagram-quality";
@@ -192,13 +193,17 @@ export function assertQualityClearOfHuman(
   const collisions = placementCollisions(quality);
   if (collisions.length === 0) return { quality };
 
+  // Matched on the whole tail, marker included: an id that is a prefix of
+  // another id would otherwise claim the other one's findings.
   const hit = obstacles
-    .filter((obstacle) => collisions.some((finding) => finding.includes(` x ${obstacle.id}`)))
+    .filter((obstacle) => collisions.some(
+      (finding) => finding.endsWith(` x ${obstacle.id}${OBSTACLE_MARKER}`),
+    ))
     .map(obstacleBounds);
   // Clearing what it hit is only half the job; the pass has to keep going
   // until it is clear of everything else on the board as well.
   const shift = shiftClearOf(planBounds(plan), [...hit, ...alsoAvoid], direction);
-  if (!shift) throw humanCollisionError(collisions);
+  if (!shift || (shift.dx === 0 && shift.dy === 0)) throw humanCollisionError(collisions);
   translatePlan(plan, shift.dx, shift.dy);
   const retried = assertDiagramQuality(plan, obstacles);
   const remaining = retried ? placementCollisions(retried) : [];

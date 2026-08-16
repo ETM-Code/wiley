@@ -363,24 +363,80 @@ describe("what tidy refuses to break", () => {
 
   it("takes a re-pointed arrow off the shape it left", async () => {
     const scene = messyScene("crooked-signup");
-    // The person had already bound this arrow to the wrong box by hand.
-    const seeded = scene.elements.map((element) => {
-      if (element.id === "a-1") {
-        return { ...element, startBinding: { elementId: "s-home" } };
-      }
-      if (element.id === "s-home") {
-        return { ...element, boundElements: [{ id: "a-1", type: "arrow" }] };
-      }
-      return element;
-    });
+    // Home still claims an arrow that actually runs from Landing to Sign up:
+    // the person dragged the end off it at some point and Excalidraw left the
+    // record behind.
+    const seeded = scene.elements.map((element) => element.id === "s-home"
+      ? { ...element, boundElements: [{ id: "a-1", type: "arrow" }] }
+      : element);
     const target = board(seeded);
     await tidy(target);
 
     const arrow = target.elements().find((element) => element.id === "a-1")!;
     const start = (arrow as { startBinding?: { elementId?: string } }).startBinding!.elementId;
+    // a-1 runs from Landing to Sign up, so the tidy re-points it off Home.
+    expect(start).toBe("s-landing");
     const abandoned = target.elements().find((element) => element.id === "s-home")!;
-    if (start !== "s-home") {
-      expect(abandoned.boundElements ?? []).not.toContainEqual({ id: "a-1", type: "arrow" });
+    expect(abandoned.boundElements ?? []).not.toContainEqual({ id: "a-1", type: "arrow" });
+  });
+});
+
+describe("shapes drawn nearly on top of each other", () => {
+  const stacked: MessyElement[] = [
+    { id: "n-a", type: "rectangle", x: 0, y: 0, width: 120, height: 60, version: 1 },
+    { id: "n-b", type: "rectangle", x: 14, y: 12, width: 120, height: 60, version: 2 },
+    { id: "n-c", type: "rectangle", x: 400, y: 0, width: 120, height: 60, version: 3 },
+  ];
+
+  it("are given cells of their own rather than the same one", () => {
+    const nodes = stacked.map((element) => ({
+      elementId: element.id,
+      shape: element.type,
+      bounds: { x: element.x, y: element.y, width: element.width, height: element.height },
+    }));
+    const boxes = alignBoxes(nodes);
+    const corners = [...boxes.values()].map((box) => `${box.x},${box.y}`);
+    expect(new Set(corners).size).toBe(corners.length);
+  });
+
+  it("survive a tidy instead of failing it", async () => {
+    const target = board(stacked);
+    expect(defects(await tidy(target))).toEqual([]);
+    expect(target.elements()).toHaveLength(stacked.length);
+  });
+});
+
+describe("tidying only the shapes someone named", () => {
+  const scene = messyScene("crooked-signup");
+
+  it("brings the arrows between them along", async () => {
+    const target = board(scene.elements);
+    const shapes = scene.elements
+      .filter((element) => element.type === "rectangle")
+      .map((element) => element.id);
+    const result = await tidy(target, { elementIds: shapes });
+
+    expect(result.edges).toBe(3);
+    expect(result.bound).toBe(3);
+    for (const before of scene.elements.filter((element) => element.type === "arrow")) {
+      const after = target.elements().find((element) => element.id === before.id)!;
+      const start = (after as { startBinding?: { elementId?: string } }).startBinding;
+      expect(start?.elementId).toBeDefined();
+      expect({ x: after.x, y: after.y }).not.toEqual({ x: before.x, y: before.y });
     }
+  });
+});
+
+describe("a screenshot in the sketch", () => {
+  it("keeps its proportions through a tidy", async () => {
+    const scene = messyScene("crooked-signup");
+    const shot: MessyElement = {
+      id: "shot", type: "image", x: 600, y: 40, width: 331, height: 187, version: 99,
+    };
+    const target = board([...scene.elements, shot]);
+    await tidy(target);
+    const after = target.elements().find((element) => element.id === "shot")!;
+    expect({ width: after.width, height: after.height })
+      .toEqual({ width: shot.width, height: shot.height });
   });
 });
