@@ -57,9 +57,9 @@ describe("cloud mode resolution", () => {
     expect(cloudSessionToken(host({ mode: "cloud" }))).toBeUndefined();
   });
 
-  it("names the missing setting when cloud mode has no relay", () => {
+  it("names the missing setting when there is no relay to reach", () => {
     expect(() => cloudRelayBaseUrl(settingsWith({ mode: "cloud" }))).toThrow(CloudRequestError);
-    expect(() => cloudRelayBaseUrl(settingsWith({ mode: "cloud" }))).toThrow(/no relay base URL is set/);
+    expect(() => cloudRelayBaseUrl(settingsWith({ mode: "cloud" }))).toThrow(/No Wiley Cloud relay base URL is set/);
   });
 
   it("hands back no client at all in bring-your-own-key mode", () => {

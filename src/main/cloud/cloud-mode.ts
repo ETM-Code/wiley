@@ -39,8 +39,8 @@ export function cloudRelayBaseUrl(settings: WileySettings): string {
   const raw = settings.auth.relayBaseUrl.trim();
   if (!raw) {
     throw new CloudRequestError(
-      "Wiley Cloud is selected but no relay base URL is set. Add one under Settings → Account, "
-      + "or switch back to your own API key.",
+      "No Wiley Cloud relay base URL is set. Add one under Settings → Account, "
+      + "or use your own API key.",
     );
   }
   return normalizeRelayBaseUrl(raw);
