@@ -728,6 +728,31 @@ describe("diagram layout quality", () => {
     expect(created[0]).toMatchObject({ x: 999, y: 999 });
   });
 
+  it("does not stretch a flow to make room for a label that rides its arrow", async () => {
+    const chain = (labelled: boolean): LayoutParams => ({
+      layout: { algorithm: "layered", direction: "DOWN" },
+      nodes: ["one", "two", "three", "four"].map((id) => ({ id, label: id })),
+      edges: [["one", "two"], ["two", "three"], ["three", "four"]].map(([from, to]) => ({
+        from,
+        to,
+        ...(labelled ? { label: "yes" } : {}),
+      })),
+    });
+    const heightOf = async (params: LayoutParams) => {
+      const plan = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+      const boxes = plan.skeletons.filter(
+        (skeleton) => plan.roles.get(String(skeleton.id))?.role === "node",
+      );
+      const top = Math.min(...boxes.map((box) => box.y as number));
+      const bottom = Math.max(...boxes.map((box) => (box.y as number) + (box.height as number)));
+      return bottom - top;
+    };
+    const plain = await heightOf(chain(false));
+    const labelled = await heightOf(chain(true));
+    // A three-word label used to buy itself a whole extra layer per edge.
+    expect(labelled).toBe(plain);
+  });
+
   it("keeps a flow reading forwards when a feedback edge closes the loop", async () => {
     const params: LayoutParams = {
       layout: { algorithm: "layered", direction: "RIGHT" },
