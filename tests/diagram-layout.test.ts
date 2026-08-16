@@ -546,6 +546,48 @@ describe("diagram layout quality", () => {
     expect(label?.text).toBe("Edge tier");
   });
 
+  it("lines sibling regions up on the band they share", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      containers: [
+        { id: "client", label: "Client" },
+        { id: "edge", label: "Edge" },
+        { id: "core", label: "Core" },
+      ],
+      nodes: [
+        { id: "browser", label: "Browser", container: "client" },
+        { id: "mobile", label: "Mobile app", container: "client" },
+        { id: "cdn", label: "CDN", container: "edge" },
+        { id: "api", label: "API", container: "core" },
+        { id: "token", label: "Token issuer", container: "core" },
+        { id: "audit", label: "Audit log", container: "core" },
+      ],
+      edges: [
+        { from: "browser", to: "cdn" },
+        { from: "mobile", to: "cdn" },
+        { from: "cdn", to: "api" },
+        { from: "api", to: "token" },
+        { from: "api", to: "audit" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const region = (id: string) => byId.get(plan.containers.get(id)!.elementId)!;
+    const tops = ["client", "edge", "core"].map((id) => region(id).y);
+    const bottoms = ["client", "edge", "core"]
+      .map((id) => (region(id).y as number) + (region(id).height as number));
+    // Three regions across one flow are a row, and a row has one top edge.
+    expect(new Set(tops).size).toBe(1);
+    expect(new Set(bottoms).size).toBe(1);
+    // Growing to the band never swallows a member of another region.
+    for (const [nodeId, owner] of [["browser", "client"], ["cdn", "edge"], ["audit", "core"]] as const) {
+      const node = byId.get(plan.elementIdByNode.get(nodeId)!)!;
+      const box = region(owner);
+      expect(node.x as number).toBeGreaterThanOrEqual(box.x as number);
+      expect((node.x as number) + (node.width as number))
+        .toBeLessThanOrEqual((box.x as number) + (box.width as number));
+    }
+  });
+
   it("nests a container inside a container and reports the whole tree", async () => {
     const plan = await planDiagramLayout({
       containers: [
