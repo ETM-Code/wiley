@@ -52,7 +52,7 @@ export type DiagramObstacle = {
 };
 
 /**
- * How a finding says it is about somebody else's drawing. The report is eight
+ * How a finding says it is about somebody else's drawing. The report is
  * arrays of strings that a dozen callers already read, summarize, and merge,
  * so the marker rides in the string rather than splitting the shape.
  */
