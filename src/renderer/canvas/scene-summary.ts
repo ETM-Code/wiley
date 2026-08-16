@@ -1,4 +1,4 @@
-import { readDiagramStamp, type DiagramThemeName } from "../../shared/diagram-stamp";
+import { isAgentAnnotation, readDiagramStamp, type DiagramThemeName } from "../../shared/diagram-stamp";
 import {
   humanGraphPayload,
   inferHumanGraph,
@@ -131,6 +131,10 @@ export function sceneSummary(elements: readonly SceneElement[]) {
         diagram: stamp
           ? { id: stamp.diagram, key: stamp.key, role: stamp.role }
           : undefined,
+        // Loose work of the agent's own belongs to no diagram and is not the
+        // person's either, so it says which it is rather than looking like a
+        // shape nobody claims.
+        ...(isAgentAnnotation(element) ? { annotation: true as const } : {}),
       };
     }),
     diagrams: diagramIndex(elements),

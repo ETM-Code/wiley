@@ -58,6 +58,7 @@ import {
 } from "../src/renderer/canvas-handlers";
 import { nodeElementId } from "../src/renderer/diagram-spec";
 import { QUALITY_EVALUATION_LIMIT, assertDiagramQuality } from "../src/renderer/canvas/diagram-render";
+import { inferHumanGraph, type SketchElement } from "../src/renderer/canvas/human-graph";
 import { handBuiltPlan } from "./fixtures/diagram-gallery";
 
 /** The loose element shape these fakes pass around, spelled out. */
@@ -265,6 +266,11 @@ describe("diagram renderer", () => {
     });
     const generatedDiamond = elements.find((element) => element.type === "diamond")!;
     for (const key of ["x", "y", "width", "height"] as const) expectOnModelGrid(generatedDiamond[key]);
+    // Both the shape drawn by hand and the one drawn from a skeleton are the
+    // agent's, and both say so; the person's own shape stays unmarked.
+    expect(generatedShape.customData).toEqual({ wiley: { role: "annotation" } });
+    expect(generatedDiamond.customData).toEqual({ wiley: { role: "annotation" } });
+    expect(elements.find((element) => element.id === "human-freeform")!.customData).toBeUndefined();
 
     await handleCanvasRequest(api, {
       id: 22,
@@ -534,6 +540,10 @@ describe("diagram renderer", () => {
     expect(arrow.x).toBeLessThanOrEqual(magic.x + magic.width);
     expect(arrow.y).toBeGreaterThanOrEqual(voiceShape.y + voiceShape.height - 1);
     expect(elements.some((element) => element.type === "text" && element.text === "delegates")).toBe(true);
+    // The connector is the agent's own annotation: it belongs to no diagram,
+    // and nothing downstream may read it back as one of the person's arrows.
+    expect(arrow.customData).toEqual({ wiley: { role: "annotation" } });
+    expect(inferHumanGraph(elements as unknown as SketchElement[]).edges).toEqual([]);
     await expect(handleCanvasRequest(api, {
       id: 31,
       op: "connect-elements",

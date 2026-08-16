@@ -1,6 +1,7 @@
 import { CaptureUpdateAction, convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
+import { agentAnnotationStamp } from "../../shared/diagram-stamp";
 import {
   MODEL_GRID_SIZE,
   finiteNumber as finite,
@@ -181,6 +182,12 @@ export async function addElements(api: ExcalidrawImperativeAPI, value: unknown) 
   const created = convertToExcalidrawElements(
     params.elements as Parameters<typeof convertToExcalidrawElements>[0],
   );
+  // Everything the agent draws loose says so, so that nothing downstream
+  // reads its own additions back as the person's work. A label the converter
+  // made is owned by the element it sits in and needs no stamp of its own.
+  for (const element of created as unknown as Array<{ customData?: unknown; containerId?: string | null }>) {
+    if (!element.containerId) element.customData = agentAnnotationStamp();
+  }
   api.updateScene({
     elements: [...api.getSceneElements(), ...created],
     captureUpdate: CaptureUpdateAction.IMMEDIATELY,

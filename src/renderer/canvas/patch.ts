@@ -1,6 +1,7 @@
 import { CaptureUpdateAction, convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
+import { agentAnnotationStamp } from "../../shared/diagram-stamp";
 import { finiteNumber as finite, measureText, wrapLabel } from "../diagram-layout";
 import {
   MAX_ROUTE_REPAIR_ITERATIONS,
@@ -186,6 +187,10 @@ export function connectElements(api: ExcalidrawImperativeAPI, value: unknown) {
       endArrowhead: "arrow",
       ...(connection.bidirectional ? { startArrowhead: "arrow" } : {}),
       strokeColor: "#1e1e1e",
+      // The agent drew this, so it says so. Unstamped, it would be read as one
+      // of the person's own arrows by everything that separates their work
+      // from ours: the inferred graph, tidy's targets, the obstacle checks.
+      customData: agentAnnotationStamp(),
       ...(connection.label?.trim() ? { label: { text: connection.label.trim() } } : {}),
     };
   });
