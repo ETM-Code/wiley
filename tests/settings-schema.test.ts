@@ -39,6 +39,12 @@ describe("normalizeSettings", () => {
     expect((normalized.agent as Record<string, unknown>).nope).toBeUndefined();
   });
 
+  it("keeps a terminal app the picker never offered, and defaults a blank one", () => {
+    expect(normalizeSettings({ terminalApp: "WezTerm" }).terminalApp).toBe("WezTerm");
+    expect(normalizeSettings({ terminalApp: "   " }).terminalApp).toBe("Terminal");
+    expect(normalizeSettings({ terminalApp: 7 }).terminalApp).toBe("Terminal");
+  });
+
   it("falls back to the default when an enum value is not recognised", () => {
     const settings = normalizeSettings({
       auth: { mode: "enterprise" },

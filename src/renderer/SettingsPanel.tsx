@@ -504,6 +504,13 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
 
       <section className="settings-section">
         <h2>Workers</h2>
+        <ModelPicker
+          label="Terminal app"
+          value={draft.terminalApp}
+          options={view.terminalApps}
+          hint="Where “Open in terminal” hands a worker's session over to you."
+          onChange={(terminalApp) => setDraft({ ...draft, terminalApp })}
+        />
         <div className="settings-actions">
           <button
             type="button"

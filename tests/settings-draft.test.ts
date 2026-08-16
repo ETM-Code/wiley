@@ -25,6 +25,7 @@ describe("settingsOf", () => {
       secrets: { openaiApiKey: { present: true, source: "store", stored: true, backend: "file" } },
       models: [{ id: "m", provider: "openai" }],
       probes: { claude: { available: false }, codex: { available: false } },
+      terminalApps: ["Terminal", "Ghostty"],
     };
     const settings = settingsOf(view);
     expect(settings).toEqual(base());

@@ -8,7 +8,13 @@ import { FileSecretStore } from "../src/main/settings/secret-store";
 import { assertSecretName, probeWorkersStub, SettingsService } from "../src/main/settings/settings-service";
 import { SettingsStore } from "../src/main/settings/settings-store";
 
-function service(options: { env?: Record<string, string | undefined>; modelRuntime?: ModelCatalogRuntime } = {}) {
+function service(
+  options: {
+    env?: Record<string, string | undefined>;
+    modelRuntime?: ModelCatalogRuntime;
+    terminalApps?: () => string[];
+  } = {},
+) {
   const dir = mkdtempSync(path.join(tmpdir(), "wiley-service-"));
   const store = SettingsStore.open(dir, new FileSecretStore({ dir }));
   return {
@@ -18,6 +24,7 @@ function service(options: { env?: Record<string, string | undefined>; modelRunti
       store,
       env: options.env ?? {},
       modelRuntime: () => options.modelRuntime,
+      ...(options.terminalApps ? { terminalApps: options.terminalApps } : {}),
     }),
   };
 }
@@ -29,6 +36,11 @@ describe("SettingsService.view", () => {
     const view = await settings.view();
     expect(JSON.stringify(view)).not.toContain("sk-super-secret");
     expect(view.secrets.openaiApiKey).toEqual({ present: true, source: "store", stored: true, backend: "file" });
+  });
+
+  it("lists the terminals this machine actually has", async () => {
+    const { service: settings } = service({ terminalApps: () => ["Terminal", "Ghostty"] });
+    expect((await settings.view()).terminalApps).toEqual(["Terminal", "Ghostty"]);
   });
 
   it("reports the env as the live source when it is set", async () => {

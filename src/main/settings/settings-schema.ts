@@ -102,6 +102,12 @@ export interface WileySettings {
   voice: VoiceSettings;
   agent: AgentSettings;
   workers: Record<WorkerKind, WorkerSettings>;
+  /**
+   * Which terminal emulator a worker handoff opens in, by application name.
+   * Free text rather than an enum: the panel offers what it found installed,
+   * and an unlisted emulator should still be launchable by name.
+   */
+  terminalApp: string;
 }
 
 export const DEFAULT_VOICE_MODEL = "gpt-realtime-mini-2.1";
@@ -109,6 +115,8 @@ export const DEFAULT_VOICE_NAME = "marin";
 export const DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
 export const DEFAULT_AGENT_MODEL = "gpt-5.6-luna";
 export const DEFAULT_APPROVAL_MODEL_ID = "gpt-5.4-mini";
+/** Every mac has it, so the handoff always has somewhere to land. */
+export const DEFAULT_TERMINAL_APP = "Terminal";
 
 function defaultWorkerSettings(kind: WorkerKind): WorkerSettings {
   return {
@@ -144,6 +152,7 @@ export const DEFAULT_SETTINGS: WileySettings = {
     claude: defaultWorkerSettings("claude"),
     codex: defaultWorkerSettings("codex"),
   },
+  terminalApp: DEFAULT_TERMINAL_APP,
 };
 
 /** Fast mode trades depth for latency, so it wins over the stored level. */
@@ -322,6 +331,7 @@ export function normalizeSettings(raw: unknown): WileySettings {
       claude: normalizeWorker(workers.claude, "claude"),
       codex: normalizeWorker(workers.codex, "codex"),
     },
+    terminalApp: str(source.terminalApp, DEFAULT_TERMINAL_APP),
   };
 }
 
