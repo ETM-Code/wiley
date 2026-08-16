@@ -376,6 +376,80 @@ describe("diagram renderer", () => {
     }
   });
 
+  it("keeps a drawn shape off the elements already on the board", async () => {
+    // The live failure: the agent dropped a "payments svc" box straight on top
+    // of the person's "notifs" box, which the human-element rules forbid.
+    let elements: Array<Record<string, unknown>> = [
+      { id: "notifs", type: "rectangle", x: 640, y: 290, width: 175, height: 80, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    await handleCanvasRequest(api, {
+      id: 63,
+      op: "add-elements",
+      params: {
+        scrollTo: false,
+        elements: [{ type: "rectangle", x: 620, y: 318, width: 200, height: 80, label: { text: "payments svc" } }],
+      },
+    });
+
+    const notifs = elements.find((element) => element.id === "notifs")!;
+    const drawn = elements.find((element) => element.type === "rectangle" && element.id !== "notifs")!;
+    const overlaps = (drawn.x as number) < (notifs.x as number) + (notifs.width as number)
+      && (notifs.x as number) < (drawn.x as number) + (drawn.width as number)
+      && (drawn.y as number) < (notifs.y as number) + (notifs.height as number)
+      && (notifs.y as number) < (drawn.y as number) + (drawn.height as number);
+    expect(overlaps).toBe(false);
+    // The person's box never moves to make room for the agent's.
+    expect(notifs.x).toBe(640);
+    expect(notifs.y).toBe(290);
+  });
+
+  it("keeps a batch's own arrangement while clearing existing content", async () => {
+    let elements: Array<Record<string, unknown>> = [
+      { id: "there", type: "rectangle", x: 0, y: 0, width: 400, height: 200, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    await handleCanvasRequest(api, {
+      id: 64,
+      op: "add-elements",
+      params: {
+        scrollTo: false,
+        elements: [
+          { id: "a", type: "rectangle", x: 20, y: 20, width: 100, height: 60 },
+          { id: "b", type: "rectangle", x: 220, y: 20, width: 100, height: 60 },
+        ],
+      },
+    });
+
+    const a = elements.find((element) => element.id !== "there" && element.type === "rectangle"
+      && (element.width as number) === 100)!;
+    const boxes = elements.filter((element) => element.id !== "there" && element.type === "rectangle");
+    expect(boxes).toHaveLength(2);
+    // Shifted as one piece: the 200px gap the batch was drawn with survives.
+    const [left, right] = boxes.sort((one, two) => (one.x as number) - (two.x as number));
+    expect((right.x as number) - (left.x as number)).toBe(200);
+    expect(left.y).toBe(right.y);
+    expect(a).toBeDefined();
+  });
+
   it("routes a connection around a shape standing between the two ends", async () => {
     // The exact shape of a live failure: login and dashbrd sit either side of
     // auth svc, and the straight perimeter-to-perimeter line runs through it.

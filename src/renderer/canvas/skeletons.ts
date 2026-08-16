@@ -7,7 +7,14 @@ import {
   snapModelCoordinate,
   snapModelSize,
 } from "../diagram-layout";
-import { asRecord, directionalOrigin, elementsBounds, finiteGeometry, gridResult } from "./geometry";
+import {
+  asRecord,
+  directionalOrigin,
+  elementsBounds,
+  finiteGeometry,
+  gridResult,
+  shiftClearOf,
+} from "./geometry";
 import type { JsonObject, SceneElement } from "./types";
 
 type AddParams = {
@@ -130,6 +137,35 @@ export function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown):
         && obstacle.y < box.y + box.height);
       if (!hit) break;
       item.y = snapModelCoordinate(hit.y - box.height - 20);
+    }
+  }
+
+  // Shapes get placed by eye too, and a box dropped on the user's box is the
+  // one thing the human-element rules forbid outright. The batch moves as one
+  // piece so its own internal arrangement survives: down first, then right,
+  // the same order a tidied sketch clears work it has landed on.
+  const drawn = standing.filter((item) => item.type !== "text");
+  const bounds = drawn.length > 0
+    ? elementsBounds(drawn.map((item) => ({
+        x: finite(item.x),
+        y: finite(item.y),
+        width: finite(item.width, 160),
+        height: finite(item.height, 60),
+      })) as unknown as readonly SceneElement[])
+    : null;
+  if (bounds && obstacles.length > 0) {
+    const avoid = obstacles.map((obstacle) => ({
+      minX: obstacle.x,
+      minY: obstacle.y,
+      maxX: obstacle.x + obstacle.width,
+      maxY: obstacle.y + obstacle.height,
+    }));
+    const clearing = shiftClearOf(bounds, avoid, "below") ?? shiftClearOf(bounds, avoid, "right");
+    if (clearing && (clearing.dx !== 0 || clearing.dy !== 0)) {
+      for (const item of standing) {
+        item.x = snapModelCoordinate(finite(item.x) + clearing.dx);
+        item.y = snapModelCoordinate(finite(item.y) + clearing.dy);
+      }
     }
   }
 
