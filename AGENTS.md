@@ -1,4 +1,4 @@
-# Board AI agent instructions
+# Wiley agent instructions
 
 This repository implements Wiley, a single voice persona backed by a root Pi orchestrator and Pi subagents.
 

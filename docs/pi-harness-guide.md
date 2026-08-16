@@ -1,6 +1,6 @@
 # Pi Agent Harness Setup Guide
 
-How to wire the [pi agent](https://github.com/earendil-works/pi) into the board-ai Electron app as the working agent behind the voice model and the Excalidraw canvas.
+How to wire the [pi agent](https://github.com/earendil-works/pi) into the Wiley Electron app as the working agent behind the voice model and the Excalidraw canvas.
 
 This maps directly onto `Plan.excalidraw`:
 
@@ -54,8 +54,8 @@ Two properties of pi that matter for this app:
 Scaffold (bun for everything JS):
 
 ```bash
-bun create electron-vite board-ai   # electron + vite + react template
-cd board-ai
+bun create electron-vite wiley   # electron + vite + react template
+cd wiley
 bun add @earendil-works/pi-coding-agent @earendil-works/pi-ai
 bun add @excalidraw/excalidraw react react-dom
 bun add elkjs   # auto-layout for agent-drawn diagrams (section 5)
