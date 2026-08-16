@@ -202,11 +202,61 @@ describe("diagram layout quality", () => {
     expect(rows(await chain(16))).toBeGreaterThan(1);
   });
 
-  it("keeps the ribbon when the fold would strand a row", async () => {
-    // Eight stages with a branch and a replay loop: wrapping cuts it into
-    // rows of five, two and one, and the connectors joining those rows have
-    // to sweep the whole width of the board and back. A ribbon reads better
-    // than a U-turn, so the fold is thrown away.
+  it("folds a long chain onto a serpentine grid with straight turns", async () => {
+    const count = 12;
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "layered", direction: "DOWN" },
+      nodes: Array.from({ length: count }, (_, index) => ({ id: `n${index}`, label: `Step ${index + 1}` })),
+      edges: Array.from({ length: count - 1 }, (_, index) => ({ from: `n${index}`, to: `n${index + 1}` })),
+    }, ORIGIN, DIAGRAM_ID);
+    const box = (id: string) => plan.skeletons
+      .find((skeleton) => skeleton.id === plan.elementIdByNode.get(id))!;
+    const columns = [...new Set(Array.from({ length: count }, (_, index) => box(`n${index}`).x))];
+    expect(columns.length).toBeGreaterThan(1);
+    // A DOWN flow stacks its ranks on rows and folds them across columns, so
+    // each column reads downwards and the next one reads back up.
+    const columnOf = (id: string) => columns.indexOf(box(id).x as number);
+    const rankInColumn = Array.from({ length: count }, (_, index) => index)
+      .filter((index) => columnOf(`n${index}`) === columnOf("n0"));
+    const descending = rankInColumn.every((index, at) => at === 0
+      || (box(`n${index}`).y as number) > (box(`n${rankInColumn[at - 1]}`).y as number));
+    expect(descending).toBe(true);
+
+    // The turn is the whole point of the serpentine: the last box of a column
+    // and the first of the next are neighbours, not opposite ends of the
+    // board, so the connector between them is one straight run.
+    const turns = Array.from({ length: count - 1 }, (_, index) => index)
+      .filter((index) => columnOf(`n${index}`) !== columnOf(`n${index + 1}`));
+    expect(turns.length).toBe(columns.length - 1);
+    for (const index of turns) {
+      const arrow = plan.skeletons.find((skeleton) => skeleton.type === "arrow"
+        && (skeleton.start as { id: string }).id === plan.elementIdByNode.get(`n${index}`))!;
+      expect((arrow.points as number[][]).length).toBe(2);
+      expect(Math.abs(columnOf(`n${index + 1}`) - columnOf(`n${index}`))).toBe(1);
+    }
+    const report = evaluateDiagramPlan(plan);
+    expect(report.edgesThroughNodes).toEqual([]);
+    expect(report.nodeOverlaps).toEqual([]);
+    expect(report.labelCollisions).toEqual([]);
+    expect(report.crowdedPorts).toEqual([]);
+  });
+
+  it("places a folded chain identically on every run", async () => {
+    const params: LayoutParams = {
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      nodes: Array.from({ length: 14 }, (_, index) => ({ id: `n${index}`, label: `Stage ${index + 1}` })),
+      edges: Array.from({ length: 13 }, (_, index) => ({ from: `n${index}`, to: `n${index + 1}` })),
+    };
+    const first = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    const second = await planDiagramLayout(params, ORIGIN, DIAGRAM_ID);
+    expect(second.skeletons).toEqual(first.skeletons);
+  });
+
+  it("throws away a fold whose connectors cannot be drawn cleanly", async () => {
+    // Eight stages with a branch and a replay loop. Folded, the replay edge
+    // has to climb from the middle of one row to the middle of the one above
+    // it, through the box that shares its column, and there is no tidy way
+    // through. The ribbon it replaced at least had one.
     const plan = await planDiagramLayout({
       layout: { algorithm: "layered", direction: "RIGHT" },
       nodes: [
@@ -235,6 +285,7 @@ describe("diagram layout quality", () => {
     const spread = Math.max(...boxes.map((box) => Number(box.x))) - Math.min(...boxes.map((box) => Number(box.x)));
     const depth = Math.max(...boxes.map((box) => Number(box.y))) - Math.min(...boxes.map((box) => Number(box.y)));
     expect(spread).toBeGreaterThan(depth * 2);
+    expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
   });
 
   it.each(["force", "stress", "radial", "tree"] as const)(

@@ -41,6 +41,12 @@ export const NODE_CLEARANCE = 4;
  * connector that turns near a neighbour.
  */
 export const PASSING_CLEARANCE = 12;
+/**
+ * How far off square a turned connector may arrive and still be drawn as one
+ * straight run. Half a grid cell: the most two boxes centred on the same
+ * column can differ by once each has been snapped by its own corner.
+ */
+export const FLOW_SQUARE_SLACK = 10;
 /** Bend offsets are tried on grid multiples so repaired routes stay tidy. */
 export const OFFSET_STEP = 20;
 export const MAX_OFFSET_STEPS = 12;
@@ -577,7 +583,11 @@ export function flowRoute(
 ): RepairedRoute | null {
   const alongY = sides.from === "top" || sides.from === "bottom";
   const offset = alongY ? to.x - from.x : to.y - from.y;
-  if (Math.abs(offset) < 1) {
+  // Two boxes meant to sit in one column can still land half a grid cell
+  // apart, because a box is placed by its corner and centred by its width.
+  // Bracketing that lean draws a visible jog in the middle of a run that was
+  // supposed to read as one straight line; leaning the line instead does not.
+  if (Math.abs(offset) <= FLOW_SQUARE_SLACK) {
     const points = [from, to];
     return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
   }

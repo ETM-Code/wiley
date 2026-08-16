@@ -1035,39 +1035,21 @@ const RIBBON_ASPECT = 4;
  * them would only break the direction the request asked for.
  */
 const MIN_FOLD_LAYERS = 5;
-/** The shape a folded flow aims for; ELK treats it as a hint, not a promise. */
-const TARGET_ASPECT = "1.6";
+/** The shape a folded flow aims for. */
+const TARGET_ASPECT = 1.6;
+/** The gap a row of the fold leaves the row below it for the turn to run in. */
+const FOLD_ROW_GAP = 100;
+/**
+ * A row of two is a step, not a row: folding a chain onto pairs draws a
+ * zigzag column rather than the grid a reader recognises.
+ */
+const MIN_FOLD_COLUMNS = 3;
 
 /** How many ranks the flow advanced through, read off the placed children. */
 function layerCount(node: ElkNode, direction: DiagramDirection): number {
   const alongY = portsSpreadAlongWidth(direction);
   return new Set((node.children ?? [])
     .map((child) => Math.round(finiteNumber(alongY ? child.y : child.x)))).size;
-}
-
-/**
- * How many boxes landed on each row the fold made, read off the placed
- * children by grouping whatever overlaps across the axis the rows stack on.
- */
-function foldRows(node: ElkNode, direction: DiagramDirection): number[] {
-  // Layers advance along one axis, so the fold has to stack them on the other.
-  const stacksAlongY = !portsSpreadAlongWidth(direction);
-  const extent = (child: ElkNode) => (stacksAlongY
-    ? { start: finiteNumber(child.y), end: finiteNumber(child.y) + finiteNumber(child.height) }
-    : { start: finiteNumber(child.x), end: finiteNumber(child.x) + finiteNumber(child.width) });
-  const rows: number[] = [];
-  let edge = Number.NEGATIVE_INFINITY;
-  for (const child of [...(node.children ?? [])].sort((a, b) => extent(a).start - extent(b).start)) {
-    const { start, end } = extent(child);
-    if (start > edge) {
-      rows.push(0);
-      edge = end;
-    } else {
-      edge = Math.max(edge, end);
-    }
-    rows[rows.length - 1] += 1;
-  }
-  return rows;
 }
 
 /**
@@ -1079,44 +1061,219 @@ function foldRows(node: ElkNode, direction: DiagramDirection): number[] {
  */
 const MIN_FOLD_ROW_BALANCE = 0.5;
 
+/** A rank of the flow, as the fold moves it around: whole, never split. */
+type FlowLayer = {
+  nodes: ElkNode[];
+  /** Where the rank starts and how far it reaches along the flow axis. */
+  flow: { start: number; extent: number };
+  /** The same across the axis the rows stack on. */
+  stack: { start: number; extent: number };
+};
+
+export type FoldedFlow = {
+  positions: Map<string, RoutePoint>;
+  /** The sides each edge leaves and arrives on, by the edge's index. */
+  sides: Map<number, { from: Side; to: Side }>;
+  aspect: number;
+  rows: number[];
+};
+
+/** The ranks ELK laid out, in flow order, each one whole. */
+function flowLayers(laid: ElkNode, alongY: boolean): FlowLayer[] {
+  const flowStart = (child: ElkNode) => finiteNumber(alongY ? child.y : child.x);
+  const stackStart = (child: ElkNode) => finiteNumber(alongY ? child.x : child.y);
+  const flowSize = (child: ElkNode) => finiteNumber(alongY ? child.height : child.width);
+  const stackSize = (child: ElkNode) => finiteNumber(alongY ? child.width : child.height);
+  const byRank = new Map<number, ElkNode[]>();
+  for (const child of laid.children ?? []) {
+    const rank = Math.round(flowStart(child));
+    byRank.set(rank, [...(byRank.get(rank) ?? []), child]);
+  }
+  return [...byRank.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, nodes]) => ({
+      nodes,
+      flow: {
+        start: Math.min(...nodes.map(flowStart)),
+        extent: Math.max(...nodes.map((node) => flowStart(node) + flowSize(node)))
+          - Math.min(...nodes.map(flowStart)),
+      },
+      stack: {
+        start: Math.min(...nodes.map(stackStart)),
+        extent: Math.max(...nodes.map((node) => stackStart(node) + stackSize(node)))
+          - Math.min(...nodes.map(stackStart)),
+      },
+    }));
+}
+
 /**
- * Folds a flow that came out as a ribbon onto more than one row.
+ * Where a rank lands once the flow is folded into rows of `columns`.
  *
- * A twelve-stage pipeline laid out RIGHT is fifteen times wider than it is
- * tall, and nothing about the drawing survives being scaled to fit a page.
- * ELK's wrapping splits the chain into rows that still read in order, which
- * is exactly what a person drawing the same pipeline by hand would do. It
- * only runs when the first attempt really is a ribbon.
- *
- * A squarer bounding box is not enough to keep it. On some graphs wrapping
- * cuts the chain where the chain did not want to be cut: one row ends up
- * carrying a single box while another carries five, and the connectors that
- * join those rows sweep the entire width of the board and back. The rows have
- * to come out even as well, or the ribbon it replaced was the better drawing.
+ * Rows alternate direction, which is the whole point. Wrapping a chain
+ * left-to-right on every row leaves the last box of one row and the first box
+ * of the next at opposite ends of the board, and the connector between them
+ * has to sweep the full width and back. Turning the row round instead puts
+ * them in the same column, one directly above the other, and the turn is a
+ * short straight run down the outside. That is what the roadmap boards on the
+ * reference shelf do, and it is what a person drawing the same chain does.
  */
-async function foldLongFlow(
-  graph: GeometryInput,
-  laid: ElkNode,
-  options: Record<string, string>,
-): Promise<ElkNode> {
+function foldSeat(index: number, columns: number): { row: number; column: number } {
+  const row = Math.floor(index / columns);
+  const along = index % columns;
+  return { row, column: row % 2 === 0 ? along : columns - 1 - along };
+}
+
+/**
+ * Folds a ribbon into a serpentine grid.
+ *
+ * The ranks keep their internal shape and their order; only where each rank
+ * sits changes. Every candidate row count is measured and the one landing
+ * closest to a readable page shape wins, provided the rows come out even: a
+ * cut that leaves one row carrying the drawing and another carrying a single
+ * box is the U-turn a reader sees, and a plain ribbon beats it.
+ */
+function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
   // A region is a column of the drawing and folding one is not a fold, it is
   // a scramble, so a nested graph keeps the shape it was given.
-  if (graph.containers) return laid;
-  if (aspect(laid) <= RIBBON_ASPECT || layerCount(laid, graph.direction) < MIN_FOLD_LAYERS) return laid;
-  try {
-    const folded = await elk.layout(elkGraph(graph, {
-      ...options,
-      "elk.layered.wrapping.strategy": "MULTI_EDGE",
-      "elk.aspectRatio": TARGET_ASPECT,
-    }));
-    if (aspect(folded) >= aspect(laid)) return laid;
-    const rows = foldRows(folded, graph.direction);
-    if (rows.length < 2) return laid;
-    return Math.min(...rows) >= Math.max(...rows) * MIN_FOLD_ROW_BALANCE ? folded : laid;
-  } catch {
-    // Wrapping refuses some graphs outright. The ribbon is still a drawing.
-    return laid;
+  if (input.containers) return null;
+  const alongY = portsSpreadAlongWidth(input.direction);
+  const layers = flowLayers(laid, alongY);
+  if (layers.length < MIN_FOLD_LAYERS) return null;
+
+  const rankOf = new Map<string, number>();
+  layers.forEach((layer, index) => {
+    for (const node of layer.nodes) rankOf.set(node.id, index);
+  });
+
+  let best: FoldedFlow | null = null;
+  for (let columns = MIN_FOLD_COLUMNS; columns < layers.length; columns++) {
+    const rowCount = Math.ceil(layers.length / columns);
+    if (rowCount < 2) continue;
+    const counts = Array.from({ length: rowCount }, (_, row) => layers
+      .filter((_layer, index) => foldSeat(index, columns).row === row).length);
+    if (Math.min(...counts) < Math.max(...counts) * MIN_FOLD_ROW_BALANCE) continue;
+
+    const columnExtent = Array.from({ length: columns }, () => 0);
+    const rowExtent = Array.from({ length: rowCount }, () => 0);
+    layers.forEach((layer, index) => {
+      const seat = foldSeat(index, columns);
+      columnExtent[seat.column] = Math.max(columnExtent[seat.column], layer.flow.extent);
+      rowExtent[seat.row] = Math.max(rowExtent[seat.row], layer.stack.extent);
+    });
+    const total = (extents: number[], gap: number) => extents.reduce((sum, one) => sum + one, 0)
+      + gap * (extents.length - 1);
+    const flowSpan = total(columnExtent, input.layerSpacing);
+    const stackSpan = total(rowExtent, FOLD_ROW_GAP);
+    const width = alongY ? stackSpan : flowSpan;
+    const height = alongY ? flowSpan : stackSpan;
+    const shape = Math.max(width, height) / Math.max(1, Math.min(width, height));
+    if (best && Math.abs(shape - TARGET_ASPECT) >= Math.abs(best.aspect - TARGET_ASPECT)) continue;
+
+    const offsets = (extents: number[], gap: number) => extents.reduce<number[]>(
+      (starts, extent, index) => [...starts, starts[index] + extent + gap],
+      [0],
+    );
+    const columnStart = offsets(columnExtent, input.layerSpacing);
+    const rowStart = offsets(rowExtent, FOLD_ROW_GAP);
+    const positions = new Map<string, RoutePoint>();
+    layers.forEach((layer, index) => {
+      const seat = foldSeat(index, columns);
+      // A rank narrower than its column, or shallower than its row, is centred
+      // in the room the widest of its neighbours asked for.
+      const flowShift = columnStart[seat.column]
+        + (columnExtent[seat.column] - layer.flow.extent) / 2 - layer.flow.start;
+      const stackShift = rowStart[seat.row]
+        + (rowExtent[seat.row] - layer.stack.extent) / 2 - layer.stack.start;
+      for (const node of layer.nodes) {
+        const flow = finiteNumber(alongY ? node.y : node.x) + flowShift;
+        const stack = finiteNumber(alongY ? node.x : node.y) + stackShift;
+        positions.set(node.id, alongY ? { x: stack, y: flow } : { x: flow, y: stack });
+      }
+    });
+
+    // Along the row the flow reads as it always did; between rows it turns
+    // down the outside of the board and arrives square on the box below.
+    const forward: { from: Side; to: Side } = alongY
+      ? { from: "bottom", to: "top" }
+      : { from: "right", to: "left" };
+    const backward: { from: Side; to: Side } = { from: forward.to, to: forward.from };
+    const turn: { from: Side; to: Side } = alongY
+      ? { from: "right", to: "left" }
+      : { from: "bottom", to: "top" };
+    const sides = new Map<number, { from: Side; to: Side }>();
+    input.edges.forEach((edge, index) => {
+      const from = rankOf.get(edge.from);
+      const to = rankOf.get(edge.to);
+      if (from === undefined || to === undefined || from === to) return;
+      const here = foldSeat(from, columns);
+      const there = foldSeat(to, columns);
+      if (here.row === there.row) {
+        sides.set(index, there.column > here.column ? forward : backward);
+      } else if (there.row === here.row + 1 && there.column === here.column) {
+        sides.set(index, turn);
+      }
+    });
+    best = { positions, sides, aspect: shape, rows: counts };
   }
+  return best;
+}
+
+/**
+ * Draws the connectors of a folded flow.
+ *
+ * The fold moved every rank, so ELK's channel routes no longer describe the
+ * board. The grid it moved them onto is regular enough to route by hand: a
+ * step along a row is a straight run out of one box into the next, and a turn
+ * between rows is a straight drop down the outside, because the fold put the
+ * last rank of a row and the first rank of the next in the same column.
+ * Anything else, a branch or an edge closing a loop, goes through the same
+ * repair loop every non-layered algorithm uses, and a fold with an edge that
+ * loop cannot clear is thrown away: a chain that closes a loop back across two
+ * rows has no tidy route through the grid, and the ribbon it replaced at least
+ * had one.
+ */
+function foldedGeometry(
+  input: GeometryInput,
+  folded: FoldedFlow,
+  outcome: DiagramLayoutOutcome,
+): LayoutGeometry | null {
+  const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
+  const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
+    const point = folded.positions.get(node.id) ?? { x: 0, y: 0 };
+    return [node.id, { x: snapModelCoordinate(point.x), y: snapModelCoordinate(point.y) }];
+  }));
+  const boxes = new Map<string, RouteBox>(input.params.nodes.map((node) => {
+    const position = positions.get(node.id)!;
+    return [node.id, { id: node.id, x: position.x, y: position.y, ...sizeOf(node.id) }];
+  }));
+  const requests: RouteRequest[] = input.edges.map((edge, index) => ({
+    id: `edge-${index}`,
+    from: edge.from,
+    to: edge.to,
+    ...(folded.sides.has(index) ? { sides: folded.sides.get(index)! } : {}),
+  }));
+  const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
+  const minSteps = new Map<string, number>();
+  let routes = planRoutes(boxes, requests, { minSteps });
+  for (let round = 0; ; round++) {
+    const guilty = routeDefects(boxes, routes, attachments);
+    if (guilty.size === 0) break;
+    if (round === MAX_ROUTE_REPAIR_ITERATIONS - 1) return null;
+    for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
+    routes = planRoutes(boxes, requests, { minSteps });
+  }
+
+  const placed: RouteBox[] = [...boxes.values()];
+  const edges: EdgeGeometry[] = input.edges.map((edge, index) => {
+    const route = routes[index];
+    const text = edge.label?.trim();
+    if (!text) return { points: route.points, rounded: route.rounded };
+    const size = measureText(text, EDGE_LABEL_FONT_SIZE);
+    const label = placeEdgeLabel(route.points, size, placed);
+    placed.push({ id: `label-${index}`, x: label.x, y: label.y, ...size });
+    return { points: route.points, rounded: route.rounded, label };
+  });
+  return { positions, sizes: input.sizes, outcome, edges };
 }
 
 /**
@@ -1161,7 +1318,17 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     "elk.layered.cycleBreaking.strategy": "MODEL_ORDER",
     "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
   };
-  const result = await foldLongFlow(graph, await elk.layout(elkGraph(graph, options)), options);
+  const result = await elk.layout(elkGraph(graph, options));
+  // A flow that came out as a ribbon is refolded onto a serpentine grid, and
+  // routed by hand: ELK's channels belong to the shape it laid out, not to
+  // the one the fold moved the ranks into.
+  const folded = aspect(result) > RIBBON_ASPECT && layerCount(result, input.direction) >= MIN_FOLD_LAYERS
+    ? foldFlow(input, result)
+    : null;
+  const foldGeometry = folded && folded.aspect < aspect(result)
+    ? foldedGeometry(input, folded, outcome)
+    : null;
+  if (foldGeometry) return foldGeometry;
   const absolute = resolveAbsolute(result);
   const positions = new Map<string, RoutePoint>(input.params.nodes.map((node) => {
     const box = absolute.boxes.get(node.id);
