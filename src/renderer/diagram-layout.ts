@@ -2167,13 +2167,35 @@ function assemblePlan(
   // far corner with the apex it names a third of the board away, which is the
   // marooned caption a reader notices before they read anything else.
   const titleSize = title ? measureText(title, TITLE_FONT_SIZE) : { width: 0, height: 0 };
-  const drawn = [...regionSkeletons, ...nodeSkeletons, ...edgeLabelSkeletons];
-  const drawnTop = Math.min(origin.y, ...drawn.map((skeleton) => finiteNumber(skeleton.y, origin.y)));
-  const drawnLeft = Math.min(origin.x, ...drawn.map((skeleton) => finiteNumber(skeleton.x, origin.x)));
-  const drawnRight = Math.max(
-    origin.x,
-    ...drawn.map((skeleton) => finiteNumber(skeleton.x, origin.x) + finiteNumber(skeleton.width)),
-  );
+  // Measured over the ink and nothing else. The origin is where the layout was
+  // asked to start, not something anybody can see, and a radial board leaves
+  // it hundreds of pixels above and to the left of the first thing drawn:
+  // including it hangs the title in empty space off one corner of the board.
+  const drawnBoxes = [
+    ...[...regionSkeletons, ...nodeSkeletons, ...edgeLabelSkeletons].map((skeleton) => ({
+      x: finiteNumber(skeleton.x, origin.x),
+      y: finiteNumber(skeleton.y, origin.y),
+      width: finiteNumber(skeleton.width),
+    })),
+    ...absoluteRoutes.flat().map((point) => ({ x: point.x, y: point.y, width: 0 })),
+  ];
+  const drawnTop = Math.min(...drawnBoxes.map((box) => box.y));
+  const drawnLeft = Math.min(...drawnBoxes.map((box) => box.x));
+  const drawnRight = Math.max(...drawnBoxes.map((box) => box.x + box.width));
+  const titleLeft = (drawnLeft + drawnRight - titleSize.width) / 2;
+  // Headroom is the band a reader sees between the title and the drawing, so
+  // it is measured against what actually stands under the title. A board whose
+  // topmost ink is a leaf off in one corner would otherwise push the title a
+  // corner's height clear of everything it names, and the caption reads as
+  // marooned even though it is centred correctly.
+  const beneathTitle = drawnBoxes.filter((box) => box.x + box.width >= titleLeft - TITLE_HEADROOM
+    && box.x <= titleLeft + titleSize.width + TITLE_HEADROOM);
+  const headroomFrom = beneathTitle.length > 0
+    ? Math.min(...beneathTitle.map((box) => box.y))
+    : drawnTop;
+  // Still above every last thing on the board: a title level with a corner of
+  // the drawing reads as one more caption on it.
+  const titleBottom = Math.min(headroomFrom - TITLE_HEADROOM, drawnTop - LABEL_MIN_GAP);
   const titleId = titleElementId(diagramId);
   if (title) roles.set(titleId, { role: "title" });
   const skeletons: JsonObject[] = [
@@ -2181,8 +2203,8 @@ function assemblePlan(
       id: titleId,
       type: "text",
       ...stamp("title"),
-      x: snapModelCoordinate((drawnLeft + drawnRight - titleSize.width) / 2),
-      y: snapModelCoordinate(drawnTop - TITLE_HEADROOM - titleSize.height),
+      x: snapModelCoordinate(titleLeft),
+      y: snapModelCoordinate(titleBottom - titleSize.height),
       width: titleSize.width,
       height: titleSize.height,
       text: title,
