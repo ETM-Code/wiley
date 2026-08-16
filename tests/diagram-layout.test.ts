@@ -16,8 +16,7 @@ import {
   PASSING_CLEARANCE,
   absoluteArrowPoints,
   pointsToSegments,
-  type Point,
-  type Segment,
+  routesCross,
 } from "../src/renderer/diagram-routes";
 import { evaluateDiagramPlan } from "../src/renderer/diagram-quality";
 import { THEMES } from "../src/renderer/diagram-theme";
@@ -319,21 +318,10 @@ describe("diagram layout quality", () => {
     // And no connector crosses another one anywhere on the board.
     const routes = plan.skeletons
       .filter((skeleton) => skeleton.type === "arrow")
-      .map((arrow) => pointsToSegments(absoluteArrowPoints(arrow)));
-    const crosses = (one: Segment, other: Segment): boolean => {
-      const side = (p: Point, q: Point, r: Point) => Math.sign(
-        (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x),
-      );
-      const [a, b] = [{ x: one.x1, y: one.y1 }, { x: one.x2, y: one.y2 }];
-      const [c, d] = [{ x: other.x1, y: other.y1 }, { x: other.x2, y: other.y2 }];
-      const [d1, d2, d3, d4] = [side(a, b, c), side(a, b, d), side(c, d, a), side(c, d, b)];
-      return d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0 && d1 !== d2 && d3 !== d4;
-    };
+      .map((arrow) => absoluteArrowPoints(arrow));
     for (let first = 0; first < routes.length; first++) {
       for (let second = first + 1; second < routes.length; second++) {
-        for (const one of routes[first]) {
-          for (const other of routes[second]) expect(crosses(one, other)).toBe(false);
-        }
+        expect(routesCross(routes[first], routes[second])).toBe(false);
       }
     }
     const report = evaluateDiagramPlan(plan);
