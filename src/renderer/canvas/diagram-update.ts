@@ -143,26 +143,27 @@ export function humanSketchBoxes(graph: HumanGraph): Map<string, Box> {
 }
 
 /**
- * Records the connecting arrow on the person's own element without ever
- * rewriting anything else about it, and stays idempotent so replaying it on
+ * Records the connecting arrows on the person's own elements, and takes off
+ * the record of any that this update removed. Nothing else about their
+ * element is touched, and the whole thing is idempotent, so replaying it on
  * every animation frame cannot stack duplicate entries.
  */
 export function withHumanBindings(
   elements: readonly SceneElement[],
   additions: ReadonlyMap<string, string[]>,
+  departed: ReadonlySet<string> = new Set(),
 ): SceneElement[] {
-  if (additions.size === 0) return [...elements];
+  if (additions.size === 0 && departed.size === 0) return [...elements];
   return elements.map((element) => {
-    const arrows = additions.get(element.id);
-    if (!arrows) return element;
     const bound = (element as SceneElement & {
       boundElements?: Array<{ id: string; type: string }> | null;
     }).boundElements ?? [];
-    const missing = arrows
-      .filter((id) => !bound.some((entry) => entry?.id === id))
+    const kept = bound.filter((entry) => !departed.has(entry?.id));
+    const missing = (additions.get(element.id) ?? [])
+      .filter((id) => !kept.some((entry) => entry?.id === id))
       .map((id) => ({ id, type: "arrow" as const }));
-    if (missing.length === 0) return element;
-    return { ...element, boundElements: [...bound, ...missing] } as SceneElement;
+    if (missing.length === 0 && kept.length === bound.length) return element;
+    return { ...element, boundElements: [...kept, ...missing] } as SceneElement;
   });
 }
 
@@ -324,6 +325,7 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
       (element) => !beforeIds.has(element.id) && !createdIds.has(element.id),
     ),
     boundAdditions,
+    new Set(diff.removals),
   );
   const foreignCount = foreignScene().length;
   const moved = diff.survivors.filter((survivor) => survivor.from.x !== survivor.to.x

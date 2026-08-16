@@ -555,6 +555,34 @@ describe("update-diagram reaching into the human's sketch", () => {
     expect((survivor.boundElements as unknown[]).length).toBe(1);
   });
 
+  it("takes the record of a dropped connector off their element", async () => {
+    const { target, drawn } = await boardWithSketch();
+    await handleCanvasRequest(target.api, {
+      id: 27,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        edges: [{ from: "deliver", to: "human:sketch-login" }],
+      },
+    });
+    expect((target.elements().find((element) => element.id === "sketch-login")!
+      .boundElements as unknown[]).length).toBe(1);
+
+    await handleCanvasRequest(target.api, {
+      id: 28,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "replace",
+        nodes: [{ id: "deliver", label: "Deliver" }],
+        edges: [],
+      },
+    });
+    const survivor = target.elements().find((element) => element.id === "sketch-login")!;
+    expect(survivor.boundElements).toEqual([]);
+  });
+
   it("keeps the person's element through a replace that drops every agent node", async () => {
     const { target, drawn } = await boardWithSketch();
     await handleCanvasRequest(target.api, {
