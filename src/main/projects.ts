@@ -131,13 +131,16 @@ export function adoptGlobalLedger(options: { legacyDir: string; dataDir: string 
   if (legacyDir === dataDir) return undefined;
   const from = path.join(legacyDir, LEDGER_FILE);
   const to = path.join(dataDir, LEDGER_FILE);
-  if (!existsSync(from) || existsSync(to)) return undefined;
+  const backup = `${from}.bak`;
+  // The .bak is the record that this already happened. Without checking it, a
+  // crash between the copy and the rename would hand the same history to the
+  // next project opened as well, which is how one board ends up in two places.
+  if (!existsSync(from) || existsSync(to) || existsSync(backup)) return undefined;
 
   mkdirSync(dataDir, { recursive: true });
   for (const suffix of ["", ...LEDGER_SIDECARS]) {
     if (existsSync(`${from}${suffix}`)) copyFileSync(`${from}${suffix}`, `${to}${suffix}`);
   }
-  const backup = `${from}.bak`;
   // The sidecars go with it: a -wal left beside no database is a puzzle for
   // whoever finds it next, and sqlite would replay it into a fresh file.
   for (const suffix of ["", ...LEDGER_SIDECARS]) {

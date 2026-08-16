@@ -13,6 +13,7 @@ const INSTANT_TASK_MS = 3_000;
 const PROGRESS_INTERVAL_MS = 10_000;
 
 export class VoiceBridge {
+  #closed = false;
   #pendingAnswers: PendingAnswer[] = [];
   #workStartedAt = 0;
   #lastProgressAt = 0;
@@ -28,6 +29,7 @@ export class VoiceBridge {
    * triggering speech, so the model knows what "these two boxes" means.
    */
   pushBoardUpdate(summary: string, debounceMs = 4_000): void {
+    if (this.#closed) return;
     this.#pendingBoardUpdate = summary;
     if (this.#boardUpdateTimer) return;
     this.#boardUpdateTimer = setTimeout(() => {
@@ -52,6 +54,7 @@ export class VoiceBridge {
   }
 
   push(text: string, options: { interrupt?: boolean } = {}): void {
+    if (this.#closed) return;
     const message: VoiceInjection = {
       id: crypto.randomUUID(),
       text,
@@ -96,6 +99,7 @@ export class VoiceBridge {
   }
 
   ask(question: string, signal?: AbortSignal, timeoutMs = 120_000): Promise<string> {
+    if (this.#closed) return Promise.resolve("There is nobody listening to answer.");
     this.push(`[agent question] ${question}`, { interrupt: true });
     return new Promise((resolve) => {
       const finish = (answer: string) => {
@@ -124,7 +128,14 @@ export class VoiceBridge {
     return true;
   }
 
+  /**
+   * Nothing more reaches the user through this bridge. The flag matters as
+   * much as the draining: a project being wound down keeps narrating for as
+   * long as its workers take to stop, and those lines would otherwise arrive
+   * in a window that has already moved on to a different project.
+   */
   close(): void {
+    this.#closed = true;
     if (this.#boardUpdateTimer) clearTimeout(this.#boardUpdateTimer);
     this.#boardUpdateTimer = undefined;
     this.#dropHeldProgress();

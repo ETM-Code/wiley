@@ -7,10 +7,17 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+/**
+ * Shared by every bridge this process ever makes, so an id is never reused.
+ * A project switch builds a new bridge while the renderer may still be about
+ * to answer the old one's last request; per-instance numbering would let that
+ * answer resolve an unrelated request on the new board.
+ */
+let nextRequestId = 0;
+
 export class CanvasBridge {
   /** Called with a short human-readable summary when the human edits the board. */
   onHumanChange?: (summary: string) => void;
-  #sequence = 0;
   #previewRequestSequence = 0;
   #diagramPreviewVersion = 0;
   #pending = new Map<number, PendingRequest>();
@@ -36,7 +43,7 @@ export class CanvasBridge {
   }
 
   request<T = unknown>(op: CanvasRequest["op"], params?: unknown, signal?: AbortSignal): Promise<T> {
-    const id = ++this.#sequence;
+    const id = ++nextRequestId;
     if (this.sendRequest({ id, op, params }) === false) {
       return Promise.reject(new Error("Canvas unavailable: no active browser client"));
     }

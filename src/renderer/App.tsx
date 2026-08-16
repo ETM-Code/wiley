@@ -237,6 +237,8 @@ export default function App() {
   const snapshotTimerRef = useRef<number | null>(null);
   const boardRevisionRef = useRef(0);
   const boardReadyRef = useRef(false);
+  /** Bumped on every project switch, to strand anything the old one queued. */
+  const boardGenerationRef = useRef(0);
   const lastSubmittedElementsRef = useRef("");
   const snapshotPendingRef = useRef(false);
   const canvasMutationActiveRef = useRef(false);
@@ -437,6 +439,7 @@ export default function App() {
       window.clearTimeout(snapshotTimerRef.current);
       snapshotTimerRef.current = null;
     }
+    boardGenerationRef.current += 1;
     boardRevisionRef.current = 0;
     boardReadyRef.current = false;
     snapshotPendingRef.current = false;
@@ -486,7 +489,13 @@ export default function App() {
       if (elementsFingerprint === lastSubmittedElementsRef.current) return;
       snapshotPendingRef.current = true;
       if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
+      // These elements belong to the project that was open when the change
+      // happened. A retry outliving a switch would write them into a different
+      // project's ledger, where the bridge would renumber them forward and
+      // silently replace that project's board with this one's.
+      const generation = boardGenerationRef.current;
       const submit = async () => {
+        if (generation !== boardGenerationRef.current) return;
         if (canvasMutationActiveRef.current) {
           snapshotPendingRef.current = false;
           snapshotTimerRef.current = null;
@@ -509,10 +518,14 @@ export default function App() {
             },
             files,
           });
+          // A switch may have landed while this was in flight, in which case
+          // this bookkeeping describes a board that is no longer on screen.
+          if (generation !== boardGenerationRef.current) return;
           boardRevisionRef.current = Math.max(proposedRevision, accepted?.revision ?? 0);
           lastSubmittedElementsRef.current = elementsFingerprint;
           snapshotPendingRef.current = false;
         } catch {
+          if (generation !== boardGenerationRef.current) return;
           snapshotTimerRef.current = window.setTimeout(() => void submit(), 750);
         }
       };

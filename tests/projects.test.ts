@@ -201,6 +201,17 @@ describe("adoptGlobalLedger", () => {
     expect(existsSync(path.join(second, LEDGER_FILE))).toBe(false);
   });
 
+  // A crash between the copy and the rename would otherwise hand the same
+  // history to the next project opened as well.
+  it("does not adopt again when a previous run left the backup behind", async () => {
+    const { legacyDir, dataDir } = await temp();
+    writeLedger(legacyDir, "old history");
+    writeFileSync(`${path.join(legacyDir, LEDGER_FILE)}.bak`, "old history");
+
+    expect(adoptGlobalLedger({ legacyDir, dataDir })).toBeUndefined();
+    expect(existsSync(path.join(dataDir, LEDGER_FILE))).toBe(false);
+  });
+
   it("does nothing when there was never a global ledger", async () => {
     const { legacyDir, dataDir } = await temp();
     expect(adoptGlobalLedger({ legacyDir, dataDir })).toBeUndefined();

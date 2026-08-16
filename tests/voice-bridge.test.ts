@@ -130,4 +130,21 @@ describe("voice question bridge", () => {
     // Only the latest summary survives the debounce window.
     expect(sent[0].text).toBe("[board update] User changed 2 rectangle; board now has 5 elements");
   });
+
+  // A project being wound down narrates for as long as its workers take to
+  // stop, and by then the window may be showing a different project.
+  it("says nothing more once it has been closed", async () => {
+    vi.useFakeTimers();
+    const sent: unknown[] = [];
+    const bridge = new VoiceBridge((payload) => sent.push(payload));
+    bridge.close();
+
+    bridge.push("[agent progress] still going", { interrupt: true });
+    bridge.pushBoardUpdate("User changed 1 rectangle");
+    vi.advanceTimersByTime(60_000);
+    expect(sent).toHaveLength(0);
+    // And a question asked after the close answers itself rather than holding
+    // a run open for two minutes waiting on nobody.
+    await expect(bridge.ask("Which layout?")).resolves.toMatch(/nobody listening/i);
+  });
 });

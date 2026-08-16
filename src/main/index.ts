@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { app, BrowserWindow, dialog, Menu, nativeTheme, net, protocol, safeStorage, session } from "electron";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SqliteRuntimeLedger } from "./ledger";
@@ -29,9 +30,24 @@ import { SettingsStore } from "./settings/settings-store";
 import { recordRecentProject } from "./settings/settings-schema";
 import { createWorkerProbes } from "./workers/worker-runtime";
 
+/**
+ * One project's runtime while it is being built. Every field is present by the
+ * time it becomes the active one; they are optional here because a failure
+ * part-way still has to tear down whatever did get made.
+ */
+type RuntimeParts = Partial<RuntimeHandles> & { projectDir: string };
+
 let mainWindow: BrowserWindow | undefined;
 /** Everything bound to the open project, or nothing while the picker is up. */
-let active: RuntimeHandles | undefined;
+let active: RuntimeParts | undefined;
+/**
+ * Every runtime that still holds processes, including one part-way through
+ * starting or stopping. The quit sweep reads this rather than the active one,
+ * because quitting mid-switch is precisely when there is no active one.
+ */
+const liveRuntimes = new Set<RuntimeParts>();
+/** The switch in flight, so a second one queues behind it instead of racing. */
+let switching: Promise<void> = Promise.resolve();
 let disposeIpc: (() => void) | undefined;
 let settingsStore: SettingsStore | undefined;
 let settingsService: SettingsService | undefined;
@@ -158,6 +174,13 @@ async function createWindow(): Promise<BrowserWindow> {
     if (!isTrustedOrigin(url)) event.preventDefault();
   });
 
+  // Attached here rather than at the call site, so a window reopened from the
+  // dock clears the reference too and nothing later talks to a destroyed one.
+  win.on("closed", () => {
+    active?.canvas?.failPending();
+    if (mainWindow === win) mainWindow = undefined;
+  });
+
   const devUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
   if (devUrl) await win.loadURL(devUrl);
   else await win.loadURL("wiley://app/index.html");
@@ -169,6 +192,13 @@ function requireSettings(): SettingsStore {
   return settingsStore;
 }
 
+/** The open project's runtime, once every piece of it exists. */
+function activeRuntime(): RuntimeHandles | undefined {
+  if (!active?.controller || !active.transcript || !active.canvas) return undefined;
+  if (!active.voice || !active.ledger || !active.pi) return undefined;
+  return active as RuntimeHandles;
+}
+
 /** The open project, the ones opened before it, and whether more can be opened. */
 function projectView(): ProjectView {
   return buildProjectView({
@@ -178,12 +208,31 @@ function projectView(): ProjectView {
   });
 }
 
+/** Tears down whatever of a runtime exists, in the reverse order it was built. */
+async function disposeParts(parts: RuntimeParts, reason: string): Promise<void> {
+  try {
+    parts.controller?.dispose();
+    parts.voice?.close();
+    parts.canvas?.failPending(reason);
+    await parts.pi?.dispose();
+    parts.ledger?.close();
+  } finally {
+    // Only after disposal has actually finished: until then this runtime still
+    // holds worker process groups that the quit sweep has to be able to see.
+    liveRuntimes.delete(parts);
+  }
+}
+
 /**
  * Builds everything a project needs, in the order it needs it. Nothing here
  * outlives the project: the ledger, the board, the voice bridge and the Pi
  * runtime are all rebuilt against the new folder when the user switches, which
  * is what makes the catastrophic-command guard and the worker sandbox point at
  * the project actually open rather than the one opened at launch.
+ *
+ * A failure part-way leaves nothing behind. Pi starts its worker manager before
+ * it finishes initializing, so an unwound half-built runtime is exactly how a
+ * worker process group ends up with nobody left to kill it.
  */
 async function startRuntime(projectDir: string): Promise<void> {
   const settings = requireSettings();
@@ -194,20 +243,31 @@ async function startRuntime(projectDir: string): Promise<void> {
       console.log(`Adopted the previous shared ledger into ${adopted.to}; the original is kept at ${adopted.backup}`);
     }
   }
-  const ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
-  await ledger.initialize();
-  const transcript = new TranscriptStore(ledger);
-  const canvas = new CanvasBridge(ledger, (request) => sendToRenderer(IPC.canvasRequest, request));
-  const voice = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
-  canvas.onHumanChange = (summary) => voice.pushBoardUpdate(summary);
-  const pi = new PiRuntime(projectDir, ledger, transcript, canvas, voice, skillsDir, settings, dataDir);
-  await pi.initialize();
-  // The agent changes settings through exactly the service the panel uses, so
-  // a change it makes normalizes, persists, and broadcasts the same way.
-  if (settingsService) pi.useSettingsService(settingsService);
-  const controller = new RuntimeController(ledger, transcript, pi, canvas, sendToRenderer, settings);
-  await controller.recoverInterruptedJobs();
-  active = { projectDir, controller, transcript, canvas, voice, ledger, pi };
+  const parts: RuntimeParts = { projectDir };
+  liveRuntimes.add(parts);
+  try {
+    parts.ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
+    await parts.ledger.initialize();
+    parts.transcript = new TranscriptStore(parts.ledger);
+    parts.canvas = new CanvasBridge(parts.ledger, (request) => sendToRenderer(IPC.canvasRequest, request));
+    parts.voice = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
+    parts.canvas.onHumanChange = (summary) => parts.voice?.pushBoardUpdate(summary);
+    parts.pi = new PiRuntime(
+      projectDir, parts.ledger, parts.transcript, parts.canvas, parts.voice, skillsDir, settings, dataDir,
+    );
+    await parts.pi.initialize();
+    // The agent changes settings through exactly the service the panel uses, so
+    // a change it makes normalizes, persists, and broadcasts the same way.
+    if (settingsService) parts.pi.useSettingsService(settingsService);
+    parts.controller = new RuntimeController(
+      parts.ledger, parts.transcript, parts.pi, parts.canvas, sendToRenderer, settings,
+    );
+    await parts.controller.recoverInterruptedJobs();
+  } catch (error) {
+    await disposeParts(parts, "Wiley could not open this project");
+    throw error;
+  }
+  active = parts;
   console.log(`Workspace: ${projectDir} (data in ${dataDir})`);
 }
 
@@ -221,11 +281,7 @@ async function stopRuntime(): Promise<void> {
   const current = active;
   if (!current) return;
   active = undefined;
-  current.controller.dispose();
-  current.voice.close();
-  current.canvas.failPending("Wiley is switching projects");
-  await current.pi.dispose();
-  current.ledger.close();
+  await disposeParts(current, "Wiley is switching projects");
 }
 
 /**
@@ -233,23 +289,51 @@ async function stopRuntime(): Promise<void> {
  * before the new one exists, the registry records the opening, and the
  * renderer is told to drop the board it was showing and read the new
  * project's own.
+ *
+ * Serialized against itself. The menu, the picker and the chip can all ask at
+ * once, and a second switch entering while the first is still killing workers
+ * would leave that first runtime with no owner and its workers with nobody to
+ * stop them.
  */
-async function openProject(projectDir: string): Promise<ProjectView> {
+function openProject(target: string): Promise<ProjectView> {
+  const next = switching.then(() => switchProject(target), () => switchProject(target));
+  switching = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+async function switchProject(target: string): Promise<ProjectView> {
+  const projectDir = toProjectPath(target, app.getPath("home"));
+  // The same rule the launch path applies, at the boundary IPC can reach:
+  // a project of "/" is always a mistake, however it was asked for.
+  if (!projectDir) throw new Error(`${target || "That"} is not a folder Wiley can work in.`);
+  if (!existsSync(projectDir)) throw new Error(`${projectDir} is no longer on disk.`);
   // The renderer keeps its microphone exactly where it was, so a controller
   // that came up believing nobody is listening would disagree with the window.
-  const listening = active?.controller.getState().microphoneEnabled ?? false;
+  const listening = active?.controller?.getState().microphoneEnabled ?? false;
   await stopRuntime();
-  await startRuntime(projectDir);
-  if (listening) active?.controller.setMicrophoneEnabled(true);
+  try {
+    await startRuntime(projectDir);
+  } catch (error) {
+    // The previous project is already gone, so a window still showing its
+    // board could do nothing at all with it. Send everyone back to the picker.
+    announceProject();
+    throw error;
+  }
+  if (listening) active?.controller?.setMicrophoneEnabled(true);
   const settings = requireSettings();
   settings.update({
     lastProject: projectDir,
     recentProjects: recordRecentProject(settings.get().recentProjects, projectDir),
   });
+  return announceProject();
+}
+
+/** Tells the window, the title bar and the menu which project this now is. */
+function announceProject(): ProjectView {
   const view = projectView();
+  sendToRenderer(IPC.projectsChanged, view);
   mainWindow?.setTitle(windowTitle());
   installAppMenu();
-  sendToRenderer(IPC.projectsChanged, view);
   return view;
 }
 
@@ -297,16 +381,14 @@ async function bootstrap(): Promise<void> {
   }
   settingsService = new SettingsService({
     store: settingsStore,
-    modelRuntime: () => active?.pi.modelRuntime,
+    modelRuntime: () => active?.pi?.modelRuntime,
     probeWorkers: createWorkerProbes(() => requireSettings().get()),
   });
   disposeIpc = registerIpc({
-    runtime: () => active,
+    runtime: activeRuntime,
     projects: {
       view: projectView,
-      open: (input, owner) => (input.path
-        ? openProject(toProjectPath(input.path, app.getPath("home")) ?? input.path)
-        : promptForProject(owner)),
+      open: (input, owner) => (input.path ? openProject(input.path) : promptForProject(owner)),
     },
     settings: settingsService,
     sendToRenderer,
@@ -329,10 +411,6 @@ async function bootstrap(): Promise<void> {
   } else {
     console.log("No project to reopen: the window opens on the project picker");
   }
-  mainWindow.on("closed", () => {
-    active?.canvas.failPending();
-    mainWindow = undefined;
-  });
 }
 
 void app.whenReady().then(async () => {
@@ -363,15 +441,12 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   disposeIpc?.();
-  const current = active;
-  if (!current) return;
-  current.controller.dispose();
-  current.voice.close();
-  current.canvas.failPending("Application is closing");
-  void current.pi.dispose();
-  current.ledger.close();
+  active = undefined;
+  for (const parts of [...liveRuntimes]) void disposeParts(parts, "Application is closing");
 });
 
 // dispose() is asynchronous and quitting does not wait for it, so this is the
 // sweep that guarantees no worker process group outlives the app.
-process.on("exit", () => active?.pi.killWorkersSync());
+process.on("exit", () => {
+  for (const parts of liveRuntimes) parts.pi?.killWorkersSync();
+});

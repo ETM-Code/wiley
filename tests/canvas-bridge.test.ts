@@ -161,3 +161,25 @@ describe("canvas browser transport", () => {
     expect(summaries).toHaveLength(2);
   });
 });
+
+describe("request identity across bridges", () => {
+  // Switching projects builds a new bridge while the renderer may still be
+  // about to answer the old one's last request. Restarting the numbering
+  // would let that answer resolve an unrelated request on the new board.
+  it("never reuses a request id, even for a freshly built bridge", async () => {
+    const ids: number[] = [];
+    const send = (request: CanvasRequest) => {
+      ids.push(request.id);
+      return true;
+    };
+    const first = new CanvasBridge(ledgerStub(), send, 50);
+    const second = new CanvasBridge(ledgerStub(), send, 50);
+
+    await expect(Promise.allSettled([
+      first.request("get-scene-summary"),
+      second.request("get-scene-summary"),
+      second.request("get-scene-summary"),
+    ])).resolves.toHaveLength(3);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
