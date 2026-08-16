@@ -306,6 +306,76 @@ describe("diagram renderer", () => {
     expect((heading.y as number) + (heading.height as number)).toBeLessThanOrEqual(200);
   });
 
+  it("binds a label the model addressed by container id to the shape it names", async () => {
+    let elements: Array<Record<string, unknown>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    // The converter regenerates ids, so a separate text naming the box in
+    // containerId would arrive pointing at a skeleton id nothing on the board
+    // has, leaving the caption unbound and outside its box.
+    await handleCanvasRequest(api, {
+      id: 60,
+      op: "add-elements",
+      params: {
+        scrollTo: false,
+        elements: [
+          { id: "payments-box-01", type: "rectangle", x: 380, y: 300, width: 180, height: 80 },
+          { type: "text", text: "payments", containerId: "payments-box-01", x: 375, y: 308 },
+        ],
+      },
+    });
+
+    const box = elements.find((element) => element.type === "rectangle")!;
+    const label = elements.find((element) => element.type === "text")!;
+    expect(label.text).toBe("payments");
+    expect(label.containerId).toBe(box.id);
+    expect(elements.filter((element) => element.type === "text")).toHaveLength(1);
+    // Bound, so the editor centres it rather than leaving it where it was aimed.
+    expect(label.x).toBeGreaterThanOrEqual(box.x as number);
+  });
+
+  it("keeps a caption standing alone when its container is not in the batch", async () => {
+    let elements: Array<Record<string, unknown>> = [
+      { id: "already-there", type: "rectangle", x: 0, y: 0, width: 200, height: 80, version: 1 },
+    ];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    await handleCanvasRequest(api, {
+      id: 61,
+      op: "add-elements",
+      params: {
+        scrollTo: false,
+        elements: [
+          { type: "text", text: "note", containerId: "already-there", x: 400, y: 400 },
+          { type: "text", text: "ghost", containerId: "no-such-element", x: 600, y: 400 },
+        ],
+      },
+    });
+
+    // Binding onto an element already on the board is edit_canvas's job; a
+    // dangling containerId would be worse than a caption of its own.
+    for (const text of ["note", "ghost"]) {
+      const caption = elements.find((element) => element.text === text)!;
+      expect(caption.containerId).toBeUndefined();
+    }
+  });
+
   it("connects existing human-drawn elements with bound arrows", async () => {
     let elements: Array<Record<string, any>> = [
       { id: "magic", type: "rectangle", x: 0, y: 400, width: 300, height: 90, version: 1 },

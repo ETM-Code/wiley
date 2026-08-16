@@ -76,6 +76,34 @@ export function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown):
     return item;
   });
 
+  // A model labels a box by emitting a separate text that names the box in
+  // containerId. The converter resolves no such reference: it copies the id
+  // straight through, so the label arrives bound to nothing, uncentred, and
+  // hanging outside the shape, and every later reading of the board treats it
+  // as neither a label nor a caption. Fold it into the shape's own label,
+  // which is the form the converter does understand.
+  const proposed = new Map<string, JsonObject>();
+  for (const item of elements) {
+    if (typeof item.id === "string") proposed.set(item.id, item);
+  }
+  const folded = new Set<JsonObject>();
+  for (const item of elements) {
+    if (item.type !== "text" || typeof item.containerId !== "string") continue;
+    const owner = proposed.get(item.containerId);
+    const text = typeof item.text === "string" ? item.text.trim() : "";
+    if (owner && owner !== item && owner.type !== "text" && text) {
+      const label = asRecord(owner.label);
+      if (typeof label.text !== "string" || !label.text.trim()) owner.label = { ...label, text };
+      folded.add(item);
+      continue;
+    }
+    // Binding to an element already on the board is edit_canvas's job, not
+    // something the converter can do. A caption standing on its own beats a
+    // reference to a container that will never resolve.
+    delete item.containerId;
+  }
+  const standing = elements.filter((item) => !folded.has(item));
+
   // Models place standalone headings by eye and land them on top of nodes.
   // Nudge any free text clear of existing elements instead of rendering the
   // collision.
@@ -86,7 +114,7 @@ export function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown):
     width: element.width,
     height: element.height,
   }));
-  for (const item of elements) {
+  for (const item of standing) {
     if (item.type !== "text" || typeof item.containerId === "string") continue;
     for (let attempt = 0; attempt < 6; attempt++) {
       const box = {
@@ -105,7 +133,7 @@ export function sanitizeSkeletons(api: ExcalidrawImperativeAPI, value: unknown):
     }
   }
 
-  return { ...params, elements };
+  return { ...params, elements: standing };
 }
 
 export async function addElements(api: ExcalidrawImperativeAPI, value: unknown) {
