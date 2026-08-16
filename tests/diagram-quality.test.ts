@@ -338,7 +338,7 @@ describe("styleCoherence", () => {
 
   it("flags a palette too wide for the number of nodes", () => {
     expect(evaluateDiagramPlan(rainbowPlan).styleCoherence).toEqual([
-      "5 distinct fills across 6 nodes exceeds 2",
+      "9 distinct fills across 10 nodes exceeds 7",
     ]);
   });
 

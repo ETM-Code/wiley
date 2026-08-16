@@ -68,9 +68,18 @@ const MIN_PORT_SEPARATION = 14;
 
 /** WCAG large-text minimum: below this a label stops being legible on its fill. */
 const MIN_LABEL_CONTRAST = 3;
-/** A diagram reads as designed at roughly one fill per three nodes. */
-const MAX_DISTINCT_FILLS = 6;
-const FILLS_PER_NODE = 3;
+/**
+ * How wide a palette still reads as designed. Measured against the curated
+ * reference boards: they run about one fill per one and a half to two nodes,
+ * and small ones routinely give every node its own colour, so the old one
+ * fill per three nodes flagged perfectly ordinary work. The floor is what
+ * keeps a two-node diagram from being told its start and its end may not
+ * differ; the ceiling is that no board on the reference shelf needs more than
+ * eight fills to say what it means.
+ */
+const MAX_DISTINCT_FILLS = 8;
+const MIN_DISTINCT_FILLS = 5;
+const FILLS_PER_NODE = 1.5;
 const MAX_DISTINCT_NODE_STROKE_WIDTHS = 2;
 
 function boxesOverlap(a: Box, b: Box, margin = 0): boolean {
@@ -132,7 +141,10 @@ function evaluateStyleCoherence(plan: DiagramPlan, report: DiagramQualityReport)
     }
   }
 
-  const fillBudget = Math.min(MAX_DISTINCT_FILLS, Math.ceil(nodeCount / FILLS_PER_NODE));
+  const fillBudget = Math.min(
+    MAX_DISTINCT_FILLS,
+    Math.max(MIN_DISTINCT_FILLS, Math.ceil(nodeCount / FILLS_PER_NODE)),
+  );
   if (fills.size > fillBudget) {
     report.styleCoherence.push(`${fills.size} distinct fills across ${nodeCount} nodes exceeds ${fillBudget}`);
   }
