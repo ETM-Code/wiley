@@ -1195,6 +1195,20 @@ describe("diagram layout quality", () => {
     for (const arrow of plan.skeletons.filter((skeleton) => skeleton.type === "arrow")) {
       expect(arrow.roundness).toBeUndefined();
     }
+    // The return path from the token issuer to the session cache has to cross
+    // the identity region to get home, and the only lanes inside it are the
+    // gaps between its boxes: a corridor's width under the auth service, which
+    // reads as a line going under the box. It runs beyond the row instead.
+    const arrow = plan.skeletons.find((skeleton) => skeleton.type === "arrow"
+      && (skeleton.start as { id: string }).id === plan.elementIdByNode.get("token"))!;
+    const points = absoluteArrowPoints(arrow);
+    const authsvc = byId.get(plan.elementIdByNode.get("authsvc")!)!;
+    const rowBottom = Math.max(...regions.map((box) => (box.y as number) + (box.height as number)));
+    for (const segment of points.slice(1, -1)) {
+      expect(segment.y).toBeGreaterThanOrEqual(rowBottom);
+    }
+    expect(Math.min(...points.map((point) => point.y)))
+      .toBeGreaterThanOrEqual(authsvc.y as number);
   });
 
   it("lines sibling regions up on the band they share", async () => {

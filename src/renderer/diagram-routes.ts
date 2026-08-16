@@ -451,7 +451,7 @@ export function assignPorts(
     from: string;
     to: string;
     sides?: { from: Side; to: Side };
-    trunk?: number;
+    trunk?: boolean;
   }>,
   options: PortOptions = {},
 ): Map<string, { start: Point; end: Point }> {
@@ -478,7 +478,7 @@ export function assignPorts(
     // the parent that splits at the bus, rather than one stub per child
     // spread along the side, which is what makes three children read as three
     // unrelated departures.
-    if (edge.trunk !== undefined && edge.sides && parent && !options.radial) {
+    if (edge.trunk && edge.sides && parent && !options.radial) {
       points.set(`${edge.id}|start`, sideCentre(parent, edge.sides.from));
     } else {
       request(`${edge.id}|start`, edge.from, edge.to, "right", edge.sides?.from);
@@ -619,8 +619,9 @@ export function flowRoute(
   if (sides.from === sides.to) {
     const outward = sides.from === "bottom" || sides.from === "right" ? 1 : -1;
     const ends = alongY ? [from.y, to.y] : [from.x, to.x];
-    const at = (outward > 0 ? Math.max(...ends) : Math.min(...ends))
+    const beside = (outward > 0 ? Math.max(...ends) : Math.min(...ends))
       + outward * CORRIDOR_GAP * Math.max(1, lane);
+    const at = turnAt ?? beside;
     const points = alongY
       ? [from, { x: from.x, y: at }, { x: to.x, y: at }, to]
       : [from, { x: at, y: from.y }, { x: at, y: to.y }, to];
@@ -892,13 +893,20 @@ export type RouteRequest = {
    */
   lane?: number;
   /**
-   * The flow coordinate of the bus a fan of siblings shares. Every child of
-   * one parent leaves by the middle of the parent's side, runs to this line,
-   * and splits along it. It is the shape every org chart on the shelf is
-   * drawn in, and the reason is that a reader following one line back up
-   * arrives at the parent rather than at one of three unrelated stubs.
+   * Where the connector turns, when the caller knows the line it should turn
+   * on: the bus a fan of siblings shares, or the lane a run in the margin
+   * takes. Left out, a bracket turns halfway between its two ends and a
+   * margin run takes the lane a corridor's width off the further of them.
    */
-  trunk?: number;
+  turnAt?: number;
+  /**
+   * Whether this edge leaves its source by the middle of the side rather than
+   * by a slot of its own, so a fan of siblings is one line out of the parent
+   * that splits. It is the shape every org chart on the shelf is drawn in,
+   * and the reason is that a reader following one line back up arrives at the
+   * parent rather than at one of three unrelated stubs.
+   */
+  trunk?: boolean;
 };
 
 export type PlannedRoute = { id: string; points: Point[]; rounded: boolean };
@@ -956,7 +964,7 @@ export function planRoutes(
     const marginRun = edge.sides !== undefined && edge.sides.from === edge.sides.to;
     if (edge.sides && (minStep <= 1 || marginRun)) {
       const lane = (edge.lane ?? 1) + (marginRun ? minStep - 1 : 0);
-      const flow = flowRoute(start, end, edge.sides, blockers, edge.trunk, lane);
+      const flow = flowRoute(start, end, edge.sides, blockers, edge.turnAt, lane);
       if (flow) return { id: edge.id, ...flow };
     }
     if (!options.square) {

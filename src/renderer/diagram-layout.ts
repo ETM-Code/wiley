@@ -30,7 +30,9 @@ import {
 } from "./diagram-theme";
 
 import {
+  CORRIDOR_GAP,
   MAX_ROUTE_REPAIR_ITERATIONS,
+  PASSING_CLEARANCE,
   PORT_SPACING,
   geometryIntersectsBox,
   meetOutline,
@@ -40,6 +42,7 @@ import {
   planRoutes,
   routeDefects,
   type Box as RouteBox,
+  type PlannedRoute,
   type Point as RoutePoint,
   type RouteRequest,
   type SnapDelta,
@@ -1497,6 +1500,18 @@ const REGION_BAND_ASPECT = 2.5;
  * reads worse than the band it replaced.
  */
 const MIN_PACKED_REGIONS = 4;
+/**
+ * Daylight a run inside a row owes a box it is only getting past.
+ *
+ * A corridor's width is enough to keep a connector off a box it is turning
+ * around. It is not enough for a run travelling the whole length of a box's
+ * side: at that distance the two read as one thing, and the return path from
+ * the token issuer to the session cache, tucked exactly a corridor under the
+ * auth service and running the width of it, was read three panels running as
+ * a line going under the box. A corridor plus the daylight a passing run owes
+ * anything is the distance at which they separate.
+ */
+const ROW_SQUEEZE = CORRIDOR_GAP + PASSING_CLEARANCE;
 
 /** A region, or a node belonging to no region: whatever moves as one piece. */
 type RegionCell = {
@@ -1737,9 +1752,32 @@ function packedGeometry(
     if (there.row === here.row + 1 && there.column === here.column) return turn;
     return undefined;
   };
+  // The margin beyond the last row of regions, and the side a run reaches it
+  // by. A connector going back the way the flow came has to cross its own row,
+  // and the only lanes inside the row are the gaps between its boxes, so what
+  // comes back is a run tucked a corridor's width under whichever box stands
+  // in the way, which reads as passing through its underside. Beyond the row
+  // there is nothing to pass at all. Only the last row has one: any other
+  // row's margin is the corridor the turn into the row below runs in.
+  const away: Side = alongY ? "right" : "bottom";
+  const lastRow = Math.max(...[...packed.seats.values()].map((seat) => seat.row));
+  const rowEdge = [...packed.seats].reduce((far, [id, seat]) => {
+    const box = regions.get(id) ?? boxes.get(id);
+    return box && seat.row === lastRow
+      ? Math.max(far, alongY ? box.x + box.width : box.y + box.height)
+      : far;
+  }, Number.NEGATIVE_INFINITY);
+  const marginOption = new Map<number, number>();
+  input.edges.forEach((edge, index) => {
+    const here = packed.seats.get(packed.cellOf.get(edge.from) ?? "");
+    const there = packed.seats.get(packed.cellOf.get(edge.to) ?? "");
+    if (!here || !there || here === there) return;
+    if (here.row !== lastRow || there.row !== lastRow || there.column >= here.column) return;
+    marginOption.set(index, rowEdge + CORRIDOR_GAP);
+  });
 
-  const requests: RouteRequest[] = input.edges.map((edge, index) => {
-    const sides = sidesFor(edge.from, edge.to);
+  const buildRequests = (margin: ReadonlySet<number>): RouteRequest[] => input.edges.map((edge, index) => {
+    const sides = margin.has(index) ? { from: away, to: away } : sidesFor(edge.from, edge.to);
     const outside = [...regions]
       .filter(([id]) => !(held.get(id)?.has(edge.from) ?? false) && !(held.get(id)?.has(edge.to) ?? false))
       .map(([, box]) => box);
@@ -1748,29 +1786,56 @@ function packedGeometry(
       from: edge.from,
       to: edge.to,
       ...(sides ? { sides } : {}),
+      ...(margin.has(index) ? { turnAt: marginOption.get(index)! } : {}),
       ...(outside.length > 0 ? { blockers: outside } : {}),
     };
   });
-  const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
-  const minSteps = new Map<string, number>();
-  let routes = planRoutes(boxes, requests, { minSteps, square: true });
-  for (let round = 0; ; round++) {
-    const guilty = routeDefects(boxes, routes, attachments);
-    for (const [index, request] of requests.entries()) {
-      const geometry = routeGeometry(routes[index].points, routes[index].rounded);
-      if ((request.blockers ?? []).some((box) => geometryIntersectsBox(geometry, box, 0))) {
-        guilty.add(request.id);
+
+  const solve = (margin: ReadonlySet<number>): PlannedRoute[] | null => {
+    const requests = buildRequests(margin);
+    const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
+    const minSteps = new Map<string, number>();
+    let routes = planRoutes(boxes, requests, { minSteps, square: true });
+    for (let round = 0; ; round++) {
+      const guilty = routeDefects(boxes, routes, attachments);
+      for (const [index, request] of requests.entries()) {
+        const geometry = routeGeometry(routes[index].points, routes[index].rounded);
+        if ((request.blockers ?? []).some((box) => geometryIntersectsBox(geometry, box, 0))) {
+          guilty.add(request.id);
+        }
       }
+      if (guilty.size === 0) break;
+      if (round === MAX_ROUTE_REPAIR_ITERATIONS - 1) return null;
+      for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
+      routes = planRoutes(boxes, requests, { minSteps, square: true });
     }
-    if (guilty.size === 0) break;
-    if (round === MAX_ROUTE_REPAIR_ITERATIONS - 1) return null;
-    for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
-    routes = planRoutes(boxes, requests, { minSteps, square: true });
+    // A grid is drawn with square corners, the same rule a folded flow is held
+    // to. One connector swooping across a board of regions says the grid does
+    // not suit this graph, and the band it replaced at least read as a band.
+    return routes.some((route) => route.rounded) ? null : routes;
+  };
+
+  /** Whether a run had to squeeze past a box rather than get clear of it. */
+  const squeezes = (route: PlannedRoute, edge: GraphEdge): boolean => {
+    const geometry = routeGeometry(route.points, route.rounded);
+    return [...boxes].some(([id, box]) => id !== edge.from && id !== edge.to
+      && geometryIntersectsBox(geometry, box, -ROW_SQUEEZE));
+  };
+
+  let routes = solve(new Set());
+  if (!routes) return null;
+  // The margin is not the first answer, only the better one. A backward run
+  // that got across its row without squeezing past anything is already the
+  // shortest route there is, and sending it round the outside would be a
+  // detour bought for nothing.
+  const cramped = new Set([...marginOption.keys()]
+    .filter((index) => squeezes(routes![index], input.edges[index])));
+  if (cramped.size > 0) {
+    const roomier = solve(cramped);
+    if (roomier && ![...cramped].some((index) => squeezes(roomier[index], input.edges[index]))) {
+      routes = roomier;
+    }
   }
-  // A grid is drawn with square corners, the same rule a folded flow is held
-  // to. One connector swooping across a board of regions says the grid does
-  // not suit this graph, and the band it replaced at least read as a band.
-  if (routes.some((route) => route.rounded)) return null;
 
   const placed: RouteBox[] = [...boxes.values()];
   const edges: EdgeGeometry[] = input.edges.map((edge, index) => {
@@ -2485,14 +2550,14 @@ async function nonLayeredGeometry(
       from: edge.from,
       to: edge.to,
       ...(flowSides ? { sides: flowSides } : {}),
-      ...(trunk !== undefined ? { trunk } : {}),
+      ...(trunk !== undefined ? { trunk: true, turnAt: trunk } : {}),
       // A trunk is drawn against the bus, not re-anchored off ELK's channel.
       ...(raw && trunk === undefined ? { route: raw } : {}),
     };
   });
   const attachments = new Map(requests.map((request) => [
     request.id,
-    { from: request.from, to: request.to, ...(request.trunk !== undefined ? { trunk: true } : {}) },
+    { from: request.from, to: request.to, ...(request.trunk ? { trunk: true } : {}) },
   ]));
 
   const minSteps = new Map<string, number>();
@@ -2653,6 +2718,16 @@ function assemblePlan(
     },
   });
   const boxes = geometry.containers ?? new Map<string, RouteBox>();
+  // The same regions where the drawing actually stands. The layout works in
+  // its own frame and everything placed against a route works in the board's,
+  // so a region compared against a caption in the wrong one is a region that
+  // is not there: a caption a whole origin away from any border came back
+  // clear of every one of them and landed five pixels inside one.
+  const regionBoxes = new Map<string, RouteBox>([...boxes].map(([id, box]) => [id, {
+    ...box,
+    x: snapModelCoordinate(origin.x + box.x),
+    y: snapModelCoordinate(origin.y + box.y),
+  }]));
   const drawnContainers = containerPlan
     ? containerPlan.order.filter((id) => boxes.has(id))
     : [];
@@ -2791,7 +2866,7 @@ function assemblePlan(
   const drawnExtent = (() => {
     const xs: number[] = [];
     const ys: number[] = [];
-    for (const box of [...nodeBoxes, ...boxes.values()]) {
+    for (const box of [...nodeBoxes, ...regionBoxes.values()]) {
       xs.push(box.x, box.x + box.width);
       ys.push(box.y, box.y + box.height);
     }
@@ -2944,7 +3019,7 @@ function assemblePlan(
       : placeEdgeLabel(absoluteRoute, labelSize, [
         // A region the edge is not a member of is not a place its label may
         // land: inside one, it reads as belonging to that region.
-        ...[...boxes.entries()]
+        ...[...regionBoxes.entries()]
           .filter(([id]) => !ownerChain.includes(id))
           .map(([, box]) => box),
         ...nodeBoxes,
