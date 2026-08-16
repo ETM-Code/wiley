@@ -1366,12 +1366,29 @@ function alignMainPath(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
   const shifts = path.map((node) => axis - crossCentre(node));
   if (shifts.every((shift) => Math.abs(shift) <= MAIN_PATH_DRIFT)) return null;
 
+  // One rhythm down the board, too. ELK buys a whole caption's width of extra
+  // layer gap for every caption it has to reserve room for, so a nine-letter
+  // word on one connector opens a gap twice the size of every other gap on the
+  // board. The captions are placed against the routes drawn here, not in the
+  // room ELK set aside, so the room goes back and every rank stands one layer
+  // spacing from the last.
+  const stride = layers.map((layer, index) => (index === 0
+    ? 0
+    : layer.flow.start - (layers[index - 1].flow.start + layers[index - 1].flow.extent)));
+  const flowShift: number[] = [];
+  layers.forEach((layer, index) => {
+    flowShift[index] = index === 0
+      ? 0
+      : flowShift[index - 1] + Math.min(0, input.layerSpacing - stride[index]);
+  });
+
   const positions = new Map<string, RoutePoint>();
   layers.forEach((layer, index) => {
-    const shift = shifts[index];
+    const across = shifts[index];
+    const along = flowShift[index];
     for (const node of layer.nodes) {
-      const x = finiteNumber(node.x) + (alongY ? shift : 0);
-      const y = finiteNumber(node.y) + (alongY ? 0 : shift);
+      const x = finiteNumber(node.x) + (alongY ? across : along);
+      const y = finiteNumber(node.y) + (alongY ? along : across);
       positions.set(String(node.id), { x, y });
     }
   });
