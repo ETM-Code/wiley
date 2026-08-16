@@ -159,7 +159,7 @@ Implementation details and the deterministic/real-model test matrix: [docs/pi-ha
 
 Wiley won the internal hackathon of [Null Fellows](https://www.nullfellows.com) Cohort 02, a cohort of 35 selected from over 3000 applicants. The program places young European builders into top startups.
 
-Built with Akshith Alluri, Noel Matero, and Bendik Norli.
+Built with [Akshith Alluri](https://github.com/Akki2512), [Noel Matero](https://github.com/NoelMatero), and [Bendik Norli](https://github.com/bendiknorli).
 
 The thing we were actually chasing: make collaborating with an AI agent as seamless as collaborating with a genius friend at a whiteboard.
 
