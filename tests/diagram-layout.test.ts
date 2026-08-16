@@ -395,6 +395,92 @@ describe("diagram layout quality", () => {
     expect(report.sharedPorts).toEqual([]);
   });
 
+  it("gives a tree more daylight between two subtrees than between two siblings", async () => {
+    const plan = await planDiagramLayout({
+      title: "Product org",
+      layout: { algorithm: "tree", direction: "DOWN" },
+      nodes: [
+        { id: "ceo", label: "Ada Whitlock\nCEO" },
+        { id: "cto", label: "Ravi Menon\nCTO" },
+        { id: "cpo", label: "Jo Kim\nCPO" },
+        { id: "crev", label: "Sam Ortiz\nRevenue" },
+        { id: "plat", label: "Platform" },
+        { id: "apps", label: "Applications" },
+        { id: "design", label: "Design" },
+        { id: "research", label: "Research" },
+        { id: "sales", label: "Sales" },
+        { id: "success", label: "Customer success" },
+      ],
+      edges: [
+        { from: "ceo", to: "cto" },
+        { from: "ceo", to: "cpo" },
+        { from: "ceo", to: "crev" },
+        { from: "cto", to: "plat" },
+        { from: "cto", to: "apps" },
+        { from: "cpo", to: "design" },
+        { from: "cpo", to: "research" },
+        { from: "crev", to: "sales" },
+        { from: "crev", to: "success" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const node = (id: string) => byId.get(plan.elementIdByNode.get(id)!)!;
+    const gap = (left: string, right: string) => (node(right).x as number)
+      - ((node(left).x as number) + (node(left).width as number));
+    // Eight leaves given one gap each read as one row of eight. The hierarchy
+    // is in the drawing only when the space says where one team ends.
+    const sibling = Math.max(gap("plat", "apps"), gap("design", "research"), gap("sales", "success"));
+    expect(gap("apps", "design")).toBeGreaterThan(sibling);
+    expect(gap("research", "sales")).toBeGreaterThan(sibling);
+    // The two gaps between the three teams are the same one.
+    expect(gap("apps", "design")).toBe(gap("research", "sales"));
+    // And every parent stands over the middle of the children it owns.
+    const centre = (id: string) => (node(id).x as number) + (node(id).width as number) / 2;
+    for (const [parent, first, last] of [["cto", "plat", "apps"], ["cpo", "design", "research"],
+      ["crev", "sales", "success"], ["ceo", "cto", "crev"]] as const) {
+      expect(Math.abs(centre(parent) - (centre(first) + centre(last)) / 2)).toBeLessThanOrEqual(MODEL_GRID_SIZE / 2);
+    }
+  });
+
+  it("keeps a tree's bare-text leaves in tight rows", async () => {
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "tree", direction: "RIGHT" },
+      nodes: [
+        { id: "root", label: "Launch", shape: "ellipse" },
+        { id: "market", label: "Positioning" },
+        { id: "ops", label: "Operations" },
+        { id: "story", label: "Story", shape: "text" },
+        { id: "pricing", label: "Pricing", shape: "text" },
+        { id: "rota", label: "Support rota", shape: "text" },
+        { id: "billing", label: "Billing switch", shape: "text" },
+      ],
+      edges: [
+        { from: "root", to: "market" },
+        { from: "root", to: "ops" },
+        { from: "market", to: "story" },
+        { from: "market", to: "pricing" },
+        { from: "ops", to: "rota" },
+        { from: "ops", to: "billing" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const node = (id: string) => byId.get(plan.elementIdByNode.get(id)!)!;
+    // Two words of bare text do not need the daylight two boxes need. The gap
+    // between a pair of leaves is measured against the leaves, not against the
+    // board's node spacing.
+    const leafGap = (node("pricing").y as number)
+      - ((node("story").y as number) + (node("story").height as number));
+    expect(leafGap).toBeLessThan(node("story").height as number * 2);
+    expect(leafGap).toBeGreaterThan(0);
+    // And a pair still stands closer together than two branches do.
+    const branchGap = (node("ops").y as number)
+      - ((node("market").y as number) + (node("market").height as number));
+    expect(branchGap).toBeGreaterThan(leafGap);
+    const report = evaluateDiagramPlan(plan);
+    expect(report.nodeOverlaps).toEqual([]);
+    expect(report.edgesThroughNodes).toEqual([]);
+  });
+
   it.each(["force", "stress", "radial", "tree"] as const)(
     "places %s identically on every run",
     async (algorithm) => {

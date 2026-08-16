@@ -1896,6 +1896,128 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
   };
 }
 
+/**
+ * Daylight two neighbours in a tree owe each other, measured against the
+ * smaller of the two.
+ *
+ * mrtree gives every neighbour the board's node spacing, which is a number
+ * chosen for boxes. Two words of bare text are not boxes: eighty pixels of
+ * daylight around twenty-six pixels of ink is three parts air to one part
+ * drawing, and the row of leaves it draws is a column of things stranded from
+ * each other and from the branch they hang off.
+ */
+const TREE_GAP_RATIO = 0.4;
+/** Below this two neighbours read as one thing however small they are. */
+const MIN_TREE_GAP = 24;
+/**
+ * How much more daylight a whole subtree owes its neighbour than one leaf owes
+ * the next. With one gap for every neighbour, eight leaves under three
+ * managers read as one row of eight; the hierarchy is in the drawing only if
+ * the space between two groups says they are two groups.
+ */
+const TREE_GROUP_SPREAD = 1.75;
+
+/**
+ * Re-seats a tree across the axis its siblings stack on.
+ *
+ * The ranks ELK laid out are kept exactly: this changes only how much room
+ * each subtree is given beside the next, and where a parent stands over the
+ * children it owns. Anything that is not a plain tree -- a node with two
+ * parents, a cycle, a node no root reaches -- is handed back untouched.
+ */
+function tidyTree(
+  input: GeometryInput,
+  positions: ReadonlyMap<string, RoutePoint>,
+): Map<string, RoutePoint> | null {
+  const parentOf = new Map<string, string>();
+  for (const edge of input.edges) {
+    if (edge.from === edge.to || parentOf.has(edge.to)) return null;
+    parentOf.set(edge.to, edge.from);
+  }
+  const alongWidth = portsSpreadAlongWidth(input.direction);
+  const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
+  const extentOf = (id: string) => (alongWidth ? sizeOf(id).width : sizeOf(id).height);
+  const seatOf = (id: string) => {
+    const point = positions.get(id) ?? { x: 0, y: 0 };
+    return alongWidth ? point.x : point.y;
+  };
+  const ids = input.params.nodes.map((node) => node.id);
+  const childrenOf = new Map<string, string[]>(ids.map((id) => [id, []]));
+  for (const [child, parent] of parentOf) childrenOf.get(parent)?.push(child);
+  for (const list of childrenOf.values()) {
+    list.sort((a, b) => seatOf(a) - seatOf(b) || (a < b ? -1 : 1));
+  }
+  const roots = ids.filter((id) => !parentOf.has(id));
+  if (roots.length === 0) return null;
+
+  const depth = new Map<string, number>();
+  const walk = (id: string, level: number): boolean => {
+    if (depth.has(id)) return false;
+    depth.set(id, level);
+    return (childrenOf.get(id) ?? []).every((child) => walk(child, level + 1));
+  };
+  if (!roots.every((id) => walk(id, 0)) || depth.size !== ids.length) return null;
+
+  const heightOf = new Map<string, number>();
+  const measure = (id: string): number => {
+    const own = (childrenOf.get(id) ?? []).reduce((tallest, child) => Math.max(tallest, measure(child) + 1), 0);
+    heightOf.set(id, own);
+    return own;
+  };
+  for (const id of roots) measure(id);
+  const gapBetween = (a: string, b: string) => {
+    const base = Math.max(MIN_TREE_GAP, TREE_GAP_RATIO * Math.min(extentOf(a), extentOf(b)));
+    const group = TREE_GROUP_SPREAD ** Math.max(heightOf.get(a) ?? 0, heightOf.get(b) ?? 0);
+    return snapModelCoordinate(base * group);
+  };
+
+  const seats = new Map<string, number>();
+  const shift = (id: string, delta: number) => {
+    seats.set(id, (seats.get(id) ?? 0) + delta);
+    for (const child of childrenOf.get(id) ?? []) shift(child, delta);
+  };
+  const centreOf = (id: string) => (seats.get(id) ?? 0) + extentOf(id) / 2;
+  // Bottom up: a subtree takes the room its children need, and the parent
+  // stands opposite the middle of its first and last child rather than the
+  // middle of everything hanging off them. A deeper subtree on one side pulls
+  // the parent past the child it is meant to sit beside, and the fan of
+  // connectors that comes out of it doubles back over itself.
+  const place = (id: string, start: number): number => {
+    const children = childrenOf.get(id) ?? [];
+    const own = extentOf(id);
+    if (children.length === 0) {
+      seats.set(id, start);
+      return own;
+    }
+    let at = start;
+    children.forEach((child, index) => {
+      if (index > 0) at += gapBetween(children[index - 1], child);
+      at += place(child, at);
+    });
+    const middle = (centreOf(children[0]) + centreOf(children[children.length - 1])) / 2;
+    let seat = middle - own / 2;
+    if (seat < start) {
+      const delta = start - seat;
+      for (const child of children) shift(child, delta);
+      at += delta;
+      seat = start;
+    }
+    seats.set(id, seat);
+    return Math.max(at, seat + own) - start;
+  };
+  let at = 0;
+  roots.forEach((id, index) => {
+    if (index > 0) at += gapBetween(roots[index - 1], id);
+    at += place(id, at);
+  });
+
+  return new Map(ids.map((id) => {
+    const point = positions.get(id) ?? { x: 0, y: 0 };
+    const seat = snapModelCoordinate(seats.get(id) ?? 0);
+    return [id, alongWidth ? { x: seat, y: point.y } : { x: point.x, y: seat }];
+  }));
+}
+
 /** Which sides a parent leaves and a child is entered on, per flow direction. */
 const TREE_PORT_SIDES: Record<DiagramDirection, { from: Side; to: Side }> = {
   DOWN: { from: "bottom", to: "top" },
@@ -2066,13 +2188,16 @@ async function nonLayeredGeometry(
     (total, point) => ({ x: total.x + point.x / rawCenters.size, y: total.y + point.y / rawCenters.size }),
     { x: 0, y: 0 },
   );
-  const positions = new Map<string, RoutePoint>([...rawCenters].map(([id, center]) => {
+  const spread = new Map<string, RoutePoint>([...rawCenters].map(([id, center]) => {
     const size = sizeOf(id);
     return [id, {
       x: snapModelCoordinate(anchor.x + (center.x - anchor.x) * scale - size.width / 2),
       y: snapModelCoordinate(anchor.y + (center.y - anchor.y) * scale - size.height / 2),
     }];
   }));
+  // mrtree spaces every neighbour alike; a hierarchy is read from the space
+  // between its parts, so the tree is re-seated across the axis it stacks on.
+  const positions = (algorithm === "tree" ? tidyTree(input, spread) : null) ?? spread;
   const snapDeltas = new Map<string, SnapDelta>();
   // A ring is our own placement, so ELK's routes and the deltas that would
   // carry them across no longer describe anything on the board.
