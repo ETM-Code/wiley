@@ -256,9 +256,17 @@ function optionalStrings(value: unknown): string[] | undefined {
 
 function normalizeAuth(raw: unknown): AuthSettings {
   const source = isPlainObject(raw) ? raw : {};
+  const relayBaseUrl = typeof source.relayBaseUrl === "string"
+    ? source.relayBaseUrl.trim()
+    : DEFAULT_SETTINGS.auth.relayBaseUrl;
+  const mode = oneOf(source.mode, AUTH_MODES, DEFAULT_SETTINGS.auth.mode);
   const auth: AuthSettings = {
-    mode: oneOf(source.mode, AUTH_MODES, DEFAULT_SETTINGS.auth.mode),
-    relayBaseUrl: typeof source.relayBaseUrl === "string" ? source.relayBaseUrl.trim() : DEFAULT_SETTINGS.auth.relayBaseUrl,
+    // Cloud mode with no relay to talk to is not a state the app can act on:
+    // nothing could be minted and no model could be resolved. It normalizes
+    // back to the local path so an unconfigured relay leaves the product
+    // working exactly as it does without one.
+    mode: relayBaseUrl ? mode : "byok",
+    relayBaseUrl,
   };
   const accountEmail = optionalStr(source.accountEmail);
   if (accountEmail) auth.accountEmail = accountEmail;

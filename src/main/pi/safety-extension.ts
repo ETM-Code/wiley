@@ -1,6 +1,6 @@
 import path from "node:path";
 import { complete, getModel } from "@earendil-works/pi-ai/compat";
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import type { RuntimeLedger } from "../ledger";
 import { ApprovalJudge, CatastrophicCommandGuard, ReadBeforeEditGuard, isReadOnlyCommand } from "../safety";
@@ -8,21 +8,41 @@ import type { VoiceBridge } from "../voice-bridge";
 import { DEFAULT_APPROVAL_MODEL, JUDGED_TOOLS, PI_PROVIDER } from "./constants";
 import { redact } from "./redact";
 
+export interface ApprovalJudgeOptions {
+  enabled?: boolean;
+  provider?: string;
+  model?: string;
+  /**
+   * The composed runtime, which is the only thing that knows about providers
+   * registered at runtime (the cloud relay among them). Without it the judge
+   * can only see the SDK's built-in catalog, which on a hosted account holds
+   * no matching model at all: the judge would silently never run.
+   */
+  modelRuntime?: Pick<ModelRuntime, "getModel" | "complete">;
+}
+
 /**
  * Settings decide whether the soft approval layer runs and on which model; the
  * env switches stay as the escape hatch for a headless or scripted run.
  */
-export function createApprovalJudge(options: { enabled?: boolean; provider?: string; model?: string } = {}): ApprovalJudge | undefined {
+export function createApprovalJudge(options: ApprovalJudgeOptions = {}): ApprovalJudge | undefined {
   if (process.env.WILEY_APPROVAL_DISABLED === "1") return undefined;
   if (options.enabled === false) return undefined;
   const modelId = process.env.WILEY_APPROVAL_MODEL?.trim() || options.model?.trim() || DEFAULT_APPROVAL_MODEL;
+  const provider = options.provider ?? PI_PROVIDER;
+  const runtime = options.modelRuntime;
   // The static catalog is typed against its own literal ids; settings carry
   // free text, and an unknown pair simply yields undefined below.
-  const provider = (options.provider ?? PI_PROVIDER) as typeof PI_PROVIDER;
-  const judgeModel = getModel(provider, modelId as typeof DEFAULT_APPROVAL_MODEL);
+  const judgeModel = runtime?.getModel(provider, modelId)
+    ?? getModel(provider as typeof PI_PROVIDER, modelId as typeof DEFAULT_APPROVAL_MODEL);
   if (!judgeModel) return undefined;
+  // Routed through the runtime when there is one, so a request for a
+  // relay-hosted model is authenticated the same way every other one is.
+  const request = runtime
+    ? runtime.complete.bind(runtime)
+    : complete;
   return new ApprovalJudge(async ({ systemPrompt, userMessage, signal }) => {
-    const message = await complete(judgeModel, {
+    const message = await request(judgeModel, {
       systemPrompt,
       messages: [{ role: "user", content: userMessage, timestamp: Date.now() }],
     }, { signal });

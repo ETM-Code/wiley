@@ -2,7 +2,7 @@ import type { SettingsView, WorkerProbes } from "../../shared/contracts";
 import { createTerminalAppDetector } from "../workers/terminal-handoff";
 import { listAvailableModels, type ModelCatalogRuntime, type ModelOption } from "./model-catalog";
 import { resolveOpenAiKey, type SecretName } from "./secret-store";
-import { type SettingsPatch, type WileySettings, WORKER_KINDS } from "./settings-schema";
+import { effectiveProvider, type SettingsPatch, type WileySettings, WORKER_KINDS } from "./settings-schema";
 import type { SettingsStore } from "./settings-store";
 
 /**
@@ -32,6 +32,7 @@ export interface SettingsServiceOptions {
  */
 export class SettingsService {
   #models?: ModelOption[];
+  #modelsProvider?: string;
   readonly #detectTerminalApps = createTerminalAppDetector();
 
   constructor(private readonly options: SettingsServiceOptions) {}
@@ -97,10 +98,16 @@ export class SettingsService {
 
   /** Cached once it succeeds: the catalog is a network read behind the SDK. */
   async models(settings = this.options.store.get()): Promise<ModelOption[]> {
-    if (this.#models) return this.#models;
-    const models = await listAvailableModels(this.options.modelRuntime?.(), { provider: settings.agent.provider });
+    // Switching between a local key and a hosted account changes which
+    // provider's catalog applies, so the cache is keyed on it.
+    const provider = effectiveProvider(settings);
+    if (this.#models && provider === this.#modelsProvider) return this.#models;
+    const models = await listAvailableModels(this.options.modelRuntime?.(), { provider });
     // Only cache a real answer, so a failed first read retries next time.
-    if (this.options.modelRuntime?.()) this.#models = models;
+    if (this.options.modelRuntime?.()) {
+      this.#models = models;
+      this.#modelsProvider = provider;
+    }
     return models;
   }
 }
