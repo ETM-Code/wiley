@@ -1020,16 +1020,53 @@ function layerCount(node: ElkNode, direction: DiagramDirection): number {
 }
 
 /**
+ * How many boxes landed on each row the fold made, read off the placed
+ * children by grouping whatever overlaps across the axis the rows stack on.
+ */
+function foldRows(node: ElkNode, direction: DiagramDirection): number[] {
+  // Layers advance along one axis, so the fold has to stack them on the other.
+  const stacksAlongY = !portsSpreadAlongWidth(direction);
+  const extent = (child: ElkNode) => (stacksAlongY
+    ? { start: finiteNumber(child.y), end: finiteNumber(child.y) + finiteNumber(child.height) }
+    : { start: finiteNumber(child.x), end: finiteNumber(child.x) + finiteNumber(child.width) });
+  const rows: number[] = [];
+  let edge = Number.NEGATIVE_INFINITY;
+  for (const child of [...(node.children ?? [])].sort((a, b) => extent(a).start - extent(b).start)) {
+    const { start, end } = extent(child);
+    if (start > edge) {
+      rows.push(0);
+      edge = end;
+    } else {
+      edge = Math.max(edge, end);
+    }
+    rows[rows.length - 1] += 1;
+  }
+  return rows;
+}
+
+/**
+ * How lopsided the fold's rows are allowed to be before the fold is thrown
+ * away. Under a half, the cut fell somewhere the chain did not want to be cut:
+ * one row carries the drawing, another carries a single box, and the connector
+ * joining them has to run the whole width of the board and back to get there.
+ * That is the U-turn a reader sees, and a plain ribbon beats it.
+ */
+const MIN_FOLD_ROW_BALANCE = 0.5;
+
+/**
  * Folds a flow that came out as a ribbon onto more than one row.
  *
  * A twelve-stage pipeline laid out RIGHT is fifteen times wider than it is
  * tall, and nothing about the drawing survives being scaled to fit a page.
  * ELK's wrapping splits the chain into rows that still read in order, which
  * is exactly what a person drawing the same pipeline by hand would do. It
- * only runs when the first attempt really is a ribbon, and the fold is kept
- * only if it actually made the drawing squarer: on some graphs wrapping
- * leaves a single node stranded on a row of its own, which is worse than the
- * ribbon it replaced.
+ * only runs when the first attempt really is a ribbon.
+ *
+ * A squarer bounding box is not enough to keep it. On some graphs wrapping
+ * cuts the chain where the chain did not want to be cut: one row ends up
+ * carrying a single box while another carries five, and the connectors that
+ * join those rows sweep the entire width of the board and back. The rows have
+ * to come out even as well, or the ribbon it replaced was the better drawing.
  */
 async function foldLongFlow(
   graph: GeometryInput,
@@ -1046,7 +1083,10 @@ async function foldLongFlow(
       "elk.layered.wrapping.strategy": "MULTI_EDGE",
       "elk.aspectRatio": TARGET_ASPECT,
     }));
-    return aspect(folded) < aspect(laid) ? folded : laid;
+    if (aspect(folded) >= aspect(laid)) return laid;
+    const rows = foldRows(folded, graph.direction);
+    if (rows.length < 2) return laid;
+    return Math.min(...rows) >= Math.max(...rows) * MIN_FOLD_ROW_BALANCE ? folded : laid;
   } catch {
     // Wrapping refuses some graphs outright. The ribbon is still a drawing.
     return laid;

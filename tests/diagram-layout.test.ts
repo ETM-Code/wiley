@@ -201,6 +201,41 @@ describe("diagram layout quality", () => {
     expect(rows(await chain(16))).toBeGreaterThan(1);
   });
 
+  it("keeps the ribbon when the fold would strand a row", async () => {
+    // Eight stages with a branch and a replay loop: wrapping cuts it into
+    // rows of five, two and one, and the connectors joining those rows have
+    // to sweep the whole width of the board and back. A ribbon reads better
+    // than a U-turn, so the fold is thrown away.
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      nodes: [
+        { id: "src", label: "Source APIs" },
+        { id: "queue", label: "Kafka topic" },
+        { id: "clean", label: "Normalise" },
+        { id: "enrich", label: "Enrich" },
+        { id: "valid", label: "Valid?", shape: "diamond" },
+        { id: "dlq", label: "Dead letter" },
+        { id: "load", label: "Load to warehouse" },
+        { id: "dash", label: "Dashboards" },
+      ],
+      edges: [
+        { from: "src", to: "queue" },
+        { from: "queue", to: "clean" },
+        { from: "clean", to: "enrich" },
+        { from: "enrich", to: "valid" },
+        { from: "valid", to: "load" },
+        { from: "valid", to: "dlq" },
+        { from: "dlq", to: "clean" },
+        { from: "load", to: "dash" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const boxes = [...plan.elementIdByNode.values()]
+      .map((id) => plan.skeletons.find((skeleton) => skeleton.id === id)!);
+    const spread = Math.max(...boxes.map((box) => Number(box.x))) - Math.min(...boxes.map((box) => Number(box.x)));
+    const depth = Math.max(...boxes.map((box) => Number(box.y))) - Math.min(...boxes.map((box) => Number(box.y)));
+    expect(spread).toBeGreaterThan(depth * 2);
+  });
+
   it.each(["force", "stress", "radial", "tree"] as const)(
     "places %s identically on every run",
     async (algorithm) => {
