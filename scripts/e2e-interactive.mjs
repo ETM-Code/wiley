@@ -174,13 +174,13 @@ async function main() {
   console.log(`run dir: ${runDir}`);
   spawnStep("backend", "npx", ["tsx", "src/server/index.ts"], {
     OPENAI_API_KEY: apiKey,
-    BOARD_AI_PORT: String(BACKEND_PORT),
-    BOARD_AI_PROJECT_DIR: workspace,
-    BOARD_AI_DATA_DIR: dataDir,
+    WILEY_PORT: String(BACKEND_PORT),
+    WILEY_PROJECT_DIR: workspace,
+    WILEY_DATA_DIR: dataDir,
     VOICE_DISABLED: "1",
   });
   spawnStep("frontend", "npx", ["vite", "--config", "vite.browser.config.ts"], {
-    BOARD_AI_PORT: String(BACKEND_PORT),
+    WILEY_PORT: String(BACKEND_PORT),
     WILEY_WEB_PORT: String(WEB_PORT),
   });
   await waitFor("backend", () => api("/api/health").then((body) => body.ok));

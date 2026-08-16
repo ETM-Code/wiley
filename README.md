@@ -79,8 +79,8 @@ Optional settings:
 
 | Variable | Effect |
 | --- | --- |
-| `BOARD_AI_PROJECT_DIR` | Workspace the coding tools may edit (default: launch directory) |
-| `BOARD_AI_DATA_DIR` | Directory for the SQLite ledger |
+| `WILEY_PROJECT_DIR` | Workspace the coding tools may edit (default: launch directory) |
+| `WILEY_DATA_DIR` | Directory for the SQLite ledger |
 | `VOICE_DISABLED=1` | Keeps Realtime offline and shows a text input for harness testing |
 | `WILEY_APPROVAL_MODEL` | Reviewer model for risky tool calls (default `gpt-5.4-mini`) |
 | `WILEY_APPROVAL_DISABLED=1` | Disables the reviewer; the catastrophic guard always stays on |

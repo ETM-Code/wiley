@@ -3,6 +3,9 @@ out/
 release/
 coverage/
 .env
+.wiley/
+# Pre-rename workspace data. Kept for one release so an existing checkout does
+# not start reporting its own board as untracked.
 .board-ai/
 .DS_Store
 *.log

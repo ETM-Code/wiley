@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 async function makeStore(): Promise<TranscriptStore> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "board-ai-transcript-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "wiley-transcript-"));
   cleanup.push(directory);
   const ledger = new SqliteRuntimeLedger(path.join(directory, "runtime.sqlite"));
   await ledger.initialize();

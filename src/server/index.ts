@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
@@ -14,6 +15,7 @@ import {
   type TranscriptRole,
   type VoiceToolName,
 } from "../shared/contracts";
+import { env } from "../shared/env";
 import { SqliteRuntimeLedger } from "../main/ledger";
 import { PiRuntime } from "../main/pi-runtime";
 import { RuntimeController } from "../main/runtime-controller";
@@ -29,10 +31,22 @@ import { resolveConfigDir, SettingsStore } from "../main/settings/settings-store
 import { createWorkerProbes } from "../main/workers/worker-runtime";
 import { isCliWorkerKind } from "../main/workers/worker-types";
 
-const host = process.env.BOARD_AI_HOST?.trim() || "127.0.0.1";
-const port = Number(process.env.BOARD_AI_PORT?.trim() || 5174);
-const projectDir = process.env.BOARD_AI_PROJECT_DIR?.trim() || process.cwd();
-const dataDir = process.env.BOARD_AI_DATA_DIR?.trim() || path.join(projectDir, ".board-ai");
+const host = env("HOST")?.trim() || "127.0.0.1";
+const port = Number(env("PORT")?.trim() || 5174);
+const projectDir = env("PROJECT_DIR")?.trim() || process.cwd();
+const dataDir = env("DATA_DIR")?.trim() || defaultDataDir(projectDir);
+
+/**
+ * New workspaces get .wiley. One that already holds a .board-ai from before the
+ * rename keeps using it, so an existing board and its ledger do not silently
+ * vanish behind a fresh empty directory.
+ */
+function defaultDataDir(project: string): string {
+  const current = path.join(project, ".wiley");
+  if (existsSync(current)) return current;
+  const legacy = path.join(project, ".board-ai");
+  return existsSync(legacy) ? legacy : current;
+}
 
 type EventEnvelope = {
   sequence: number;
