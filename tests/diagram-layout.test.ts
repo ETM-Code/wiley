@@ -351,6 +351,42 @@ describe("diagram layout quality", () => {
     expect(evaluateDiagramPlan(plan).edgesThroughNodes).toEqual([]);
   });
 
+  it("draws a star's centre with weight and leaves every spoke whole", async () => {
+    const spokes = 7;
+    const plan = await planDiagramLayout({
+      layout: { algorithm: "radial" },
+      nodes: [
+        { id: "hub", label: "Event bus", role: "primary" },
+        ...Array.from({ length: spokes }, (_, index) => ({ id: `s${index}`, label: `Spoke ${index + 1}` })),
+      ],
+      edges: Array.from({ length: spokes }, (_, index) => ({
+        from: "hub",
+        to: `s${index}`,
+        label: "events",
+      })),
+    }, ORIGIN, DIAGRAM_ID);
+    const box = (id: string) => plan.skeletons.find((skeleton) => skeleton.id === plan.elementIdByNode.get(id))!;
+    const hub = box("hub");
+    // A hub owes its spokes no room along one edge: they leave on bearings all
+    // the way round it. Paying for it anyway drew a centre three times taller
+    // than it was wide, which reads as a column rather than a hub.
+    expect(hub.width as number).toBeGreaterThan(hub.height as number);
+    for (let index = 0; index < spokes; index++) {
+      const spoke = box(`s${index}`);
+      expect((hub.width as number) * (hub.height as number))
+        .toBeGreaterThan((spoke.width as number) * (spoke.height as number));
+    }
+    // Every caption stands beside its spoke. A bound one is seated in a gap cut
+    // out of the line, and a board that does that to all seven has no spoke
+    // drawn whole.
+    for (const skeleton of plan.skeletons.filter((one) => one.type === "arrow")) {
+      expect(skeleton.label).toBeUndefined();
+    }
+    expect(plan.skeletons.filter(
+      (skeleton) => plan.roles.get(String(skeleton.id))?.role === "edgeLabel",
+    )).toHaveLength(spokes);
+  });
+
   it("reports the direction an undirected algorithm ignored", async () => {
     const plan = await planDiagramLayout({
       layout: { algorithm: "force", direction: "UP" },
