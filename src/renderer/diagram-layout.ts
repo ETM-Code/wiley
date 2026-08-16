@@ -218,6 +218,12 @@ export interface DiagramPlan {
    * deliberate; anything else has to be theme-derived.
    */
   explicitColors: Set<string>;
+  /**
+   * Where the editor will put every label that rides an arrow. These have no
+   * skeleton of their own, so a later pass placing more labels against this
+   * plan would otherwise be blind to them.
+   */
+  boundLabelBoxes: RouteBox[];
   layout: DiagramLayoutOutcome;
 }
 
@@ -1280,6 +1286,9 @@ function assemblePlan(
   });
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
+  // A bound label has no skeleton, so its box exists nowhere else. Anything
+  // that places more labels against this plan later needs to see them.
+  const boundLabelBoxes: RouteBox[] = [];
   let boundLabelCount = 0;
   const captionNodes = new Set(
     params.nodes.filter((node) => nodeToType(node) === "text").map((node) => node.id),
@@ -1340,6 +1349,13 @@ function assemblePlan(
     const edgeLabelId = edgeLabelElementId(diagramId, key);
     if (bound) {
       boundLabelCount += 1;
+      const anchor = boundLabelAnchor(absoluteRoute);
+      boundLabelBoxes.push({
+        id: edgeLabelId,
+        x: anchor.x - labelSize.width / 2,
+        y: anchor.y - labelSize.height / 2,
+        ...labelSize,
+      });
       roles.set(edgeLabelId, {
         role: "edgeLabel",
         key,
@@ -1501,6 +1517,7 @@ function assemblePlan(
     containers: containerEntries,
     theme: theme.name,
     explicitColors,
+    boundLabelBoxes,
     layout: geometry.outcome,
   };
 }
