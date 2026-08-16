@@ -1,0 +1,21 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Wiley">
+  <!--
+    The app mark: the whiteboard glyph from wiley-logo.svg on its own, with the
+    wordmark dropped and the artwork scaled to fill the icon canvas. The glyph
+    occupies x 8..128, y 10..96 in the logo's coordinates, so one transform
+    carries it over unchanged rather than restating every path at new numbers.
+  -->
+  <g transform="translate(13.3333 123.3333) scale(7.33333)">
+    <!-- Whiteboard -->
+    <rect x="8" y="10" width="120" height="86" rx="14" fill="#FFFFFF" stroke="#1E1E2E" stroke-width="4"/>
+    <!-- Sketch: two nodes connected by an arrow -->
+    <rect x="24" y="30" width="34" height="22" rx="6" fill="#D1F7C4" stroke="#2F9E44" stroke-width="3"/>
+    <rect x="78" y="58" width="34" height="22" rx="6" fill="#FFE8CC" stroke="#E8590C" stroke-width="3"/>
+    <path d="M58 46 C 68 50, 70 56, 76 62" stroke="#1E1E2E" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M70 62 L 77 63 L 73 56" stroke="#1E1E2E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <!-- Voice -->
+    <circle cx="30" cy="74" r="6" fill="#4C6EF5"/>
+    <path d="M41 68 A 9 9 0 0 1 41 80" stroke="#4C6EF5" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M47 63 A 16 16 0 0 1 47 85" stroke="#4C6EF5" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.55"/>
+  </g>
+</svg>

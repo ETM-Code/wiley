@@ -10,6 +10,8 @@ coverage/
 .DS_Store
 *.log
 test-results/
+# Intermediate for build/icon.icns; scripts/make-icon.sh regenerates both.
+build/icon.iconset/
 playwright-report/
 .e2e/
 # User-supplied music track; copyrighted audio never gets committed.
