@@ -235,6 +235,36 @@ describe("containers", () => {
       "wire x box (2 crossings)",
     ]);
   });
+
+  it("holds an arrow entitled to leave a region to one crossing", () => {
+    const parts = (points: Array<[number, number]>) => [
+      region("box", 0, 0, 400, 300),
+      member("inner", 40, 60, "box"),
+      node("outer", 700, 60),
+      arrow("wire", points, { start: "inner", end: "outer" }),
+    ];
+    // Out through the near wall and gone: one crossing, which is what
+    // reaching an end outside the region costs.
+    expect(evaluateDiagramPlan(handBuiltPlan(parts([[200, 100], [700, 100]])))
+      .edgesThroughContainers).toEqual([]);
+    // Out over the top, back in across the region, and out again. Every
+    // region it touches is one it is entitled to touch, which is exactly why
+    // nobody was looking at where it actually went.
+    expect(evaluateDiagramPlan(handBuiltPlan(parts([
+      [200, 100], [200, -80], [300, -80], [300, 200], [700, 200],
+    ]))).edgesThroughContainers).toEqual([
+      "wire x box (3 crossings, 1 allowed)",
+    ]);
+    // Both ends inside means the route has no business outside at all.
+    expect(evaluateDiagramPlan(handBuiltPlan([
+      region("box", 0, 0, 400, 300),
+      member("inner", 40, 60, "box"),
+      member("other", 240, 60, "box"),
+      arrow("wire", [[200, 100], [200, -80], [320, -80], [320, 100]], { start: "inner", end: "other" }),
+    ])).edgesThroughContainers).toEqual([
+      "wire x box (2 crossings, 0 allowed)",
+    ]);
+  });
 });
 
 describe("bound edge labels", () => {
