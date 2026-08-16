@@ -1567,6 +1567,38 @@ function assemblePlan(
   // Every route is known before any label is placed, so a label can be judged
   // against the lines it does not own as well as the boxes.
   const absoluteRoutes = geometry.edges.map((routed, index) => seatRoute(routed, edges[index]));
+  /**
+   * Everything the drawing already occupies, before a single caption is put
+   * down. A bound label sits centred on its own route, so one riding the run
+   * that wraps the outside of the drawing hangs half of itself past the last
+   * line on the board, and the whole diagram reads as jammed into the corner
+   * of whatever frame it is shown in. That one stands beside its route
+   * instead.
+   */
+  const drawnExtent = (() => {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const box of [...nodeBoxes, ...boxes.values()]) {
+      xs.push(box.x, box.x + box.width);
+      ys.push(box.y, box.y + box.height);
+    }
+    for (const route of absoluteRoutes) {
+      for (const point of route) {
+        xs.push(point.x);
+        ys.push(point.y);
+      }
+    }
+    if (xs.length === 0) return null;
+    return {
+      left: Math.min(...xs),
+      right: Math.max(...xs),
+      top: Math.min(...ys),
+      bottom: Math.max(...ys),
+    };
+  })();
+  const insideDrawing = (box: RouteBox): boolean => drawnExtent === null
+    || (box.x >= drawnExtent.left && box.x + box.width <= drawnExtent.right
+      && box.y >= drawnExtent.top && box.y + box.height <= drawnExtent.bottom);
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
   // A bound label has no skeleton, so its box exists nowhere else. Anything
@@ -1609,6 +1641,7 @@ function assemblePlan(
       ...labelSize,
     };
     const roomOnTheArrow = boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
+      && insideDrawing(labelBox)
       && boundLabelClears(absoluteRoute, labelSize, nodeBoxes)
       && boundLabelClears(absoluteRoute, labelSize, labelGround, LABEL_MIN_GAP)
       // A label rides its own arrow by construction; landing on somebody
