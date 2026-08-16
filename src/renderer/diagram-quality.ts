@@ -9,6 +9,7 @@ import {
   type DiagramPlan,
 } from "./diagram-layout";
 import {
+  CAPTION_DAYLIGHT_MIN,
   absoluteArrowPoints,
   arrowGeometry,
   geometryCrowdsBox,
@@ -67,14 +68,6 @@ export const CONTAINER_INSET = 12;
 
 /** Two ports nearer than this on one node read as a single attachment. */
 const MIN_PORT_SEPARATION = 14;
-
-/**
- * The daylight below which a caption stops reading as beside a line and
- * starts reading as sitting on it. The layout aims for CAPTION_DAYLIGHT,
- * comfortably above this; a board exported small is where the difference
- * between the two gets spent.
- */
-const CAPTION_DAYLIGHT_MIN = 6;
 
 /** WCAG large-text minimum: below this a label stops being legible on its fill. */
 const MIN_LABEL_CONTRAST = 3;

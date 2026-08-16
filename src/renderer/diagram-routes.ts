@@ -829,6 +829,18 @@ function pointAlong(points: readonly Point[], at: number): Point {
  */
 export const CAPTION_DAYLIGHT = 12;
 
+/**
+ * The daylight below which a caption stops reading as beside a line and
+ * starts reading as sitting on it. Placement aims for CAPTION_DAYLIGHT,
+ * comfortably above this; a board exported small is where the difference
+ * between the two gets spent. It is also the bar a caption with no room to
+ * stand has to clear before it rides its own line instead: a neighbouring run
+ * this far off does not touch the word, and asking for the full daylight from
+ * every line on a fan of eight leaves a caption stranded in open field, naming
+ * nothing.
+ */
+export const CAPTION_DAYLIGHT_MIN = 6;
+
 /** Which way the route runs where a caption is about to sit beside it. */
 function headingNear(points: readonly Point[], at: Point): Point {
   let best = { x: 1, y: 0 };
