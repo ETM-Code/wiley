@@ -462,7 +462,9 @@ export default function App() {
     const unsubscribe = bridge.onProjectChanged((view) => {
       setProjects(view);
       resetBoard();
-      setToast(view.current ? `Opened ${view.current.name}` : null);
+      // Never cleared here: a failed switch announces a project-less view and
+      // only then rejects, and that rejection's message is the one that matters.
+      if (view.current) setToast(`Opened ${view.current.name}`);
     });
     return () => {
       live = false;
@@ -539,7 +541,7 @@ export default function App() {
   if (projects && !projects.current && projects.canOpen) {
     return (
       <main className="app-shell">
-        <ProjectPicker view={projects} onOpened={setProjects} />
+        <ProjectPicker view={projects} onOpened={setProjects} onFailed={setToast} />
         {toast ? <div className="app-toast" role="status">{toast}</div> : null}
       </main>
     );
@@ -559,7 +561,7 @@ export default function App() {
         }
         renderTopRightUI={() => (
           <>
-            {projects ? <ProjectChip view={projects} onOpened={setProjects} /> : null}
+            {projects ? <ProjectChip view={projects} onOpened={setProjects} onFailed={setToast} /> : null}
             <button
               type="button"
               className="status-button"

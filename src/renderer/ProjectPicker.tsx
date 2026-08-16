@@ -11,7 +11,7 @@ function FolderIcon() {
   );
 }
 
-function useOpenProject(onOpened?: (view: ProjectView) => void) {
+function useOpenProject(onOpened?: (view: ProjectView) => void, onFailed?: (message: string) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = useCallback(async (path?: string) => {
@@ -20,11 +20,15 @@ function useOpenProject(onOpened?: (view: ProjectView) => void) {
     try {
       onOpened?.(await bridge.openProject(path));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      const message = failure instanceof Error ? failure.message : String(failure);
+      setError(message);
+      // A failed switch has already left the previous project closed, so this
+      // component may be on its way out. Report it somewhere that outlives it.
+      onFailed?.(message);
     } finally {
       setBusy(false);
     }
-  }, [onOpened]);
+  }, [onFailed, onOpened]);
   return { open, busy, error };
 }
 
@@ -61,9 +65,13 @@ function RecentList(
  * no board yet, and an empty canvas behind a modal would suggest otherwise.
  */
 export default function ProjectPicker(
-  { view, onOpened }: { view: ProjectView; onOpened: (next: ProjectView) => void },
+  { view, onOpened, onFailed }: {
+    view: ProjectView;
+    onOpened: (next: ProjectView) => void;
+    onFailed?: (message: string) => void;
+  },
 ) {
-  const { open, busy, error } = useOpenProject(onOpened);
+  const { open, busy, error } = useOpenProject(onOpened, onFailed);
   return (
     <div className="project-picker">
       <div className="project-picker__card">
@@ -88,13 +96,19 @@ export default function ProjectPicker(
  * Which project the board belongs to, and the way into another one. A host
  * that serves a single project shows the name and nothing to click.
  */
-export function ProjectChip({ view, onOpened }: { view: ProjectView; onOpened: (next: ProjectView) => void }) {
+export function ProjectChip(
+  { view, onOpened, onFailed }: {
+    view: ProjectView;
+    onOpened: (next: ProjectView) => void;
+    onFailed?: (message: string) => void;
+  },
+) {
   const [menuOpen, setMenuOpen] = useState(false);
   const container = useRef<HTMLDivElement | null>(null);
   const { open, busy, error } = useOpenProject((next) => {
     setMenuOpen(false);
     onOpened(next);
-  });
+  }, onFailed);
 
   useEffect(() => {
     if (!menuOpen) return;

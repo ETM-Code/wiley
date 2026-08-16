@@ -41,6 +41,16 @@ export class VoiceBridge {
     }, debounceMs);
   }
 
+  /**
+   * Something the model has to know and should not say back. Immediate rather
+   * than debounced, because the facts this carries make the difference between
+   * the model describing the right thing and the wrong one.
+   */
+  pushContext(text: string): void {
+    if (this.#closed) return;
+    this.send({ id: crypto.randomUUID(), text, interrupt: false, silent: true });
+  }
+
   beginWork(): void {
     if (this.#workStartedAt === 0) this.#workStartedAt = Date.now();
   }

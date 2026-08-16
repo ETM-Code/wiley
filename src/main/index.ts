@@ -48,12 +48,16 @@ let active: RuntimeParts | undefined;
 const liveRuntimes = new Set<RuntimeParts>();
 /** The switch in flight, so a second one queues behind it instead of racing. */
 let switching: Promise<void> = Promise.resolve();
+/** Set once quitting begins, so a start already under way unwinds itself. */
+let shuttingDown = false;
 let disposeIpc: (() => void) | undefined;
 let settingsStore: SettingsStore | undefined;
 let settingsService: SettingsService | undefined;
 let skillsDir: string | undefined;
-/** Where the pre-project global ledger lived, and still lives as a .bak. */
+/** Where the pre-project global ledger lived. Consumed by the first project. */
 let legacyDataDir: string | undefined;
+/** WILEY_DATA_DIR, which belongs to the launch project alone. */
+let dataDirOverride: string | undefined;
 
 /** Reports delivery so callers with no live window fail fast instead of waiting for a timeout. */
 function sendToRenderer(channel: string, payload: unknown): boolean {
@@ -208,19 +212,34 @@ function projectView(): ProjectView {
   });
 }
 
-/** Tears down whatever of a runtime exists, in the reverse order it was built. */
-async function disposeParts(parts: RuntimeParts, reason: string): Promise<void> {
-  try {
-    parts.controller?.dispose();
-    parts.voice?.close();
-    parts.canvas?.failPending(reason);
-    await parts.pi?.dispose();
-    parts.ledger?.close();
-  } finally {
-    // Only after disposal has actually finished: until then this runtime still
-    // holds worker process groups that the quit sweep has to be able to see.
-    liveRuntimes.delete(parts);
-  }
+/**
+ * Tears down whatever of a runtime exists, in the reverse order it was built.
+ *
+ * Every step is independent and none of them can throw out of here. A failure
+ * half-way used to skip the two steps that matter most, killing the workers
+ * and closing the ledger, and then report a switch that had left both behind.
+ */
+async function disposeParts(parts: RuntimeParts, reason: string): Promise<boolean> {
+  const step = async (what: string, run: () => unknown): Promise<boolean> => {
+    try {
+      await run();
+      return true;
+    } catch (error) {
+      console.error(`Could not ${what} while closing ${parts.projectDir}`, error);
+      return false;
+    }
+  };
+  await step("release the runtime controller", () => parts.controller?.dispose());
+  await step("close the voice bridge", () => parts.voice?.close());
+  await step("fail the pending canvas work", () => parts.canvas?.failPending(reason));
+  const stopped = await step("stop the agent and its workers", () => parts.pi?.dispose());
+  await step("close the ledger", () => parts.ledger?.close());
+  // Kept on the list when its workers may still be running, so the sweep at
+  // exit still knows to signal them. Dropping it here is what would let a
+  // process group outlive the app.
+  if (stopped) liveRuntimes.delete(parts);
+  else console.error(`${parts.projectDir} may still hold worker processes; they will be signalled at exit`);
+  return stopped;
 }
 
 /**
@@ -236,18 +255,19 @@ async function disposeParts(parts: RuntimeParts, reason: string): Promise<void> 
  */
 async function startRuntime(projectDir: string): Promise<void> {
   const settings = requireSettings();
-  const dataDir = env("DATA_DIR")?.trim() || projectDataDir(projectDir);
-  if (legacyDataDir) {
-    const adopted = adoptGlobalLedger({ legacyDir: legacyDataDir, dataDir });
-    if (adopted) {
-      console.log(`Adopted the previous shared ledger into ${adopted.to}; the original is kept at ${adopted.backup}`);
-    }
-  }
+  const dataDir = takeDataDirOverride() ?? projectDataDir(projectDir);
+  adoptLegacyLedger(dataDir);
   const parts: RuntimeParts = { projectDir };
   liveRuntimes.add(parts);
+  // Quitting during a start would otherwise finish building a runtime the
+  // quit sweep has already walked past, workers and all.
+  const abortIfQuitting = () => {
+    if (shuttingDown) throw new Error("Wiley is closing");
+  };
   try {
     parts.ledger = new SqliteRuntimeLedger(path.join(dataDir, "runtime.sqlite"));
     await parts.ledger.initialize();
+    abortIfQuitting();
     parts.transcript = new TranscriptStore(parts.ledger);
     parts.canvas = new CanvasBridge(parts.ledger, (request) => sendToRenderer(IPC.canvasRequest, request));
     parts.voice = new VoiceBridge((message) => sendToRenderer(IPC.voiceInject, message));
@@ -256,6 +276,7 @@ async function startRuntime(projectDir: string): Promise<void> {
       projectDir, parts.ledger, parts.transcript, parts.canvas, parts.voice, skillsDir, settings, dataDir,
     );
     await parts.pi.initialize();
+    abortIfQuitting();
     // The agent changes settings through exactly the service the panel uses, so
     // a change it makes normalizes, persists, and broadcasts the same way.
     if (settingsService) parts.pi.useSettingsService(settingsService);
@@ -263,12 +284,46 @@ async function startRuntime(projectDir: string): Promise<void> {
       parts.ledger, parts.transcript, parts.pi, parts.canvas, sendToRenderer, settings,
     );
     await parts.controller.recoverInterruptedJobs();
+    abortIfQuitting();
   } catch (error) {
     await disposeParts(parts, "Wiley could not open this project");
     throw error;
   }
   active = parts;
   console.log(`Workspace: ${projectDir} (data in ${dataDir})`);
+}
+
+/**
+ * WILEY_DATA_DIR names one directory, so honouring it on every project would
+ * quietly point every project at one ledger while the title bar and the chip
+ * insisted otherwise. It applies to the project the app launched with, and
+ * anything opened afterwards keeps its own.
+ */
+function takeDataDirOverride(): string | undefined {
+  const override = dataDirOverride;
+  dataDirOverride = undefined;
+  return override;
+}
+
+/**
+ * Hands the pre-project shared ledger to the first project opened, once.
+ *
+ * Once is the whole point. A returning user's first project usually has a
+ * ledger of its own already, and carrying the offer forward would drop that
+ * history into whichever unrelated empty folder they happened to open next.
+ */
+function adoptLegacyLedger(dataDir: string): void {
+  const legacyDir = legacyDataDir;
+  legacyDataDir = undefined;
+  if (!legacyDir) return;
+  const adopted = adoptGlobalLedger({ legacyDir, dataDir });
+  if (adopted) {
+    console.log(`Adopted the previous shared ledger into ${adopted.to}; the original is kept at ${adopted.backup}`);
+  } else if (existsSync(path.join(legacyDir, "runtime.sqlite"))) {
+    console.log(
+      `This project already has its own history, so the previous shared ledger stays in ${legacyDir}.`,
+    );
+  }
 }
 
 /**
@@ -310,36 +365,42 @@ async function switchProject(target: string): Promise<ProjectView> {
   // The renderer keeps its microphone exactly where it was, so a controller
   // that came up believing nobody is listening would disagree with the window.
   const listening = active?.controller?.getState().microphoneEnabled ?? false;
-  await stopRuntime();
   try {
+    await stopRuntime();
     await startRuntime(projectDir);
-  } catch (error) {
-    // The previous project is already gone, so a window still showing its
-    // board could do nothing at all with it. Send everyone back to the picker.
+    if (listening) active?.controller?.setMicrophoneEnabled(true);
+    // The voice model has been told about the last project's files, board and
+    // work, and would go on describing them as this one's. Silent context, so
+    // it knows without announcing it back at the user.
+    active?.voice?.pushContext(
+      `[project] Now working in ${projectName(projectDir)} (${projectDir}). `
+      + "Nothing from the previous project applies here: its files, board and work are not this project's.",
+    );
+    const settings = requireSettings();
+    settings.update({
+      lastProject: projectDir,
+      recentProjects: recordRecentProject(settings.get().recentProjects, projectDir),
+    });
+  } finally {
+    // However it went. The previous project is gone either way, so a window
+    // still showing its board would be one that can do nothing at all.
     announceProject();
-    throw error;
   }
-  if (listening) active?.controller?.setMicrophoneEnabled(true);
-  const settings = requireSettings();
-  settings.update({
-    lastProject: projectDir,
-    recentProjects: recordRecentProject(settings.get().recentProjects, projectDir),
-  });
-  return announceProject();
+  return projectView();
 }
 
 /** Tells the window, the title bar and the menu which project this now is. */
 function announceProject(): ProjectView {
   const view = projectView();
   sendToRenderer(IPC.projectsChanged, view);
-  mainWindow?.setTitle(windowTitle());
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(windowTitle());
   installAppMenu();
   return view;
 }
 
 function installAppMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(projectView(), {
-    openProject: () => void promptForProject(),
+    openProject: () => void promptForProject().catch(reportProjectFailure),
     openRecent: (target) => void openProject(target).catch(reportProjectFailure),
   })));
 }
@@ -371,6 +432,7 @@ async function bootstrap(): Promise<void> {
   // Where every workspace's ledger used to live, before a project carried its
   // own. Only consulted to hand that history to the first project opened.
   legacyDataDir = app.getPath("userData");
+  dataDirOverride = env("DATA_DIR")?.trim() || undefined;
   skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
   // A packaged app inherits launchd's PATH, which knows about none of the
   // places a CLI actually gets installed. Ask the user's login shell before
@@ -440,6 +502,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  shuttingDown = true;
   disposeIpc?.();
   active = undefined;
   for (const parts of [...liveRuntimes]) void disposeParts(parts, "Application is closing");

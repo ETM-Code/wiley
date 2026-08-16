@@ -181,6 +181,10 @@ describe("adoptGlobalLedger", () => {
     expect(readFileSync(`${adopted!.backup}-wal`, "utf8")).toBe("wal");
   });
 
+  // The offer belongs to the first project opened, and only to that one. The
+  // host consumes it whether or not it was taken up, so a returning user whose
+  // first project already has a ledger never finds that shared history dropped
+  // into whichever unrelated empty folder they open next.
   it("never drops a ledger on a project that already has its own", async () => {
     const { legacyDir, dataDir } = await temp();
     writeLedger(legacyDir, "old history");
@@ -188,6 +192,7 @@ describe("adoptGlobalLedger", () => {
 
     expect(adoptGlobalLedger({ legacyDir, dataDir })).toBeUndefined();
     expect(readFileSync(path.join(dataDir, LEDGER_FILE), "utf8")).toBe("this project's own history");
+    // Left exactly where it was, so it is still there to be recovered by hand.
     expect(existsSync(path.join(legacyDir, LEDGER_FILE))).toBe(true);
   });
 
