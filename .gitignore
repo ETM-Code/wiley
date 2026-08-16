@@ -19,3 +19,6 @@ src/renderer/assets/wearing-my-rolex.*
 
 # Agent-generated demo output
 site/
+
+# Scratch design files that were never meant to ship with the source
+Plan.*

@@ -24,7 +24,6 @@
     "package:mac:unsigned": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64",
     "icon": "bash scripts/make-icon.sh",
     "sync:skill": "tsx scripts/sync-skill.ts",
-    "relay:test": "npm --prefix relay test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
