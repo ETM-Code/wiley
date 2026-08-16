@@ -523,6 +523,26 @@ export function nodeDimensions(
   return { width: snapUpSize(width), height: snapUpSize(height) };
 }
 
+/**
+ * How much bigger the centre of a star is drawn than the things hanging off
+ * it. A hub that measures the same as its spokes is one more box that happens
+ * to sit in the middle; half as big again reads as the centre at a glance,
+ * without crowding the ring.
+ */
+const STAR_HUB_SCALE = 1.5;
+
+/** The centre of a star: no port room, and a size up on its spokes. */
+export function hubDimensions(
+  node: GraphNode,
+  direction: DiagramDirection = "RIGHT",
+): { width: number; height: number } {
+  const natural = nodeDimensions(node, 0, direction);
+  return {
+    width: snapUpSize(natural.width * STAR_HUB_SCALE),
+    height: snapUpSize(natural.height * STAR_HUB_SCALE),
+  };
+}
+
 function requireMember<T extends string>(
   value: unknown,
   allowed: readonly T[],
@@ -1484,11 +1504,11 @@ function dedupeNearPoints(points: readonly RoutePoint[], tolerance = 2): RoutePo
  * second level or a spoke-to-spoke link is a tree, and a tree is what the
  * radial algorithm is for.
  */
-function starHub(input: GeometryInput): string | null {
-  const ids = input.params.nodes.map((node) => node.id);
-  if (ids.length < 3 || input.edges.length !== ids.length - 1) return null;
+export function starHub(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): string | null {
+  const ids = nodes.map((node) => node.id);
+  if (ids.length < 3 || edges.length !== ids.length - 1) return null;
   const degree = new Map<string, number>();
-  for (const edge of input.edges) {
+  for (const edge of edges) {
     if (edge.from === edge.to) return null;
     degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
     degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
@@ -1553,7 +1573,7 @@ async function nonLayeredGeometry(
   }
 
   const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
-  const hub = algorithm === "radial" ? starHub(input) : null;
+  const hub = algorithm === "radial" ? starHub(input.params.nodes, input.edges) : null;
   const rawCenters = hub
     ? starRing(input, hub)
     : new Map<string, RoutePoint>((result.children ?? []).map((node: ElkNode) => {
@@ -1684,11 +1704,22 @@ export async function planDiagramLayout(
     degreeOut.set(edge.from, (degreeOut.get(edge.from) ?? 0) + 1);
     degreeIn.set(edge.to, (degreeIn.get(edge.to) ?? 0) + 1);
   }
+  // A star's spokes leave the hub on bearings around its outline, not through
+  // slots down one side, so the hub owes its connectors no room along an edge:
+  // paying for it anyway drew the centre of a seven-spoke map as a rectangle
+  // three times taller than it was wide, which reads as a column, not a hub.
+  // What the centre does owe the reader is weight, so it is drawn a size up
+  // from the things hanging off it.
+  const ringHub = (params.layout?.algorithm ?? "layered") === "radial"
+    ? starHub(params.nodes, edges)
+    : null;
   const sizes = new Map(params.nodes.map((node) => [
     node.id,
     node.size
       ? { width: snapUpSize(node.size.width), height: snapUpSize(node.size.height) }
-      : nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0), direction),
+      : node.id === ringHub
+        ? hubDimensions(node, direction)
+        : nodeDimensions(node, Math.max(degreeIn.get(node.id) ?? 0, degreeOut.get(node.id) ?? 0), direction),
   ]));
   const containers = planContainers(params);
   const input: GeometryInput = {
@@ -1919,6 +1950,10 @@ function assemblePlan(
   const insideDrawing = (box: RouteBox): boolean => drawnExtent === null
     || (box.x >= drawnExtent.left && box.x + box.width <= drawnExtent.right
       && box.y >= drawnExtent.top && box.y + box.height <= drawnExtent.bottom);
+  // Laid out as a ring around one centre: every connector on the board is a
+  // spoke, and every caption on it names a spoke.
+  const ringSpokes = geometry.outcome.used === "radial"
+    && starHub(params.nodes, edges) !== null;
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
   // A bound label has no skeleton, so its box exists nowhere else. Anything
@@ -1961,6 +1996,10 @@ function assemblePlan(
       ...labelSize,
     };
     const roomOnTheArrow = boundLabelRoom(absoluteRoute) >= labelSize.width + BOUND_LABEL_CLEARANCE
+      // On a star the spokes are the drawing. A bound caption is seated in a
+      // gap cut out of the line it names, and a board that does that to every
+      // spoke has no spoke drawn whole: seven words, each between two stubs.
+      && !ringSpokes
       && insideDrawing(labelBox)
       && boundLabelClears(absoluteRoute, labelSize, nodeBoxes)
       && boundLabelClears(absoluteRoute, labelSize, labelGround, LABEL_MIN_GAP)
