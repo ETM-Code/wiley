@@ -1461,16 +1461,17 @@ function assemblePlan(
     return groupIds.length ? { groupIds } : {};
   };
 
-  // A neutral-forward theme leaves an unroled node unfilled, which is right on
-  // a board where nothing is coloured and wrong on one where most things are:
-  // beside six fills the two bare boxes read as an oversight rather than as a
-  // decision. On a board that has already committed to colour they take the
-  // theme's quiet register, which says "no emphasis" in the language the rest
-  // of the drawing is speaking.
+  // A neutral-forward theme leaves an unroled node unfilled. Which way that
+  // reads depends on which side the board is mostly on. One filled box among
+  // nine bare ones is the focal point the request asked for; two bare boxes
+  // among six fills is an oversight, and they take the theme's quiet register
+  // instead, which says "no emphasis" in the language the rest of the drawing
+  // is already speaking.
   const themeAnswersForUnroled = theme.entries[theme.defaultRole].fill !== "transparent";
-  const boardUsesColor = params.nodes.some((node) =>
-    node.role !== undefined && theme.entries[node.role].fill !== "transparent");
-  const unroled: NodeRole | undefined = !themeAnswersForUnroled && boardUsesColor ? "muted" : undefined;
+  const colored = params.nodes.filter((node) =>
+    node.role !== undefined && theme.entries[node.role].fill !== "transparent").length;
+  const mostlyColored = colored * 2 > params.nodes.length;
+  const unroled: NodeRole | undefined = !themeAnswersForUnroled && mostlyColored ? "muted" : undefined;
 
   const nodeSkeletons: JsonObject[] = params.nodes.map((node) => {
     const position = geometry.positions.get(node.id) ?? { x: 0, y: 0 };
