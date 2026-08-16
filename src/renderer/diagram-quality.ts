@@ -223,6 +223,25 @@ function borderBands(box: Box): Box[] {
   ];
 }
 
+function within(box: Box, point: Point): boolean {
+  return point.x >= box.x && point.x <= box.x + box.width
+    && point.y >= box.y && point.y <= box.y + box.height;
+}
+
+/**
+ * How many times a route steps over a region's border.
+ *
+ * Counted off the polyline rather than off the bands, because the question is
+ * how often the route changed sides, not how much of the border it touched.
+ */
+export function borderTransitions(points: readonly Point[], box: Box): number {
+  let count = 0;
+  for (let index = 1; index < points.length; index++) {
+    if (within(box, points[index - 1]) !== within(box, points[index])) count += 1;
+  }
+  return count;
+}
+
 /**
  * The container tree as the checks need it: every drawn region by its
  * semantic id, and the chain of regions any element sits inside.
@@ -288,6 +307,7 @@ function evaluateContainers(
   for (const arrow of arrows) {
     const id = String(arrow.id);
     const geometry = arrowGeometry(arrow);
+    const points = absoluteArrowPoints(arrow);
     const startNode = String((arrow.start as { id?: string } | undefined)?.id ?? "");
     const endNode = String((arrow.end as { id?: string } | undefined)?.id ?? "");
     const allowed = new Set([
@@ -296,11 +316,29 @@ function evaluateContainers(
       ...view.chainOf(id),
     ]);
     for (const [semantic, container] of view.boxes) {
-      if (allowed.has(semantic)) continue;
-      const crossings = borderBands(container)
-        .filter((band) => geometryIntersectsBox(geometry, band, 0)).length;
-      if (crossings > 0) {
-        report.edgesThroughContainers.push(`${id} x ${container.id} (${crossings} crossings)`);
+      if (!allowed.has(semantic)) {
+        const crossings = borderBands(container)
+          .filter((band) => geometryIntersectsBox(geometry, band, 0)).length;
+        if (crossings > 0) {
+          report.edgesThroughContainers.push(`${id} x ${container.id} (${crossings} crossings)`);
+        }
+        continue;
+      }
+      // An edge with an end inside a region has to cross that region's border
+      // to reach it, so the crossing is not the defect; crossing more often
+      // than reaching its end requires is. Skipping the check entirely for
+      // every region the edge is entitled to touch, which is what this used to
+      // do, left the ones it actually crosses the only ones nobody looked at:
+      // a route could leave through the far wall, wander, and come back, and
+      // no check would ever say so.
+      const ends = [startNode, endNode]
+        .filter((node) => node && view.chainOf(node).includes(semantic)).length;
+      const budget = ends === 1 ? 1 : 0;
+      const taken = borderTransitions(points, container);
+      if (taken > budget) {
+        report.edgesThroughContainers.push(
+          `${id} x ${container.id} (${taken} crossings, ${budget} allowed)`,
+        );
       }
     }
   }
