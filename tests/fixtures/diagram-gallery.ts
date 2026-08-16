@@ -63,6 +63,7 @@ export function handBuiltPlan(
     containers,
     theme: options.theme ?? "slate",
     explicitColors: new Set(options.explicitColors ?? []),
+    boundLabelBoxes: [],
     layout: { requested: "layered", used: "layered" },
   };
 }

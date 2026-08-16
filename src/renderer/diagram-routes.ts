@@ -485,9 +485,10 @@ export function routeDefects(
  * label has to be placed against the route we ended up drawing.
  *
  * Candidates ring the route's midpoint in a fixed order, near before far, and
- * the first one clear of every obstacle wins. If nothing is clear the first
- * candidate is used, because a label slightly over a line still beats a label
- * stacked on the origin.
+ * the first one clear of every obstacle wins. When the whole ring is blocked
+ * the least covered candidate is used: a label grazing a line still beats one
+ * parked squarely on a node, which is what taking the first candidate blind
+ * used to do.
  */
 export function placeEdgeLabel(
   points: readonly Point[],
@@ -501,7 +502,7 @@ export function placeEdgeLabel(
       : midpoint(points[points.length / 2 - 1], points[points.length / 2]);
   const gap = 8;
   const offsets: Point[] = [];
-  for (const scale of [1, 2]) {
+  for (const scale of [1, 2, 3, 4]) {
     offsets.push(
       { x: 0, y: -(size.height / 2 + gap) * scale },
       { x: 0, y: (size.height / 2 + gap) * scale },
@@ -513,15 +514,23 @@ export function placeEdgeLabel(
     x: anchor.x + offset.x - size.width / 2,
     y: anchor.y + offset.y - size.height / 2,
   }));
+  let bestCandidate = candidates[0];
+  let bestOverlap = Number.POSITIVE_INFINITY;
   for (const candidate of candidates) {
     const box: Box = { id: "label", ...candidate, width: size.width, height: size.height };
-    const clear = obstacles.every((other) => !(box.x < other.x + other.width
-      && other.x < box.x + box.width
-      && box.y < other.y + other.height
-      && other.y < box.y + box.height));
-    if (clear) return candidate;
+    let overlap = 0;
+    for (const other of obstacles) {
+      const across = Math.min(box.x + box.width, other.x + other.width) - Math.max(box.x, other.x);
+      const down = Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y);
+      if (across > 0 && down > 0) overlap += across * down;
+    }
+    if (overlap === 0) return candidate;
+    if (overlap < bestOverlap) {
+      bestOverlap = overlap;
+      bestCandidate = candidate;
+    }
   }
-  return candidates[0];
+  return bestCandidate;
 }
 
 export type RouteRequest = {

@@ -20,6 +20,7 @@
 import {
   BOUND_LABEL_CLEARANCE,
   EDGE_LABEL_FONT_SIZE,
+  boundLabelAnchor,
   boundLabelClears,
   boundLabelRoom,
   measureText,
@@ -272,7 +273,20 @@ export function planHumanEdges(
   const stamp = (key: string) => ({
     customData: { wiley: { diagram: plan.diagramId, role: "edge", theme: theme.name, key } },
   });
-  const placed: Box[] = [...boxes.values()];
+  // Every label the diagram already owns counts as taken ground: the ones
+  // riding its arrows, and the standalone captions and titles it drew. Without
+  // them a connector into the sketch parks its label on top of one of them.
+  const labelRoles = new Set(["edgeLabel", "title", "containerLabel"]);
+  const drawnLabels: Box[] = plan.skeletons
+    .filter((skeleton) => labelRoles.has(plan.roles.get(String(skeleton.id))?.role ?? ""))
+    .map((skeleton) => ({
+      id: String(skeleton.id),
+      x: Number(skeleton.x),
+      y: Number(skeleton.y),
+      width: Number(skeleton.width),
+      height: Number(skeleton.height),
+    }));
+  const placed: Box[] = [...boxes.values(), ...plan.boundLabelBoxes, ...drawnLabels];
   const skeletons: Record<string, unknown>[] = [];
   const labelSkeletons: Record<string, unknown>[] = [];
   const bindings: HumanEdgeBinding[] = [];
@@ -324,6 +338,15 @@ export function planHumanEdges(
     const labelId = edgeLabelElementId(plan.diagramId, key);
     if (bound) {
       plan.roles.set(labelId, { role: "edgeLabel", key, bound: true });
+      // A label riding this arrow occupies its patch just as firmly as one
+      // standing beside it; the next connector in this batch has to clear it.
+      const anchor = boundLabelAnchor(route.points);
+      placed.push({
+        id: labelId,
+        x: anchor.x - size.width / 2,
+        y: anchor.y - size.height / 2,
+        ...size,
+      });
       continue;
     }
     const spot = placeEdgeLabel(route.points, size, placed);

@@ -506,6 +506,7 @@ export function tidyPlan(
     containers: new Map(),
     theme: "slate",
     explicitColors: new Set(),
+    boundLabelBoxes: [],
     layout: { requested: "layered", used: "layered" },
   };
 }
