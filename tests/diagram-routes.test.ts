@@ -246,11 +246,25 @@ describe("orthogonalRoute", () => {
     expect(route.rounded).toBe(false);
   });
 
-  it("returns the least-blocking candidate when none is clean", () => {
+  it("takes the lane beside a wall the midline cannot clear", () => {
     const walled = [box("a", 340, -40, 120, 120), box("b", -40, 260, 120, 120), box("c", 160, -400, 80, 1000)];
     const route = orthogonalRoute(from, to, walled);
+    // The wall runs the whole height of the board, so the only way past it is
+    // the lane running down one of its sides.
+    expect(countBlockers(route.points, false, walled)).toBe(0);
+    expect(route.points.some((point) => point.x >= 264 || point.x <= 136)).toBe(true);
+  });
+
+  it("returns the least-blocking candidate when the target is walled in", () => {
+    const boxed = [
+      box("north", 300, 180, 200, 60),
+      box("south", 300, 360, 200, 60),
+      box("west", 300, 240, 60, 120),
+      box("east", 440, 240, 60, 120),
+    ];
+    const route = orthogonalRoute(from, to, boxed);
     expect(route.points.length).toBeGreaterThanOrEqual(3);
-    expect(countBlockers(route.points, false, walled)).toBeGreaterThan(0);
+    expect(countBlockers(route.points, false, boxed)).toBeGreaterThan(0);
   });
 });
 

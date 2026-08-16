@@ -47,6 +47,8 @@ export const PASSING_CLEARANCE = 12;
  * column can differ by once each has been snapped by its own corner.
  */
 export const FLOW_SQUARE_SLACK = 10;
+/** How far outside a box the lane that runs alongside it sits. */
+export const CORRIDOR_GAP = 24;
 /** Bend offsets are tried on grid multiples so repaired routes stay tidy. */
 export const OFFSET_STEP = 20;
 export const MAX_OFFSET_STEPS = 12;
@@ -617,13 +619,67 @@ export function orthogonalRoute(from: Point, to: Point, blockers: readonly Box[]
     [from, { x: midX, y: from.y }, { x: midX, y: to.y }, to],
     [from, { x: from.x, y: midY }, { x: to.x, y: midY }, to],
   ];
-  let best = { points: candidates[0], blockers: Number.POSITIVE_INFINITY };
   for (const points of candidates) {
+    if (countBlockers(points, false, blockers) === 0) return { points, rounded: false };
+  }
+
+  // Nothing turning on the midline gets through, so the lanes that run
+  // alongside each box in the way are offered instead: down one lane, across
+  // another, and into the target. A run that has to get past a box the long
+  // way has no other shape available to it, and the alternative is the tidy
+  // wrong route that goes straight through.
+  const detours: Point[][] = [];
+  for (const box of blockers) {
+    const lanesX = [box.x - CORRIDOR_GAP, box.x + box.width + CORRIDOR_GAP];
+    const lanesY = [box.y - CORRIDOR_GAP, box.y + box.height + CORRIDOR_GAP];
+    for (const x of lanesX) {
+      detours.push([from, { x, y: from.y }, { x, y: to.y }, to]);
+      for (const y of lanesY) detours.push([from, { x, y: from.y }, { x, y }, { x: to.x, y }, to]);
+    }
+    for (const y of lanesY) {
+      detours.push([from, { x: from.x, y }, { x: to.x, y }, to]);
+      for (const x of lanesX) detours.push([from, { x: from.x, y }, { x, y }, { x, y: to.y }, to]);
+    }
+  }
+  // A journey that is mostly downwards should arrive from above rather than
+  // sidle in along the edge it lands on, so the ones that finish on the axis
+  // they travelled come first; then the shortest; then their own coordinates,
+  // so the answer never depends on anything but the geometry.
+  const travelled: keyof Point = Math.abs(to.y - from.y) >= Math.abs(to.x - from.x) ? "y" : "x";
+  const sidles = (points: readonly Point[]) => {
+    const last = points[points.length - 1];
+    const before = points[points.length - 2];
+    return (travelled === "y" ? last.y === before.y : last.x === before.x) ? 1 : 0;
+  };
+  detours.sort((a, b) => sidles(a) - sidles(b)
+    || routeLength(a) - routeLength(b)
+    || compareRoutes(a, b));
+
+  let best = { points: candidates[0], blockers: Number.POSITIVE_INFINITY };
+  for (const points of [...candidates, ...detours]) {
     const count = countBlockers(points, false, blockers);
     if (count === 0) return { points, rounded: false };
     if (count < best.blockers) best = { points, blockers: count };
   }
   return { points: best.points, rounded: false };
+}
+
+function routeLength(points: readonly Point[]): number {
+  let total = 0;
+  for (let index = 1; index < points.length; index++) {
+    total += Math.abs(points[index].x - points[index - 1].x)
+      + Math.abs(points[index].y - points[index - 1].y);
+  }
+  return total;
+}
+
+/** Breaks a tie between two equally long detours on their own coordinates. */
+function compareRoutes(a: readonly Point[], b: readonly Point[]): number {
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    if (a[index].x !== b[index].x) return a[index].x - b[index].x;
+    if (a[index].y !== b[index].y) return a[index].y - b[index].y;
+  }
+  return a.length - b.length;
 }
 
 // ---------------------------------------------------------------------------
