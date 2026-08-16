@@ -7,13 +7,19 @@ import { ALLOWED_MODEL_FAMILY, isAllowedBackendModel } from "../main/settings/se
  * open is not clobbered by a full-object write.
  */
 
-/** Drops the read-only decorations the host adds, leaving editable settings. */
+/**
+ * Drops the read-only decorations the host adds, leaving editable settings.
+ * The project registry goes with them: opening a folder rewrites it while the
+ * panel may be sitting open, and a save must never post a stale copy back.
+ */
 export function settingsOf(view: SettingsView): WileySettings {
   const settings = structuredClone(view) as Partial<SettingsView>;
   delete settings.secrets;
   delete settings.models;
   delete settings.probes;
   delete settings.terminalApps;
+  delete settings.recentProjects;
+  delete settings.lastProject;
   return settings as WileySettings;
 }
 

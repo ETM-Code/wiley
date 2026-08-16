@@ -19,22 +19,46 @@ function base(): WileySettings {
   return structuredClone(DEFAULT_SETTINGS);
 }
 
+function viewOf(overrides: Partial<SettingsView> = {}): SettingsView {
+  return {
+    ...base(),
+    secrets: {
+      openaiApiKey: { present: true, source: "store", stored: true, backend: "file" },
+      cloudSessionToken: { stored: false, backend: "file" },
+    },
+    models: [{ id: "m", provider: "openai" }],
+    probes: { claude: { available: false }, codex: { available: false } },
+    terminalApps: ["Terminal", "Ghostty"],
+    ...overrides,
+  };
+}
+
+function editable(): WileySettings {
+  const settings = base() as Partial<WileySettings>;
+  delete settings.recentProjects;
+  return settings as WileySettings;
+}
+
 describe("settingsOf", () => {
   it("strips the host-only decorations and detaches the copy", () => {
-    const view: SettingsView = {
-      ...base(),
-      secrets: {
-        openaiApiKey: { present: true, source: "store", stored: true, backend: "file" },
-        cloudSessionToken: { stored: false, backend: "file" },
-      },
-      models: [{ id: "m", provider: "openai" }],
-      probes: { claude: { available: false }, codex: { available: false } },
-      terminalApps: ["Terminal", "Ghostty"],
-    };
+    const view = viewOf();
     const settings = settingsOf(view);
-    expect(settings).toEqual(base());
+    expect(settings).toEqual(editable());
     settings.agent.fastMode = false;
     expect(view.agent.fastMode).toBe(true);
+  });
+
+  // The registry changes underneath an open panel every time a folder is
+  // opened, so a save must post nothing about it at all.
+  it("leaves the project registry out of the draft entirely", () => {
+    const view = viewOf({
+      recentProjects: [{ path: "/work/app", lastOpenedAt: "2026-01-01T00:00:00.000Z" }],
+      lastProject: "/work/app",
+    });
+    const draft = settingsOf(view);
+    expect(draft.recentProjects).toBeUndefined();
+    expect(draft.lastProject).toBeUndefined();
+    expect(settingsDraftPatch(settingsOf(view), draft)).toEqual({});
   });
 });
 

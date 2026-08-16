@@ -99,6 +99,16 @@ export interface AuthSettings {
 /** The provider id the app registers with the SDK when a relay is in use. */
 export const CLOUD_PROVIDER_ID = "wiley-cloud";
 
+/** One folder the user has worked in, as the launch picker lists it. */
+export interface RecentProject {
+  path: string;
+  /** ISO 8601. The list is kept newest first and deduped on path. */
+  lastOpenedAt: string;
+}
+
+/** Long enough to cover the folders anyone switches between by habit. */
+export const MAX_RECENT_PROJECTS = 10;
+
 export interface WileySettings {
   version: number;
   auth: AuthSettings;
@@ -106,12 +116,16 @@ export interface WileySettings {
   agent: AgentSettings;
   workers: Record<WorkerKind, WorkerSettings>;
   /**
-   * The workspace the agent may edit. Unset means the launch directory when
-   * running from a checkout and ~/Wiley in a packaged app, which is the only
-   * sane default for an app launched from Finder with "/" as its cwd. Read
-   * once at startup, so a change takes effect the next time Wiley opens.
+   * A manual override for the workspace, kept for the browser shell and for
+   * anyone who would rather name the folder than pick it. The project flow
+   * supersedes it: the Electron host reopens `lastProject` first and only
+   * falls back to this. Read once at startup either way.
    */
   projectDir?: string;
+  /** Folders opened before, newest first, for the launch picker. */
+  recentProjects: RecentProject[];
+  /** The project an ordinary launch reopens without asking. */
+  lastProject?: string;
   /**
    * Which terminal emulator a worker handoff opens in, by application name.
    * Free text rather than an enum: the panel offers what it found installed,
@@ -191,6 +205,7 @@ export const DEFAULT_SETTINGS: WileySettings = {
     claude: defaultWorkerSettings("claude"),
     codex: defaultWorkerSettings("codex"),
   },
+  recentProjects: [],
   terminalApp: DEFAULT_TERMINAL_APP,
 };
 
@@ -288,6 +303,79 @@ function nonEmptyStrings(value: unknown, fallback: string[]): string[] {
 function optionalStrings(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return strings(value, []);
+}
+
+/** Before any folder was opened, so a timestampless entry sorts last. */
+const EPOCH = "1970-01-01T00:00:00.000Z";
+
+/**
+ * A project path in the one spelling the registry stores it in. Trailing
+ * separators are dropped so `/work/app` and `/work/app/` are one entry rather
+ * than two. Deliberately string-only: this module is renderer-safe and cannot
+ * reach for node:path.
+ */
+export function normalizeProjectPath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const stripped = trimmed.replace(/[/\\]+$/, "");
+  // What survives of "/" is nothing and of "C:\" is a bare drive. Neither is a
+  // folder anyone meant to open, and the first is the worst possible answer.
+  return stripped && !stripped.endsWith(":") ? stripped : undefined;
+}
+
+function isoOr(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? fallback : at.toISOString();
+}
+
+/** Keeps the first entry per folder and stops at the cap. Order is the input's. */
+function dedupeAndCap(entries: readonly RecentProject[]): RecentProject[] {
+  const seen = new Set<string>();
+  const kept: RecentProject[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.path)) continue;
+    seen.add(entry.path);
+    kept.push(entry);
+    if (kept.length === MAX_RECENT_PROJECTS) break;
+  }
+  return kept;
+}
+
+/**
+ * The stored registry as the picker should see it: newest first, one entry per
+ * folder, capped. Sorting rather than trusting the file's order is what makes a
+ * hand-edited or half-written list come back sane.
+ */
+export function normalizeRecentProjects(raw: unknown): RecentProject[] {
+  if (!Array.isArray(raw)) return [];
+  const entries: RecentProject[] = [];
+  for (const entry of raw) {
+    // A bare string is what a person hand-editing the file naturally writes.
+    const source: Record<string, unknown> = isPlainObject(entry) ? entry : { path: entry };
+    const projectPath = normalizeProjectPath(source.path);
+    if (!projectPath) continue;
+    entries.push({ path: projectPath, lastOpenedAt: isoOr(source.lastOpenedAt, EPOCH) });
+  }
+  entries.sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
+  return dedupeAndCap(entries);
+}
+
+/**
+ * The registry after opening a folder. The freshly opened one goes to the
+ * front regardless of what its timestamp compares against, because "the one I
+ * just opened" is what the top of the list means.
+ */
+export function recordRecentProject(
+  recent: unknown,
+  projectPath: string,
+  at: string = new Date().toISOString(),
+): RecentProject[] {
+  const normalized = normalizeProjectPath(projectPath);
+  const existing = normalizeRecentProjects(recent);
+  if (!normalized) return existing;
+  return dedupeAndCap([{ path: normalized, lastOpenedAt: isoOr(at, EPOCH) }, ...existing]);
 }
 
 function normalizeAuth(raw: unknown): AuthSettings {
@@ -400,10 +488,13 @@ export function normalizeSettings(raw: unknown): WileySettings {
       claude: normalizeWorker(workers.claude, "claude"),
       codex: normalizeWorker(workers.codex, "codex"),
     },
+    recentProjects: normalizeRecentProjects(source.recentProjects),
     terminalApp: str(source.terminalApp, DEFAULT_TERMINAL_APP),
   };
   const projectDir = optionalStr(source.projectDir);
   if (projectDir) settings.projectDir = projectDir;
+  const lastProject = normalizeProjectPath(source.lastProject);
+  if (lastProject) settings.lastProject = lastProject;
   return settings;
 }
 
