@@ -925,6 +925,25 @@ type GeometryInput = {
 
 const CONTAINER_PADDING_OPTION = `[top=${CONTAINER_PADDING.top},left=${CONTAINER_PADDING.left},bottom=${CONTAINER_PADDING.bottom},right=${CONTAINER_PADDING.right}]`;
 
+/**
+ * The spacings a region has to be told about itself.
+ *
+ * `INCLUDE_CHILDREN` lays the whole nest out in one pass but does not hand a
+ * region the root's spacing: every container fell back to ELK's own defaults,
+ * which are 20px between neighbours and 10px between a connector and a box it
+ * passes. That is how members of a region ended up packed four times tighter
+ * than members of the same board outside one, and how a connector crossing a
+ * region came to run ten pixels under a node and read as going through it.
+ *
+ * Only the spacings go down. Handing a region the algorithm and hierarchy keys
+ * as well makes elkjs 0.11 throw before it lays anything out at all.
+ */
+function spacingOptions(layoutOptions: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(layoutOptions).filter(([key]) => key.includes(".spacing.")),
+  );
+}
+
 function elkGraph(input: GeometryInput, layoutOptions: Record<string, string>): ElkNode {
   const elkNode = (id: string): ElkNode => ({
     id,
@@ -967,7 +986,7 @@ function elkGraph(input: GeometryInput, layoutOptions: Record<string, string>): 
   }
   const build = (id: string): ElkNode => ({
     id,
-    layoutOptions: { "elk.padding": CONTAINER_PADDING_OPTION },
+    layoutOptions: { ...spacingOptions(layoutOptions), "elk.padding": CONTAINER_PADDING_OPTION },
     children: [
       ...(containers.childContainers.get(id) ?? []).map(build),
       ...(containers.memberNodes.get(id) ?? []).map(elkNode),

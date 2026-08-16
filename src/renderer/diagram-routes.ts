@@ -26,6 +26,21 @@ type JsonObject = Record<string, unknown>;
 export const PORT_SPACING = 28;
 /** Routes are tested against a slightly shrunk box; grazing a border is fine. */
 export const NODE_CLEARANCE = 4;
+/**
+ * Daylight a connector owes a box it is only passing.
+ *
+ * Asking whether the two touch is not the question a reader asks. A run tucked
+ * ten pixels under a node reads as going through it once the board is scaled to
+ * a page, which is what a connector skimming the underside of a CDN box did
+ * while every check called the board clean. More than half a grid cell is the
+ * gap at which the two read as separate things.
+ *
+ * Only the straight runs owe it. The pocket a rounded corner sweeps through is
+ * a different defect, answered by asking whether the sweep reaches the box at
+ * all; holding a curve's bulge to a standing-off distance would condemn every
+ * connector that turns near a neighbour.
+ */
+export const PASSING_CLEARANCE = 12;
 /** Bend offsets are tried on grid multiples so repaired routes stay tidy. */
 export const OFFSET_STEP = 20;
 export const MAX_OFFSET_STEPS = 12;
@@ -192,6 +207,16 @@ export function geometryIntersectsBox(
     || geometry.corners.some((corner) => triangleIntersectsBox(corner, box, shrink));
 }
 
+/**
+ * Whether a connector crowds a box it has no business touching. A negative
+ * shrink grows the box: the run has to clear the halo, not merely miss the
+ * border.
+ */
+export function geometryCrowdsBox(geometry: ArrowGeometry, box: Box): boolean {
+  return geometry.segments.some((run) => segmentIntersectsBox(run, box, -PASSING_CLEARANCE))
+    || geometry.corners.some((corner) => triangleIntersectsBox(corner, box));
+}
+
 /** Two runs closer in angle than this read as the same line. */
 export const PARALLEL_ANGLE_DEGREES = 5;
 /** How near two parallel runs have to be before they visually merge. */
@@ -245,7 +270,7 @@ export function countBlockers(
   blockers: readonly Box[],
 ): number {
   const geometry = routeGeometry(points, rounded);
-  return blockers.filter((box) => geometryIntersectsBox(geometry, box)).length;
+  return blockers.filter((box) => geometryCrowdsBox(geometry, box)).length;
 }
 
 // ---------------------------------------------------------------------------
@@ -609,9 +634,9 @@ export function routeDefects(
   for (const route of routes) {
     const ends = attachments.get(route.id);
     const geometry = routeGeometry(route.points, route.rounded);
-    for (const box of nodes.values()) {
-      if (box.id === ends?.from || box.id === ends?.to) continue;
-      if (geometryIntersectsBox(geometry, box)) guilty.add(route.id);
+    for (const [id, box] of nodes) {
+      if (id === ends?.from || id === ends?.to) continue;
+      if (geometryCrowdsBox(geometry, box)) guilty.add(route.id);
     }
   }
   for (let a = 0; a < routes.length; a++) {
@@ -762,7 +787,13 @@ export function planRoutes(
     const toBox = nodes.get(edge.to);
     const start = assignment?.start ?? anchored?.[0] ?? (fromBox ? boxCenter(fromBox) : { x: 0, y: 0 });
     const end = assignment?.end ?? anchored?.[anchored.length - 1] ?? (toBox ? boxCenter(toBox) : { x: 0, y: 0 });
-    const blockers = [...nodes.values()].filter((box) => box.id !== edge.from && box.id !== edge.to);
+    // The map is keyed by the caller's own name for the node, which is not
+    // always the box's id: a merge pass keys agent boxes by graph key and
+    // stamps the element id on the box. Filtering on the box's id there left
+    // an edge's own endpoints standing in its own blocker list.
+    const blockers = [...nodes]
+      .filter(([id]) => id !== edge.from && id !== edge.to)
+      .map(([, box]) => box);
     const minStep = options.minSteps?.get(edge.id) ?? 1;
     // A flow that named its sides gets the turned connector first. The repair
     // loop raises minStep on an edge that is still in trouble, and that is the

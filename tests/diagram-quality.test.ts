@@ -92,14 +92,16 @@ describe("arrowGeometry", () => {
   });
 
   it("catches a node in the pocket a rounded corner sweeps through", () => {
-    const pocket = node("pocket", 83, 3, 10, 10);
+    // The pocket sits on the corner's incentre, well clear of both legs: a
+    // straight polyline never comes near it, and the swept curve covers it.
+    const pocket = node("pocket", 246, 34, 20, 20);
     const parts = (rounded: boolean) => [
-      node("from", -200, -40),
-      node("to", 60, 200),
+      node("from", -400, -120),
+      node("to", 400, 400),
       pocket,
-      arrow("wire", [[0, 0], [100, 0], [100, 100]], { start: "from", end: "to", rounded }),
+      arrow("wire", [[0, 0], [300, 0], [300, 300]], { start: "from", end: "to", rounded }),
     ];
-    // The polyline's legs run along y=0 and x=100 and miss the box entirely.
+    // The polyline's legs run along y=0 and x=300 and miss the box entirely.
     expect(evaluateDiagramPlan(handBuiltPlan(parts(false))).edgesThroughNodes).toEqual([]);
     expect(evaluateDiagramPlan(handBuiltPlan(parts(true))).edgesThroughNodes).toEqual(["wire x pocket"]);
   });
