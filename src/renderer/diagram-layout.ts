@@ -1139,7 +1139,10 @@ async function nonLayeredGeometry(
   const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
 
   const minSteps = new Map<string, number>();
-  let routes = planRoutes(boxes, requests, { snapDeltas, minSteps });
+  // A ringed hub attaches on bearings, not on side slots, so the fan of
+  // spokes is as evenly spread as the ring the algorithm placed.
+  const radialPorts = algorithm === "radial";
+  let routes = planRoutes(boxes, requests, { snapDeltas, minSteps, radialPorts });
   for (let round = 0; round < MAX_ROUTE_REPAIR_ITERATIONS; round++) {
     const guilty = routeDefects(boxes, routes, attachments);
     if (guilty.size === 0) break;
@@ -1149,7 +1152,7 @@ async function nonLayeredGeometry(
     // Push each still-guilty edge onto a wider arc so the next round cannot
     // reproduce the answer that failed.
     for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
-    routes = planRoutes(boxes, requests, { snapDeltas, minSteps });
+    routes = planRoutes(boxes, requests, { snapDeltas, minSteps, radialPorts });
   }
 
   const placed: RouteBox[] = [...boxes.values()];

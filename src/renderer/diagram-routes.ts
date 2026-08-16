@@ -266,7 +266,31 @@ export function chooseSide(box: Box, target: Point): Side {
   return dy >= 0 ? "bottom" : "top";
 }
 
+/**
+ * Where the ray from a box's centre towards a point leaves the box.
+ *
+ * A ring of spokes reads as a ring only when each one meets the hub on its own
+ * bearing. Bucketing them onto four sides and spacing them evenly within each
+ * side instead makes the fan bunch wherever the bucket boundaries happened to
+ * fall, and the drawing stops looking radial.
+ */
+export function borderPoint(box: Box, target: Point): Point {
+  const centre = boxCenter(box);
+  const dx = target.x - centre.x;
+  const dy = target.y - centre.y;
+  const alongX = Math.abs(dx) < 1e-9 ? Number.POSITIVE_INFINITY : box.width / 2 / Math.abs(dx);
+  const alongY = Math.abs(dy) < 1e-9 ? Number.POSITIVE_INFINITY : box.height / 2 / Math.abs(dy);
+  const reach = Math.min(alongX, alongY);
+  if (!Number.isFinite(reach)) return centre;
+  return { x: centre.x + dx * reach, y: centre.y + dy * reach };
+}
+
 type PortRequest = { key: string; nodeId: string; side: Side; target: Point };
+
+export type PortOptions = {
+  /** Attach on the bearing to the other node rather than on a side slot. */
+  radial?: boolean;
+};
 
 /**
  * Evenly spaced slots centred on the side, ordered so the connectors do not
@@ -299,12 +323,18 @@ export function portSlots(box: Box, side: Side, count: number): Point[] {
 export function assignPorts(
   nodes: ReadonlyMap<string, Box>,
   edges: ReadonlyArray<{ id: string; from: string; to: string; sides?: { from: Side; to: Side } }>,
+  options: PortOptions = {},
 ): Map<string, { start: Point; end: Point }> {
   const requests = new Map<string, PortRequest[]>();
+  const points = new Map<string, Point>();
   const request = (key: string, nodeId: string, otherId: string, fallbackSide: Side, forced?: Side) => {
     const box = nodes.get(nodeId);
     const other = nodes.get(otherId);
     if (!box) return;
+    if (options.radial && other && otherId !== nodeId) {
+      points.set(key, borderPoint(box, boxCenter(other)));
+      return;
+    }
     // A self-edge has no direction to read, so it takes fixed opposite sides.
     const side = forced ?? (!other || otherId === nodeId ? fallbackSide : chooseSide(box, boxCenter(other)));
     const bucket = `${nodeId}|${side}`;
@@ -317,7 +347,6 @@ export function assignPorts(
     request(`${edge.id}|end`, edge.to, edge.from, "left", edge.sides?.to);
   }
 
-  const points = new Map<string, Point>();
   for (const [bucket, list] of [...requests.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const [nodeId, side] = bucket.split("|") as [string, Side];
     const box = nodes.get(nodeId)!;
@@ -616,6 +645,8 @@ export type RoutePlanOptions = {
    * makes a second iteration produce a different answer from the first.
    */
   minSteps?: ReadonlyMap<string, number>;
+  /** Attach every endpoint on its own bearing; see borderPoint. */
+  radialPorts?: boolean;
 };
 
 export function planRoutes(
@@ -623,7 +654,7 @@ export function planRoutes(
   edges: readonly RouteRequest[],
   options: RoutePlanOptions = {},
 ): PlannedRoute[] {
-  const ports = assignPorts(nodes, edges);
+  const ports = assignPorts(nodes, edges, { radial: options.radialPorts });
   return edges.map((edge) => {
     const assignment = ports.get(edge.id);
     const anchored = edge.route
