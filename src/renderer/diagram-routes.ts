@@ -298,23 +298,23 @@ export function portSlots(box: Box, side: Side, count: number): Point[] {
  */
 export function assignPorts(
   nodes: ReadonlyMap<string, Box>,
-  edges: ReadonlyArray<{ id: string; from: string; to: string }>,
+  edges: ReadonlyArray<{ id: string; from: string; to: string; sides?: { from: Side; to: Side } }>,
 ): Map<string, { start: Point; end: Point }> {
   const requests = new Map<string, PortRequest[]>();
-  const request = (key: string, nodeId: string, otherId: string, fallbackSide: Side) => {
+  const request = (key: string, nodeId: string, otherId: string, fallbackSide: Side, forced?: Side) => {
     const box = nodes.get(nodeId);
     const other = nodes.get(otherId);
     if (!box) return;
     // A self-edge has no direction to read, so it takes fixed opposite sides.
-    const side = !other || otherId === nodeId ? fallbackSide : chooseSide(box, boxCenter(other));
+    const side = forced ?? (!other || otherId === nodeId ? fallbackSide : chooseSide(box, boxCenter(other)));
     const bucket = `${nodeId}|${side}`;
     const list = requests.get(bucket) ?? [];
     list.push({ key, nodeId, side, target: other ? boxCenter(other) : boxCenter(box) });
     requests.set(bucket, list);
   };
   for (const edge of edges) {
-    request(`${edge.id}|start`, edge.from, edge.to, "right");
-    request(`${edge.id}|end`, edge.to, edge.from, "left");
+    request(`${edge.id}|start`, edge.from, edge.to, "right", edge.sides?.from);
+    request(`${edge.id}|end`, edge.to, edge.from, "left", edge.sides?.to);
   }
 
   const points = new Map<string, Point>();
@@ -563,6 +563,13 @@ export type RouteRequest = {
   id: string;
   from: string;
   to: string;
+  /**
+   * The sides the connector must leave and arrive on, when the caller knows
+   * the flow. A hierarchy reads as one because every child is entered from
+   * the parent's side of it; letting each edge pick the nearest border turns
+   * the same drawing into a web of lateral links.
+   */
+  sides?: { from: Side; to: Side };
   /** The layout's own route, if it produced one worth re-anchoring. */
   route?: Point[];
 };
