@@ -16,6 +16,7 @@ import {
   guardFrameAutoFit,
   planBounds,
   planDiagramLayout,
+  restoreTextNodeGeometry,
   snapModelCoordinate,
   translatePlan,
   type DiagramPlan,
@@ -372,6 +373,7 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
     throw new Error("Diagram layout produced invalid element geometry");
   }
+  restoreTextNodeGeometry(plan, created as unknown as Parameters<typeof restoreTextNodeGeometry>[1]);
   bindHumanEndpoints(created as unknown as SceneElement[], humanEdges.bindings);
   const diff = planDiff(scene as unknown as DiffElement[], plan);
   const rendered = quality && created.length <= QUALITY_EVALUATION_LIMIT

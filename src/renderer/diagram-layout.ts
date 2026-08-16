@@ -288,6 +288,34 @@ export function boundLabelAnchor(points: readonly RoutePoint[]): RoutePoint {
   };
 }
 
+/** Breathing room between an arrow tip and a caption that has no border. */
+export const CAPTION_ENDPOINT_GAP = 10;
+
+/**
+ * Pulls one end of a route back along its own last segment. A boxed node is
+ * met at its border, which reads as contact; a text node has no border, so an
+ * arrow that reaches its box lands on the first glyph instead.
+ */
+export function shortenRouteEnd(
+  points: readonly RoutePoint[],
+  end: "start" | "end",
+  gap = CAPTION_ENDPOINT_GAP,
+): RoutePoint[] {
+  const route = points.map((point) => ({ ...point }));
+  if (route.length < 2) return route;
+  const tip = end === "start" ? 0 : route.length - 1;
+  const inner = end === "start" ? 1 : route.length - 2;
+  const run = distance(route[tip], route[inner]);
+  // Never eat a whole segment: a shorter run than the gap means the two ends
+  // are already all but touching, and moving the tip would invert the arrow.
+  if (run <= gap * 1.5) return route;
+  route[tip] = {
+    x: route[tip].x + ((route[inner].x - route[tip].x) / run) * gap,
+    y: route[tip].y + ((route[inner].y - route[tip].y) / run) * gap,
+  };
+  return route;
+}
+
 /**
  * Whether the label, sitting where the editor will put it, stays clear of
  * every box on the board. Run length alone is not enough: a route leaving the
@@ -1253,12 +1281,17 @@ function assemblePlan(
   const edgeSkeletons: JsonObject[] = [];
   const edgeLabelSkeletons: JsonObject[] = [];
   let boundLabelCount = 0;
+  const captionNodes = new Set(
+    params.nodes.filter((node) => nodeToType(node) === "text").map((node) => node.id),
+  );
   for (const [index, edge] of edges.entries()) {
     const routed = geometry.edges[index];
-    const absoluteRoute = dedupePoints(routed.points.map((point) => ({
+    let absoluteRoute = dedupePoints(routed.points.map((point) => ({
       x: origin.x + point.x,
       y: origin.y + point.y,
     })));
+    if (captionNodes.has(edge.from)) absoluteRoute = shortenRouteEnd(absoluteRoute, "start");
+    if (captionNodes.has(edge.to)) absoluteRoute = shortenRouteEnd(absoluteRoute, "end");
     const routeOrigin = absoluteRoute[0];
     const key = edgeKeys[index];
     const edgeId = edgeElementId(diagramId, key);
@@ -1525,6 +1558,32 @@ export function guardFrameAutoFit(plan: DiagramPlan): void {
       skeleton.y = -MODEL_GRID_SIZE;
       skeleton.height = finiteNumber(skeleton.height) + MODEL_GRID_SIZE;
     }
+  }
+}
+
+/** The smallest shape a converted element has to expose to be re-seated. */
+type PlacedElement = { id: string; type: string; x: number; y: number; height: number };
+
+/**
+ * The converter drags a standalone text element that an arrow binds to onto
+ * that arrow's far endpoint, so a text-shaped node lands nowhere near the
+ * caption position the layout measured and routed to. Nothing else in the
+ * scene moves, so putting the text back on its planned centre is enough: the
+ * arrow already ends exactly there.
+ */
+export function restoreTextNodeGeometry(plan: DiagramPlan, created: readonly PlacedElement[]): void {
+  const planned = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+  for (const element of created) {
+    if (element.type !== "text") continue;
+    if (plan.roles.get(element.id)?.role !== "node") continue;
+    const skeleton = planned.get(element.id);
+    if (!skeleton) continue;
+    // The converter re-measures the line box against the real font; keep its
+    // height and re-centre on the planned one so the caption sits where the
+    // arrow points.
+    const plannedCentre = finiteNumber(skeleton.y) + finiteNumber(skeleton.height) / 2;
+    element.x = finiteNumber(skeleton.x);
+    element.y = plannedCentre - element.height / 2;
   }
 }
 
