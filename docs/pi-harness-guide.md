@@ -5,7 +5,7 @@ How to wire the [pi agent](https://github.com/earendil-works/pi) into the Wiley 
 The shape of the stack, end to end:
 
 ```
-Human ──voice──▶ Voice Model (gpt-realtime-2.1) ──tool calling──▶ Pi Agent ──▶ Subagents
+Human ──voice──▶ Voice Model (gpt-realtime-mini-2.1) ──tool calling──▶ Pi Agent ──▶ Subagents
   │                                                                  │
   └──draws/views──▶ Excalidraw ◀──JSON (draw)──────────────────────┘
                         │
@@ -14,7 +14,7 @@ Human ──voice──▶ Voice Model (gpt-realtime-2.1) ──tool calling─�
 
 - The **voice model** is the pretty frontend: lovely to talk to, never does real work. It interprets intent, dispatches to pi, and narrates what comes back.
 - The **pi agent** is the backend brain and hands: it reads the board (JSON + PNG vision), draws on the board, and edits code / runs commands like Claude Code or Codex would. It mostly outsources implementation to subagents.
-- The channel is **duplex and interrupt-first**. Downward: voice → pi tasks, delivered by interruption at every layer by default (the voice model interrupts pi, pi interrupts the relevant subagents), so the user never waits for a task to finish to be heard. Upward: pi → voice answers, questions, and progress messages ("I'm going to draw the auth flow now"), which the voice model narrates live while pi keeps working. gpt-realtime-2.1's native async tool calling makes this work without blocking the conversation.
+- The channel is **duplex and interrupt-first**. Downward: voice → pi tasks, delivered by interruption at every layer by default (the voice model interrupts pi, pi interrupts the relevant subagents), so the user never waits for a task to finish to be heard. Upward: pi → voice answers, questions, and progress messages ("I'm going to draw the auth flow now"), which the voice model narrates live while pi keeps working. the Realtime model's native async tool calling makes this work without blocking the conversation.
 - **Subagents** are extra pi sessions the main agent spawns for parallel implementation work. Context passes up the chain (subagent → main pi agent → voice → user) and steering passes down it.
 - A **safety layer** gives pi Claude Code-style permission checks, approved by a light critique model instead of the user, plus read-before-edit enforcement.
 - To the user, the whole stack is **one persona: Wiley**. The voice speaks as Wiley, progress messages are narrated in first person ("I just finished the frontend"), and no layer ever mentions agents or subagents. The layering is pure implementation detail.
@@ -84,7 +84,7 @@ pi   # then /login, or rely on ANTHROPIC_API_KEY
 ┌──────────────┴──────────────────────────▼──────────────┐
 │  Renderer                                               │
 │  • <Excalidraw excalidrawAPI={...}/>  (whole window)    │
-│  • WebRTC connection to gpt-realtime-2.1 (mic+speaker)  │
+│  • WebRTC to gpt-realtime-mini-2.1 (mic+speaker)        │
 │  • mute button (bottom-right)                           │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -652,7 +652,7 @@ export function deliverAnswer(answer: string) {
 
 Notes on the two paths:
 
-- `pushToVoice` is fire-and-forget; gpt-realtime-2.1 tool calling is natively async, so the narration happens while the pi run is still going.
+- `pushToVoice` is fire-and-forget; Realtime tool calling is natively async, so the narration happens while the pi run is still going.
 - `askViaVoice` resolves when the voice model calls `answer_agent`. The voice model's instructions bind "answering an agent question" to `answer_agent`, never `send_task_to_agent`: a mis-routed `send_task_to_agent` would interrupt the run and cancel the pending question (its abort signal resolves the promise), which is self-limiting but still wrong. The timeout is the backstop for a user who walked away.
 - Any interrupt that aborts the run while a question is pending resolves that question with "Run aborted". That's intended: the `[INTERRUPTED]` discipline has the agent re-verify state when it resumes, and it re-asks if the question still matters.
 
@@ -997,7 +997,7 @@ How this plays out:
 
 ---
 
-## 10. Voice model wiring (gpt-realtime-2.1)
+## 10. Voice model wiring (gpt-realtime-mini-2.1)
 
 The voice model is the pretty frontend. It holds the conversation, dispatches to pi through a small tool surface, and narrates whatever pi pushes up.
 
@@ -1013,7 +1013,7 @@ ipcMain.handle("voice-token", async () => {
       expires_after: { anchor: "created_at", seconds: 600 },
       session: {
         type: "realtime",
-        model: "gpt-realtime-2.1",
+        model: "gpt-realtime-mini-2.1",
         audio: { output: { voice: "marin" } },
       },
     }),
@@ -1024,7 +1024,7 @@ ipcMain.handle("voice-token", async () => {
 
 **Two ways to connect from the renderer:**
 
-- **SDK (recommended to start):** `bun add @openai/agents` and use `RealtimeAgent` + `RealtimeSession` from `@openai/agents/realtime`. It auto-selects WebRTC in the browser, manages audio, tool execution, and history: `await new RealtimeSession(agent, { model: "gpt-realtime-2.1" }).connect({ apiKey: ephemeralKey })`.
+- **SDK (recommended to start):** `bun add @openai/agents` and use `RealtimeAgent` + `RealtimeSession` from `@openai/agents/realtime`. It auto-selects WebRTC in the browser, manages audio, tool execution, and history: `await new RealtimeSession(agent, { model: "gpt-realtime-mini-2.1" }).connect({ apiKey: ephemeralKey })`.
 - **Raw WebRTC** if you want full control of the event stream: `RTCPeerConnection`, add the mic track, `createDataChannel("oai-events")`, then POST the SDP offer to `https://api.openai.com/v1/realtime/calls` with `Authorization: Bearer <ek_...>` and `Content-Type: application/sdp`. All events below flow over that data channel as JSON.
 
 The raw shapes are shown below because you need them either way (the SDK is a thin wrapper, and the upward-channel injections use raw events).
@@ -1162,7 +1162,7 @@ async function agentToolCall(name: string, args: any) {
 }
 ```
 
-**Long-running tasks.** gpt-realtime-2.1 tool calling is natively async: the model keeps listening and talking while a call is outstanding, no special config. Still, keep `send_task_to_agent` snappy: start the run without awaiting it and return `{ status: "started" }` immediately so the model acknowledges out loud. Everything after that arrives through the upward channel.
+**Long-running tasks.** Realtime tool calling is natively async: the model keeps listening and talking while a call is outstanding, no special config. Still, keep `send_task_to_agent` snappy: start the run without awaiting it and return `{ status: "started" }` immediately so the model acknowledges out loud. Everything after that arrives through the upward channel.
 
 One constraint shapes the upward channel's plumbing: the realtime session allows **one active response at a time**. `tell_user` narrations will frequently arrive while the model is already speaking (or while VAD just triggered a reply), and a bare `response.create` then errors and the narration is silently lost. So injections go through an outbox that drains one response at a time:
 
