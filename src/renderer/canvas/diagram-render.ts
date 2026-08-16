@@ -303,8 +303,15 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
   const createdIds = new Set(created.map((element) => element.id));
   // The human may draw while ELK runs or while elements stream in. Always
   // rebase onto the live scene instead of a snapshot captured at entry.
+  // Preview ids are read live rather than from the entry snapshot: a preview
+  // frame that lands while this commit is mid-flight paints under a fresh
+  // diagram id, and a base scene keyed on the ids that existed at entry would
+  // fold that provisional copy in beside the final one. A commit owns the
+  // whole preview set, whenever it was claimed.
   const baseScene = () => [...api.getSceneElements()].filter(
-    (element) => !previousPreviewIds.has(element.id) && !createdIds.has(element.id),
+    (element) => !previousPreviewIds.has(element.id)
+      && !(!preview && diagramPreviewElementIds.has(element.id))
+      && !createdIds.has(element.id),
   );
   if (created.some((element) => !Number.isFinite(element.x) || !Number.isFinite(element.y)
     || !Number.isFinite(element.width) || !Number.isFinite(element.height))) {
