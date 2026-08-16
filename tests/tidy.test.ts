@@ -440,3 +440,54 @@ describe("a screenshot in the sketch", () => {
       .toEqual({ width: shot.width, height: shot.height });
   });
 });
+
+describe("an arrow drawn onto a framing shape", () => {
+  const scene = messyScene("grouped-cluster");
+
+  it("is read as reaching the ring itself", () => {
+    const graph = inferHumanGraph(scene.elements as unknown as SketchElement[]);
+    expect(graph.edges.find((edge) => edge.elementId === "g-3"))
+      .toMatchObject({ fromElementId: "g-ring", toElementId: "g-out" });
+  });
+
+  it("does not stop a relayout, which never lays the ring out", async () => {
+    const target = board(scene.elements);
+    const result = await tidy(target, { layout: "relayout" });
+    expect(defects(result)).toEqual([]);
+    expect(target.elements()).toHaveLength(scene.elements.length);
+  });
+
+  it("does not stop an align either", async () => {
+    expect(defects(await tidy(board(scene.elements), { layout: "align" }))).toEqual([]);
+  });
+});
+
+describe("an arrow the tidy is not moving both ends of", () => {
+  it("is left alone rather than pulled off the shape that stayed put", async () => {
+    const elements: MessyElement[] = [
+      { id: "in-a", type: "rectangle", x: 13, y: 11, width: 120, height: 60, version: 1 },
+      { id: "in-b", type: "rectangle", x: 300, y: 17, width: 120, height: 60, version: 2 },
+      { id: "outside", type: "rectangle", x: 900, y: 600, width: 120, height: 60, version: 3 },
+      {
+        id: "arr",
+        type: "arrow",
+        x: 133,
+        y: 41,
+        width: 767,
+        height: 589,
+        points: [[0, 0], [767, 589]],
+        startBinding: { elementId: "in-a" },
+        endBinding: { elementId: "outside" },
+        version: 4,
+      },
+    ];
+    const target = board(elements);
+    await tidy(target, { elementIds: ["in-a", "in-b"] });
+
+    const after = target.elements().find((element) => element.id === "arr")!;
+    const before = elements[3];
+    expect({ x: after.x, y: after.y }).toEqual({ x: before.x, y: before.y });
+    expect(target.elements().find((element) => element.id === "outside"))
+      .toMatchObject({ x: 900, y: 600 });
+  });
+});

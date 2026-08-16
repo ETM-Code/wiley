@@ -23,7 +23,6 @@ import {
   evaluateDiagramPlan,
   isObstacleFinding,
   mergeQualityReports,
-  OBSTACLE_MARKER,
   type DiagramObstacle,
   type DiagramQualityReport,
 } from "../diagram-quality";
@@ -193,16 +192,14 @@ export function assertQualityClearOfHuman(
   const collisions = placementCollisions(quality);
   if (collisions.length === 0) return { quality };
 
-  // Matched on the whole tail, marker included: an id that is a prefix of
-  // another id would otherwise claim the other one's findings.
-  const hit = obstacles
-    .filter((obstacle) => collisions.some(
-      (finding) => finding.endsWith(` x ${obstacle.id}${OBSTACLE_MARKER}`),
-    ))
-    .map(obstacleBounds);
-  // Clearing what it hit is only half the job; the pass has to keep going
-  // until it is clear of everything else on the board as well.
-  const shift = shiftClearOf(planBounds(plan), [...hit, ...alsoAvoid], direction);
+  // Every obstacle, not just the ones it happened to hit first: sliding clear
+  // of one box only to stop on the next one along is what the multi-pass loop
+  // exists to prevent, and it can only avoid what it is told about.
+  const shift = shiftClearOf(
+    planBounds(plan),
+    [...obstacles.map(obstacleBounds), ...alsoAvoid],
+    direction,
+  );
   if (!shift || (shift.dx === 0 && shift.dy === 0)) throw humanCollisionError(collisions);
   translatePlan(plan, shift.dx, shift.dy);
   const retried = assertDiagramQuality(plan, obstacles);
@@ -212,17 +209,24 @@ export function assertQualityClearOfHuman(
 }
 
 /**
- * Everything already on the board that is not one of the obstacles, as boxes
- * a clearing shift has to end up clear of. Without it, sliding out of the
- * user's way could park the drawing on another diagram instead.
+ * The rest of the board, as boxes a clearing shift has to end up clear of.
+ * Without it, sliding out of the user's way could park the drawing on another
+ * diagram instead.
+ *
+ * Connectors and scribbles are left out for the same reason humanObstacles
+ * leaves them out: a diagonal arrow's bounding box covers a whole quadrant,
+ * and reserving that would send every shifted diagram to the far side of the
+ * canvas or exhaust the passes trying.
  */
+const UNRESERVED_TYPES = new Set(["arrow", "line", "freedraw"]);
+
 function foreignBounds(
   elements: readonly SceneElement[],
   obstacles: readonly DiagramObstacle[],
 ): PlanBounds[] {
   const named = new Set(obstacles.map((obstacle) => obstacle.id));
   return finiteGeometry(elements)
-    .filter((element) => !named.has(element.id))
+    .filter((element) => !named.has(element.id) && !UNRESERVED_TYPES.has(element.type))
     .map((element) => elementsBounds([element]))
     .filter((bounds): bounds is PlanBounds => bounds !== null);
 }
