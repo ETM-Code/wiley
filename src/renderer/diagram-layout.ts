@@ -1184,6 +1184,21 @@ function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
   layers.forEach((layer, index) => {
     for (const node of layer.nodes) rankOf.set(node.id, index);
   });
+  // A serpentine grid gives exactly two kinds of connector a lane of its own:
+  // a step along the row, and the turn down the outside into the row below,
+  // which the alternating rows put in the same column. Both join neighbouring
+  // ranks. An edge that reaches further -- a branch skipping past a rank, a
+  // feedback edge closing a loop three ranks back -- has no lane, so it cuts
+  // across the middle of the board, crossing whatever the grid put in its way.
+  // That is the connector sweeping the folded block, and it undoes the fold.
+  // So the fold is for a chain: a decision flow that branches, or a pipeline
+  // that loops back, keeps the shape its direction asked for.
+  const consecutive = input.edges.every((edge) => {
+    const from = rankOf.get(edge.from);
+    const to = rankOf.get(edge.to);
+    return from === undefined || to === undefined || from === to || Math.abs(to - from) === 1;
+  });
+  if (!consecutive) return null;
 
   let best: FoldedFlow | null = null;
   for (let columns = MIN_FOLD_COLUMNS; columns < layers.length; columns++) {
