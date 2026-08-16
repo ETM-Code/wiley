@@ -119,7 +119,7 @@ export const strayColorPlan: DiagramPlan = handBuiltPlan([
  */
 export const rainbowPlan: DiagramPlan = handBuiltPlan(
   [
-    "#a5d8ff", "#96f2d7", "#ffec99", "#ffc9c9", "#99e9f2",
+    "#a5d8ff", "#96f2d7", "#ffec99", "#ffc9c9", "#d0bfff",
     "#fff5f5", "#e7f5ff", "#e6fcf5", "#fff9db", "#a5d8ff",
   ].map((fill, index) => dirtyNode(`n${index}`, { x: index * 300, backgroundColor: fill })),
   { theme: "ocean" },
