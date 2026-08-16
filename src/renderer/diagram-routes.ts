@@ -828,6 +828,12 @@ export type RouteRequest = {
   sides?: { from: Side; to: Side };
   /** The layout's own route, if it produced one worth re-anchoring. */
   route?: Point[];
+  /**
+   * Things this one connector has to keep out of that are not nodes. A region
+   * is a blocker to every edge with no end inside it and no blocker at all to
+   * the edges it holds, and only the caller knows which is which.
+   */
+  blockers?: readonly Box[];
 };
 
 export type PlannedRoute = { id: string; points: Point[]; rounded: boolean };
@@ -843,6 +849,13 @@ export type RoutePlanOptions = {
   minSteps?: ReadonlyMap<string, number>;
   /** Attach every endpoint on its own bearing; see borderPoint. */
   radialPorts?: boolean;
+  /**
+   * Every route square. A board laid out on a grid is drawn with straight runs
+   * and right angles, and the arc the straight-route repair bends a blocked
+   * run onto is the one swooping line on it. Right angles all the way round
+   * are longer and read as deliberate; the arc reads as a mistake.
+   */
+  square?: boolean;
 };
 
 export function planRoutes(
@@ -864,9 +877,10 @@ export function planRoutes(
     // always the box's id: a merge pass keys agent boxes by graph key and
     // stamps the element id on the box. Filtering on the box's id there left
     // an edge's own endpoints standing in its own blocker list.
-    const blockers = [...nodes]
-      .filter(([id]) => id !== edge.from && id !== edge.to)
-      .map(([, box]) => box);
+    const blockers = [
+      ...[...nodes].filter(([id]) => id !== edge.from && id !== edge.to).map(([, box]) => box),
+      ...(edge.blockers ?? []),
+    ];
     const minStep = options.minSteps?.get(edge.id) ?? 1;
     // A flow that named its sides gets the turned connector first. The repair
     // loop raises minStep on an edge that is still in trouble, and that is the
@@ -875,8 +889,10 @@ export function planRoutes(
       const flow = flowRoute(start, end, edge.sides, blockers);
       if (flow) return { id: edge.id, ...flow };
     }
-    const repaired = repairStraightRoute(start, end, blockers, minStep);
-    if (repaired) return { id: edge.id, ...repaired };
+    if (!options.square) {
+      const repaired = repairStraightRoute(start, end, blockers, minStep);
+      if (repaired) return { id: edge.id, ...repaired };
+    }
     return { id: edge.id, ...orthogonalRoute(start, end, blockers) };
   });
 }

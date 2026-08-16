@@ -1274,6 +1274,314 @@ function foldFlow(input: GeometryInput, laid: ElkNode): FoldedFlow | null {
 }
 
 /**
+ * Past this a band of regions has to be scrolled or shrunk to nothing before
+ * a reader can tell one region from another. It is stricter than the ribbon
+ * threshold a plain flow is held to, because a region carries a whole layout
+ * inside it: at four times as wide as it is tall, the boxes inside the regions
+ * are the size of the text on them.
+ */
+const REGION_BAND_ASPECT = 2.5;
+/**
+ * Fewer than this and there is no grid to move to. Three regions can only be
+ * packed into a row of two and a row of one, and a grid with a corner missing
+ * reads worse than the band it replaced.
+ */
+const MIN_PACKED_REGIONS = 4;
+
+/** A region, or a node belonging to no region: whatever moves as one piece. */
+type RegionCell = {
+  id: string;
+  /** Every node that travels with the cell. */
+  nodes: string[];
+  box: RouteBox;
+};
+
+/** Where a cell was put, so an edge between two cells knows which way to go. */
+type RegionPacking = {
+  positions: Map<string, RoutePoint>;
+  seats: Map<string, { row: number; column: number }>;
+  /** The cell each node belongs to. */
+  cellOf: Map<string, string>;
+  aspect: number;
+};
+
+/**
+ * Lays a board's regions out on a grid.
+ *
+ * A layered engine puts every sibling region in one band along the flow, and
+ * four regions in a band is a drawing four times wider than it is tall with
+ * the whole of its detail inside them. Folding a region is not an option:
+ * a region is one piece and scrambling its members is not a layout. But the
+ * regions themselves are exactly the kind of thing a grid is for, and moving
+ * one is free -- every member travels with it and the layout inside is
+ * untouched.
+ *
+ * So the band is folded at the level above: the same serpentine the fold uses
+ * for the ranks of a flow, applied to whole regions, so the last region of a
+ * row and the first of the next sit one above the other and the connector
+ * between them is a straight drop rather than a sweep back across the board.
+ */
+function packRegions(
+  input: GeometryInput,
+  laid: ReadonlyMap<string, RoutePoint>,
+): RegionPacking | null {
+  const plan = input.containers;
+  if (!plan) return null;
+  const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
+  const regions = containerBoxes(plan, laid, input.sizes, input.containerLabelWidths, input.direction);
+  const membersOf = (id: string): string[] => [
+    ...(plan.memberNodes.get(id) ?? []),
+    ...(plan.childContainers.get(id) ?? []).flatMap(membersOf),
+  ];
+  const cells: RegionCell[] = [
+    ...plan.rootContainers
+      .filter((id) => regions.has(id))
+      .map((id) => ({ id, nodes: membersOf(id), box: regions.get(id)! })),
+    ...plan.rootNodes.filter((id) => laid.has(id)).map((id) => ({
+      id,
+      nodes: [id],
+      box: { id, ...laid.get(id)!, ...sizeOf(id) },
+    })),
+  ];
+  if (cells.length < MIN_PACKED_REGIONS) return null;
+
+  const alongY = portsSpreadAlongWidth(input.direction);
+  const flowStart = (cell: RegionCell) => (alongY ? cell.box.y : cell.box.x);
+  const stackStart = (cell: RegionCell) => (alongY ? cell.box.x : cell.box.y);
+  const flowSize = (cell: RegionCell) => (alongY ? cell.box.height : cell.box.width);
+  const stackSize = (cell: RegionCell) => (alongY ? cell.box.width : cell.box.height);
+  // The order the flow put them in is the order a reader reads them in, and
+  // the grid keeps it.
+  cells.sort((a, b) => flowStart(a) - flowStart(b) || (a.id < b.id ? -1 : 1));
+
+  const span = (values: number[]) => Math.max(...values) - Math.min(...values);
+  const bandWidth = span(cells.flatMap((cell) => [cell.box.x, cell.box.x + cell.box.width]));
+  const bandHeight = span(cells.flatMap((cell) => [cell.box.y, cell.box.y + cell.box.height]));
+  const bandAspect = Math.max(bandWidth, bandHeight) / Math.max(1, Math.min(bandWidth, bandHeight));
+  if (bandAspect <= REGION_BAND_ASPECT) return null;
+
+  let best: { aspect: number; seats: Map<string, { row: number; column: number }>; shift: Map<string, RoutePoint> } | null = null;
+  for (let columns = 2; columns < cells.length; columns++) {
+    // Every row full. A ragged last row leaves a hole in the corner of the
+    // board, and a reader reads the hole before anything else on it.
+    if (cells.length % columns !== 0) continue;
+    const rowCount = cells.length / columns;
+    if (rowCount < 2) continue;
+
+    const columnExtent = Array.from({ length: columns }, () => 0);
+    const rowExtent = Array.from({ length: rowCount }, () => 0);
+    cells.forEach((cell, index) => {
+      const seat = foldSeat(index, columns);
+      columnExtent[seat.column] = Math.max(columnExtent[seat.column], flowSize(cell));
+      rowExtent[seat.row] = Math.max(rowExtent[seat.row], stackSize(cell));
+    });
+    const gap = input.layerSpacing;
+    const total = (extents: number[]) => extents.reduce((sum, one) => sum + one, 0) + gap * (extents.length - 1);
+    const flowSpan = total(columnExtent);
+    const stackSpan = total(rowExtent);
+    const width = alongY ? stackSpan : flowSpan;
+    const height = alongY ? flowSpan : stackSpan;
+    const shape = Math.max(width, height) / Math.max(1, Math.min(width, height));
+    if (best && Math.abs(shape - TARGET_ASPECT) >= Math.abs(best.aspect - TARGET_ASPECT)) continue;
+
+    const offsets = (extents: number[]) => extents.reduce<number[]>(
+      (starts, extent, index) => [...starts, starts[index] + extent + gap],
+      [0],
+    );
+    const columnStart = offsets(columnExtent);
+    const rowStart = offsets(rowExtent);
+    const seats = new Map<string, { row: number; column: number }>();
+    const shift = new Map<string, RoutePoint>();
+    cells.forEach((cell, index) => {
+      const seat = foldSeat(index, columns);
+      seats.set(cell.id, seat);
+      // Regions in a row start on a common edge, which is what makes a row of
+      // them read as a row rather than as boxes nobody lined up.
+      const flow = columnStart[seat.column] - flowStart(cell);
+      const stack = rowStart[seat.row] - stackStart(cell);
+      shift.set(cell.id, alongY ? { x: stack, y: flow } : { x: flow, y: stack });
+    });
+    best = { aspect: shape, seats, shift };
+  }
+  if (!best || best.aspect >= bandAspect) return null;
+
+  const positions = new Map<string, RoutePoint>();
+  const cellOf = new Map<string, string>();
+  for (const cell of cells) {
+    const delta = best.shift.get(cell.id)!;
+    for (const nodeId of cell.nodes) {
+      const point = laid.get(nodeId);
+      if (!point) continue;
+      cellOf.set(nodeId, cell.id);
+      positions.set(nodeId, {
+        x: snapModelCoordinate(point.x + delta.x),
+        y: snapModelCoordinate(point.y + delta.y),
+      });
+    }
+  }
+  return { positions, seats: best.seats, cellOf, aspect: best.aspect };
+}
+
+/**
+ * The stretch of a route that is inside none of the given boxes, as a straight
+ * run between its two ends.
+ *
+ * A caption belonging to no region may not sit in one, and on a board of
+ * regions most of a cross-region connector is inside one or the other. What is
+ * left is the corridor it crosses, and that is where the caption goes: asking
+ * for a spot beside the whole route offers the middle first, and the middle of
+ * a connector between two regions is inside one of them.
+ */
+function runOutside(points: readonly RoutePoint[], boxes: readonly RouteBox[]): RoutePoint[] {
+  if (points.length < 2 || boxes.length === 0) return [...points];
+  const samples = 100;
+  const at = (fraction: number): RoutePoint => {
+    const total = points.slice(1).reduce((sum, point, index) => sum + distance(points[index], point), 0);
+    let remaining = total * fraction;
+    for (let index = 1; index < points.length; index++) {
+      const length = distance(points[index - 1], points[index]);
+      if (remaining > length && index < points.length - 1) {
+        remaining -= length;
+        continue;
+      }
+      const ratio = length === 0 ? 0 : Math.min(1, remaining / length);
+      return {
+        x: points[index - 1].x + (points[index].x - points[index - 1].x) * ratio,
+        y: points[index - 1].y + (points[index].y - points[index - 1].y) * ratio,
+      };
+    }
+    return points[points.length - 1];
+  };
+  const clear = Array.from({ length: samples + 1 }, (_, index) => {
+    const point = at(index / samples);
+    return boxes.every((box) => point.x < box.x || point.x > box.x + box.width
+      || point.y < box.y || point.y > box.y + box.height);
+  });
+  let best: { start: number; end: number } | null = null;
+  let start: number | null = null;
+  for (let index = 0; index <= samples; index++) {
+    if (clear[index] && start === null) start = index;
+    if ((!clear[index] || index === samples) && start !== null) {
+      const end = clear[index] ? index : index - 1;
+      if (!best || end - start > best.end - best.start) best = { start, end };
+      start = null;
+    }
+  }
+  if (!best || best.end === best.start) return [...points];
+  return [at(best.start / samples), at(best.end / samples)];
+}
+
+/**
+ * Draws a board whose regions were packed onto a grid.
+ *
+ * Moving the regions moved every route ELK drew between them, so the routes
+ * are drawn here instead against the grid the regions now sit on: along the
+ * row between neighbours, down the outside at the turn, and on the flow's own
+ * sides inside a region, where the layered engine's own arrangement still
+ * holds. Every region an edge has no end inside is a blocker to it, so no
+ * connector may take a short cut through somebody else's border.
+ */
+function packedGeometry(
+  input: GeometryInput,
+  packed: RegionPacking,
+  outcome: DiagramLayoutOutcome,
+): LayoutGeometry | null {
+  const plan = input.containers;
+  if (!plan) return null;
+  const sizeOf = (id: string) => input.sizes.get(id) ?? { width: NODE_MIN_WIDTH, height: NODE_MIN_HEIGHT };
+  const positions = packed.positions;
+  const boxes = new Map<string, RouteBox>(input.params.nodes
+    .filter((node) => positions.has(node.id))
+    .map((node) => {
+      const position = positions.get(node.id)!;
+      return [node.id, { id: node.id, x: position.x, y: position.y, ...sizeOf(node.id) }];
+    }));
+  const regions = containerBoxes(plan, positions, input.sizes, input.containerLabelWidths, input.direction);
+  const held = new Map<string, Set<string>>();
+  const collect = (id: string): Set<string> => {
+    const owned = new Set<string>(plan.memberNodes.get(id) ?? []);
+    for (const child of plan.childContainers.get(id) ?? []) {
+      for (const nodeId of collect(child)) owned.add(nodeId);
+    }
+    held.set(id, owned);
+    return owned;
+  };
+  for (const id of plan.rootContainers) collect(id);
+
+  const alongY = portsSpreadAlongWidth(input.direction);
+  const forward: { from: Side; to: Side } = alongY
+    ? { from: "bottom", to: "top" }
+    : { from: "right", to: "left" };
+  const backward: { from: Side; to: Side } = { from: forward.to, to: forward.from };
+  const turn: { from: Side; to: Side } = alongY
+    ? { from: "right", to: "left" }
+    : { from: "bottom", to: "top" };
+  const sidesFor = (from: string, to: string): { from: Side; to: Side } | undefined => {
+    const here = packed.seats.get(packed.cellOf.get(from) ?? "");
+    const there = packed.seats.get(packed.cellOf.get(to) ?? "");
+    if (!here || !there) return undefined;
+    // Inside one region the flow is the one the request asked for, which is
+    // what the layered engine arranged the members along.
+    if (here === there) return TREE_PORT_SIDES[input.direction];
+    if (here.row === there.row) return there.column > here.column ? forward : backward;
+    if (there.row === here.row + 1 && there.column === here.column) return turn;
+    return undefined;
+  };
+
+  const requests: RouteRequest[] = input.edges.map((edge, index) => {
+    const sides = sidesFor(edge.from, edge.to);
+    const outside = [...regions]
+      .filter(([id]) => !(held.get(id)?.has(edge.from) ?? false) && !(held.get(id)?.has(edge.to) ?? false))
+      .map(([, box]) => box);
+    return {
+      id: `edge-${index}`,
+      from: edge.from,
+      to: edge.to,
+      ...(sides ? { sides } : {}),
+      ...(outside.length > 0 ? { blockers: outside } : {}),
+    };
+  });
+  const attachments = new Map(requests.map((request) => [request.id, { from: request.from, to: request.to }]));
+  const minSteps = new Map<string, number>();
+  let routes = planRoutes(boxes, requests, { minSteps, square: true });
+  for (let round = 0; ; round++) {
+    const guilty = routeDefects(boxes, routes, attachments);
+    for (const [index, request] of requests.entries()) {
+      const geometry = routeGeometry(routes[index].points, routes[index].rounded);
+      if ((request.blockers ?? []).some((box) => geometryIntersectsBox(geometry, box, 0))) {
+        guilty.add(request.id);
+      }
+    }
+    if (guilty.size === 0) break;
+    if (round === MAX_ROUTE_REPAIR_ITERATIONS - 1) return null;
+    for (const id of guilty) minSteps.set(id, (minSteps.get(id) ?? 1) + 2);
+    routes = planRoutes(boxes, requests, { minSteps, square: true });
+  }
+  // A grid is drawn with square corners, the same rule a folded flow is held
+  // to. One connector swooping across a board of regions says the grid does
+  // not suit this graph, and the band it replaced at least read as a band.
+  if (routes.some((route) => route.rounded)) return null;
+
+  const placed: RouteBox[] = [...boxes.values()];
+  const edges: EdgeGeometry[] = input.edges.map((edge, index) => {
+    const route = routes[index];
+    const text = edge.label?.trim();
+    if (!text) return { points: route.points, rounded: route.rounded };
+    const size = measureText(text, EDGE_LABEL_FONT_SIZE);
+    // A caption inside a region reads as belonging to it, so a connector
+    // between two regions may not park its caption in either of them, nor in
+    // any other. Only a region the edge itself lives in will take it.
+    const owner = lowestCommonContainer(plan, edge.from, edge.to);
+    const home = new Set(owner ? [owner, ...containerChain(plan, owner)] : []);
+    const barred = [...regions].filter(([id]) => !home.has(id)).map(([, box]) => box);
+    const label = placeEdgeLabel(runOutside(route.points, barred), size, [...placed, ...barred]);
+    placed.push({ id: `label-${index}`, x: label.x, y: label.y, ...size });
+    return { points: route.points, rounded: route.rounded, label };
+  });
+  return { positions, sizes: input.sizes, outcome, containers: regions, edges };
+}
+
+/**
  * Draws the connectors of a folded flow.
  *
  * The fold moved every rank, so ELK's channel routes no longer describe the
@@ -1394,6 +1702,11 @@ async function layeredGeometry(input: GeometryInput, outcome: DiagramLayoutOutco
     const box = absolute.boxes.get(node.id);
     return [node.id, { x: snapModelCoordinate(box?.x), y: snapModelCoordinate(box?.y) }];
   }));
+  // A band of regions is folded at the level above the flow: the regions move,
+  // whole, onto a grid, and what is inside each one is left exactly as it was.
+  const packed = input.containers ? packRegions(input, positions) : null;
+  const packedResult = packed ? packedGeometry(input, packed, outcome) : null;
+  if (packedResult) return packedResult;
   return {
     positions,
     sizes: input.sizes,

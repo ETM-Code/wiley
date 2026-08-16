@@ -819,6 +819,70 @@ describe("diagram layout quality", () => {
     expect(label?.text).toBe("Edge tier");
   });
 
+  it("lays a band of four regions out on a grid", async () => {
+    // Four regions in one band is a drawing four times wider than it is tall
+    // with the whole of its detail inside them, and at that scale the boxes
+    // are the size of the text on them. A region is one piece, so the fold
+    // happens a level up: the regions move onto a grid and what is inside each
+    // one is left exactly as the layered engine arranged it.
+    const plan = await planDiagramLayout({
+      title: "Sign-in architecture",
+      layout: { algorithm: "layered", direction: "RIGHT" },
+      containers: [
+        { id: "client", label: "Client" },
+        { id: "edge", label: "Edge" },
+        { id: "identity", label: "Identity services" },
+        { id: "data", label: "Data" },
+      ],
+      nodes: [
+        { id: "browser", label: "Browser", container: "client" },
+        { id: "mobile", label: "Mobile app", container: "client" },
+        { id: "cdn", label: "CDN", container: "edge" },
+        { id: "gateway", label: "API gateway", container: "edge" },
+        { id: "authsvc", label: "Auth service", container: "identity" },
+        { id: "token", label: "Token issuer", container: "identity" },
+        { id: "idp", label: "External IdP", container: "identity" },
+        { id: "users", label: "User store", container: "data" },
+        { id: "sessions", label: "Session cache", container: "data" },
+      ],
+      edges: [
+        { from: "browser", to: "cdn", label: "GET /login" },
+        { from: "mobile", to: "gateway", label: "POST /token" },
+        { from: "cdn", to: "gateway" },
+        { from: "gateway", to: "authsvc", label: "verify" },
+        { from: "authsvc", to: "idp", label: "OIDC" },
+        { from: "authsvc", to: "token", label: "mint" },
+        { from: "authsvc", to: "users", label: "lookup" },
+        { from: "token", to: "sessions", label: "store" },
+      ],
+    }, ORIGIN, DIAGRAM_ID);
+    const byId = new Map(plan.skeletons.map((skeleton) => [String(skeleton.id), skeleton]));
+    const regions = ["client", "edge", "identity", "data"]
+      .map((id) => byId.get(plan.containers.get(id)!.elementId)!);
+    const left = Math.min(...regions.map((box) => box.x as number));
+    const right = Math.max(...regions.map((box) => (box.x as number) + (box.width as number)));
+    const top = Math.min(...regions.map((box) => box.y as number));
+    const bottom = Math.max(...regions.map((box) => (box.y as number) + (box.height as number)));
+    const width = right - left;
+    const height = bottom - top;
+    expect(Math.max(width, height) / Math.min(width, height)).toBeLessThanOrEqual(2);
+    // Two rows of two, each row on one band.
+    expect(new Set(regions.map((box) => box.y)).size).toBe(2);
+    // And the grid costs nothing: every check a band of regions passed, a grid
+    // of them passes too.
+    const report = evaluateDiagramPlan(plan);
+    expect(report.containerContainment).toEqual([]);
+    expect(report.containerIntrusion).toEqual([]);
+    expect(report.edgesThroughContainers).toEqual([]);
+    expect(report.edgesThroughNodes).toEqual([]);
+    expect(report.labelCollisions).toEqual([]);
+    expect(report.nodeOverlaps).toEqual([]);
+    // Square corners all the way round: no arc anywhere on a board of regions.
+    for (const arrow of plan.skeletons.filter((skeleton) => skeleton.type === "arrow")) {
+      expect(arrow.roundness).toBeUndefined();
+    }
+  });
+
   it("lines sibling regions up on the band they share", async () => {
     const plan = await planDiagramLayout({
       layout: { algorithm: "layered", direction: "RIGHT" },
