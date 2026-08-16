@@ -415,6 +415,37 @@ export function repairStraightRoute(
   return null;
 }
 
+/**
+ * The connector a hierarchy is drawn with: out of the parent along the flow
+ * axis, across the gap between the two rows, then square onto the child's own
+ * side.
+ *
+ * Naming the sides is not enough on its own. A straight line from the middle
+ * of a parent's bottom to the middle of a child's top still arrives at
+ * whatever angle the columns happen to give, and on a wide chart that angle is
+ * shallow enough that the arrowhead reads as pointing into the child's corner
+ * rather than down onto its top. Turning in the gap makes every arrival square
+ * to the side it lands on, which is what makes a tree read as a tree.
+ */
+export function flowRoute(
+  from: Point,
+  to: Point,
+  sides: { from: Side; to: Side },
+  blockers: readonly Box[],
+): RepairedRoute | null {
+  const alongY = sides.from === "top" || sides.from === "bottom";
+  const offset = alongY ? to.x - from.x : to.y - from.y;
+  if (Math.abs(offset) < 1) {
+    const points = [from, to];
+    return countBlockers(points, false, blockers) === 0 ? { points, rounded: false } : null;
+  }
+  const turn = alongY ? (from.y + to.y) / 2 : (from.x + to.x) / 2;
+  const points = alongY
+    ? [from, { x: from.x, y: turn }, { x: to.x, y: turn }, to]
+    : [from, { x: turn, y: from.y }, { x: turn, y: to.y }, to];
+  return countBlockers(points, true, blockers) === 0 ? { points, rounded: true } : null;
+}
+
 // ---------------------------------------------------------------------------
 // (d) Orthogonal fallback
 // ---------------------------------------------------------------------------
@@ -604,6 +635,13 @@ export function planRoutes(
     const end = assignment?.end ?? anchored?.[anchored.length - 1] ?? (toBox ? boxCenter(toBox) : { x: 0, y: 0 });
     const blockers = [...nodes.values()].filter((box) => box.id !== edge.from && box.id !== edge.to);
     const minStep = options.minSteps?.get(edge.id) ?? 1;
+    // A flow that named its sides gets the turned connector first. The repair
+    // loop raises minStep on an edge that is still in trouble, and that is the
+    // signal to stop insisting on the tidy shape and go looking for any shape.
+    if (edge.sides && minStep <= 1) {
+      const flow = flowRoute(start, end, edge.sides, blockers);
+      if (flow) return { id: edge.id, ...flow };
+    }
     const repaired = repairStraightRoute(start, end, blockers, minStep);
     if (repaired) return { id: edge.id, ...repaired };
     return { id: edge.id, ...orthogonalRoute(start, end, blockers) };
