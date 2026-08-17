@@ -74,7 +74,7 @@ type SceneRecord = Record<string, unknown> & {
   children?: string[];
   groupIds?: string[];
   containerId?: string;
-  customData?: { wiley?: { key?: string; role?: string } };
+  customData?: { wiley?: { diagram?: string; key?: string; role?: string } };
 };
 
 function expectOnModelGrid(value: unknown) {
@@ -1215,29 +1215,35 @@ describe("diagram renderer", () => {
     };
 
     // The commit reveals its elements over several frames. A late preview
-    // frame arriving inside that window claims a fresh diagram id, so its
-    // copy sits on ids the commit knows nothing about.
+    // frame sent inside that window claims a fresh diagram id, so its copy
+    // would sit on ids the commit knows nothing about. Mutations are
+    // serialized now, so the frame waits its turn rather than painting into
+    // a half-revealed scene, and the commit is whole before it is even read.
     const commit = handleCanvasRequest(api, {
       id: 70,
       op: "layout-diagram",
       params: { __previewVersion: 401, ...graph },
     }) as Promise<{ diagramId: string }>;
     await new Promise((resolve) => setTimeout(resolve, 60));
-    const stray = await handleCanvasRequest(api, {
+    const strayRequest = handleCanvasRequest(api, {
       id: -70,
       op: "preview-diagram",
       params: { __previewVersion: 402, ...graph },
-    }) as { diagramId: string };
+    }) as Promise<{ diagramId: string }>;
     const final = await commit;
-
-    expect(stray.diagramId).not.toBe(final.diagramId);
     expect(elements.filter((element) => element.type === "rectangle")).toHaveLength(3);
-    expect(elements.some((element) => String(element.id).startsWith(stray.diagramId))).toBe(false);
+
+    const stray = await strayRequest;
+    expect(stray.diagramId).not.toBe(final.diagramId);
+    // The runtime clears the preview once the tool call finishes, and that
+    // clear has to take the whole provisional copy with it.
     await handleCanvasRequest(api, {
       id: -71,
       op: "clear-diagram-preview",
       params: { __previewVersion: 403 },
     });
+    expect(elements.filter((element) => element.type === "rectangle")).toHaveLength(3);
+    expect(elements.some((element) => String(element.id).startsWith(stray.diagramId))).toBe(false);
   });
 
   it("never evaluates a streaming preview", async () => {
@@ -1265,6 +1271,65 @@ describe("diagram renderer", () => {
     expect(preview.preview).toBe(true);
     expect(preview.quality).toBeUndefined();
     await handleCanvasRequest(api, { id: 62, op: "clear-diagram-preview", params: { __previewVersion: 9_002 } });
+  });
+});
+
+describe("concurrent board mutations", () => {
+  /**
+   * Two draws dispatched together used to read the same empty scene, place
+   * against the same emptiness, and land on top of each other. The main
+   * process's revision check cannot catch it: it compares against the snapshot
+   * of the last *finished* transaction, so a second one sent while the first
+   * is still inside the renderer carries a base that is still current.
+   */
+  it("places a second diagram clear of a first one dispatched at the same moment", async () => {
+    let elements: SceneRecord[] = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700, viewBackgroundColor: "#ffffff" }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: SceneRecord[] }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const [first, second] = await Promise.all([
+      handleCanvasRequest(api, {
+        id: 70,
+        op: "layout-diagram",
+        params: {
+          title: "Intake",
+          nodes: [{ id: "a", label: "Accept" }, { id: "b", label: "Queue" }],
+          edges: [{ from: "a", to: "b" }],
+        },
+      }),
+      handleCanvasRequest(api, {
+        id: 71,
+        op: "layout-diagram",
+        params: {
+          title: "Delivery",
+          nodes: [{ id: "c", label: "Drain" }, { id: "d", label: "Deliver" }],
+          edges: [{ from: "c", to: "d" }],
+        },
+      }),
+    ]) as Array<{ diagramId: string }>;
+
+    expect(first.diagramId).not.toBe(second.diagramId);
+    const boundsOf = (diagramId: string) => {
+      const mine = elements.filter((element) => element.customData?.wiley?.diagram === diagramId);
+      expect(mine.length).toBeGreaterThan(0);
+      return {
+        minX: Math.min(...mine.map((element) => element.x)),
+        maxX: Math.max(...mine.map((element) => element.x + element.width)),
+        minY: Math.min(...mine.map((element) => element.y)),
+        maxY: Math.max(...mine.map((element) => element.y + element.height)),
+      };
+    };
+    const a = boundsOf(first.diagramId);
+    const b = boundsOf(second.diagramId);
+    const overlaps = a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
+    expect(overlaps).toBe(false);
   });
 });
 

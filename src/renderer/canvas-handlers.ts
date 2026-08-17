@@ -25,7 +25,51 @@ function mutationResult(api: ExcalidrawImperativeAPI, result: Record<string, unk
   };
 }
 
-export async function handleCanvasRequest(
+/**
+ * Every board mutation is a read-modify-write over the whole scene: it reads
+ * `api.getSceneElements()`, decides where its content belongs relative to what
+ * is already there, and writes the result back. Two of them in flight together
+ * read the same scene and place against the same emptiness, which is how a
+ * second diagram lands on top of the first instead of beside it.
+ *
+ * The main process's revision check does not prevent that. It compares a
+ * transaction's base against the snapshot recorded when the previous
+ * transaction *finished*, so a transaction dispatched while another is still
+ * inside the renderer carries a base that is still current and sails through.
+ * The only place that can serialize is here, where the scene actually lives.
+ */
+const MUTATIONS = new Set<CanvasRequest["op"]>([
+  "add-shape",
+  "layout-diagram",
+  "update-diagram",
+  "preview-diagram",
+  "clear-diagram-preview",
+  "add-elements",
+  "connect-elements",
+  "clear-scene",
+  "apply-patch",
+  "tidy-diagram",
+]);
+
+/** The tail of the mutation chain. Never rejects, so one failure cannot stall the rest. */
+let mutationChain: Promise<unknown> = Promise.resolve();
+
+function serializeMutation<T>(work: () => Promise<T>): Promise<T> {
+  const next = mutationChain.then(work, work);
+  mutationChain = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+export function handleCanvasRequest(
+  api: ExcalidrawImperativeAPI,
+  request: CanvasRequest,
+): Promise<unknown> {
+  return MUTATIONS.has(request.op)
+    ? serializeMutation(() => runCanvasRequest(api, request))
+    : runCanvasRequest(api, request);
+}
+
+async function runCanvasRequest(
   api: ExcalidrawImperativeAPI,
   request: CanvasRequest,
 ): Promise<unknown> {
@@ -72,18 +116,6 @@ export function subscribeToCanvasRequests(
   onMutationState?: (active: boolean) => void,
 ): () => void {
   let activeMutations = 0;
-  const mutationOperations = new Set<CanvasRequest["op"]>([
-    "add-shape",
-    "layout-diagram",
-    "update-diagram",
-    "preview-diagram",
-    "clear-diagram-preview",
-    "add-elements",
-    "connect-elements",
-    "clear-scene",
-    "apply-patch",
-    "tidy-diagram",
-  ]);
   return bridge.onCanvasRequest((request) => {
     const api = getApi();
     if (!api) {
@@ -91,7 +123,7 @@ export function subscribeToCanvasRequests(
       return;
     }
 
-    const isMutation = mutationOperations.has(request.op);
+    const isMutation = MUTATIONS.has(request.op);
     if (isMutation) {
       activeMutations += 1;
       onMutationState?.(true);
