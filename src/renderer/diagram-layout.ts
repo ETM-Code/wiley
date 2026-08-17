@@ -94,6 +94,9 @@ export type GraphNode = {
    * resizing them.
    */
   size?: { width: number; height: number };
+  /** Actual rendered colours from the previous scene, used when an old node
+   * had no explicit role and the fresh graph's colour heuristic changes. */
+  preservedStyle?: { backgroundColor: string; strokeColor: string };
 };
 
 export type ContainerRender = DiagramContainerRender;
@@ -2811,7 +2814,12 @@ function assemblePlan(
   // Every element carries its own identity and its place in the container
   // tree, so a later call can find, restyle, or rebuild exactly this diagram's
   // parts from the live scene alone.
-  const stamp = (role: DiagramElementRole, key?: string, container?: string) => ({
+  const stamp = (
+    role: DiagramElementRole,
+    key?: string,
+    container?: string,
+    node?: GraphNode,
+  ) => ({
     customData: {
       wiley: {
         diagram: diagramId,
@@ -2819,6 +2827,10 @@ function assemblePlan(
         theme: theme.name,
         ...(key ? { key } : {}),
         ...(container ? { container } : {}),
+        ...(node?.role ? { nodeRole: node.role } : {}),
+        ...(node?.emphasis ? { emphasis: node.emphasis } : {}),
+        ...(node?.backgroundColor ? { backgroundColor: node.backgroundColor } : {}),
+        ...(node?.strokeColor ? { strokeColor: node.strokeColor } : {}),
       },
     },
   });
@@ -2871,8 +2883,8 @@ function assemblePlan(
     const type = nodeToType(node);
     const id = elementIdByNode.get(node.id)!;
     const style = resolveNodeStyle(theme, node.role ?? unroled, node.emphasis, {
-      backgroundColor: node.backgroundColor,
-      strokeColor: node.strokeColor,
+      backgroundColor: node.backgroundColor ?? node.preservedStyle?.backgroundColor,
+      strokeColor: node.strokeColor ?? node.preservedStyle?.strokeColor,
     });
     roles.set(id, { role: "node", key: node.id, ...(node.container ? { container: node.container } : {}) });
     const x = snapModelCoordinate(origin.x + position.x);
@@ -2881,7 +2893,7 @@ function assemblePlan(
       return {
         id,
         type,
-        ...stamp("node", node.id, node.container),
+        ...stamp("node", node.id, node.container, node),
         ...memberGroups(node.id),
         x,
         y,
@@ -2894,13 +2906,13 @@ function assemblePlan(
         verticalAlign: "top",
         opacity: style.opacity,
         strokeColor: style.strokeColor,
-        backgroundColor: node.backgroundColor ?? "transparent",
+        backgroundColor: node.backgroundColor ?? node.preservedStyle?.backgroundColor ?? "transparent",
       };
     }
     return {
       id,
       type,
-      ...stamp("node", node.id, node.container),
+      ...stamp("node", node.id, node.container, node),
       ...memberGroups(node.id),
       x,
       y,

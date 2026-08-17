@@ -172,9 +172,24 @@ describe("reconstructSpec", () => {
     expect(spec.title).toBe("Delivery");
     expect(spec.theme).toBe("ocean");
     expect(spec.nodes).toEqual([
-      { id: "accept", label: "Accept" },
-      { id: "queue", label: "Queue", shape: "diamond", container: "tier" },
-      { id: "deliver", label: "Deliver", container: "tier" },
+      {
+        id: "accept",
+        label: "Accept",
+        preservedStyle: { backgroundColor: "#e7f5ff", strokeColor: "#1971c2" },
+      },
+      {
+        id: "queue",
+        label: "Queue",
+        shape: "diamond",
+        container: "tier",
+        preservedStyle: { backgroundColor: "#e7f5ff", strokeColor: "#1971c2" },
+      },
+      {
+        id: "deliver",
+        label: "Deliver",
+        container: "tier",
+        preservedStyle: { backgroundColor: "#e7f5ff", strokeColor: "#1971c2" },
+      },
     ]);
     expect(spec.containers).toEqual([{ id: "tier", label: "Runtime" }]);
     expect(spec.edges).toEqual([
@@ -237,6 +252,71 @@ describe("route tweening", () => {
 });
 
 describe("update-diagram", () => {
+  it("keeps every surviving node's exact themed colours when one node is added", async () => {
+    const target = board();
+    const drawn = await drawFlow(target, {
+      title: "Ocean",
+      theme: "ocean",
+      nodes: [
+        { id: "primary", label: "Primary", role: "primary" },
+        { id: "success", label: "Success", role: "success" },
+        { id: "warning", label: "Warning", role: "warning" },
+      ],
+      edges: [
+        { from: "primary", to: "success" },
+        { from: "success", to: "warning" },
+      ],
+    });
+    const before = new Map(
+      target.elements()
+        .filter((element) => element.customData?.wiley?.role === "node")
+        .map((element) => [element.customData!.wiley!.key!, {
+          fill: (element as SceneRecord & { backgroundColor?: string }).backgroundColor,
+          stroke: (element as SceneRecord & { strokeColor?: string }).strokeColor,
+        }]),
+    );
+
+    await handleCanvasRequest(target.api, {
+      id: 12,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        nodes: [{ id: "new", label: "New", role: "accent" }],
+      },
+    });
+
+    for (const [key, colours] of before) {
+      const element = target.elements().find((candidate) => candidate.customData?.wiley?.key === key)!;
+      expect({ fill: element.backgroundColor, stroke: element.strokeColor }).toEqual(colours);
+    }
+  });
+
+  it("keeps an unrelated node within a small movement bound for an isolated addition", async () => {
+    const target = board();
+    const drawn = await drawFlow(target);
+    const before = new Map(
+      target.elements()
+        .filter((element) => element.customData?.wiley?.role === "node")
+        .map((element) => [element.customData!.wiley!.key!, { x: element.x, y: element.y }]),
+    );
+
+    await handleCanvasRequest(target.api, {
+      id: 13,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        nodes: [{ id: "isolated", label: "Isolated" }],
+      },
+    });
+
+    for (const [key, position] of before) {
+      const element = target.elements().find((candidate) => candidate.customData?.wiley?.key === key)!;
+      expect(Math.hypot(element.x - position.x, element.y - position.y)).toBeLessThanOrEqual(40);
+    }
+  });
+
   it("keeps survivors as the same elements and animates prune, move, then add", async () => {
     const target = board();
     const drawn = await drawFlow(target);

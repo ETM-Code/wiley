@@ -110,6 +110,19 @@ export function reconstructSpec(
       nodes.push({
         id: stamp.key,
         label: labels.get(element.id) ?? element.text ?? stamp.key,
+        ...(stamp.nodeRole ? { role: stamp.nodeRole } : {}),
+        ...(stamp.emphasis ? { emphasis: stamp.emphasis } : {}),
+        ...(stamp.backgroundColor ? { backgroundColor: stamp.backgroundColor } : {}),
+        ...(stamp.strokeColor ? { strokeColor: stamp.strokeColor } : {}),
+        ...((element as Labelled & { backgroundColor?: string; strokeColor?: string }).backgroundColor
+          && (element as Labelled & { backgroundColor?: string; strokeColor?: string }).strokeColor
+          ? {
+              preservedStyle: {
+                backgroundColor: (element as Labelled & { backgroundColor: string }).backgroundColor,
+                strokeColor: (element as Labelled & { strokeColor: string }).strokeColor,
+              },
+            }
+          : {}),
         ...(SHAPES.has(element.type) && element.type !== "rectangle"
           ? { shape: element.type as GraphShape }
           : {}),
@@ -175,7 +188,16 @@ export function mergeSpec(existing: LayoutParams, overlay: Partial<LayoutParams>
   for (const node of overlay.nodes ?? []) {
     const index = nodes.findIndex((candidate) => candidate.id === node.id);
     if (index === -1) nodes.push(node);
-    else nodes[index] = { ...nodes[index], ...node };
+    else {
+      const merged = { ...nodes[index], ...node };
+      // A named semantic/style change is intentional; do not let the
+      // previous rendered fallback override the new role or colour.
+      if ("role" in node || "emphasis" in node
+        || "backgroundColor" in node || "strokeColor" in node) {
+        delete merged.preservedStyle;
+      }
+      nodes[index] = merged;
+    }
   }
   const containers = [...(existing.containers ?? [])];
   for (const container of overlay.containers ?? []) {

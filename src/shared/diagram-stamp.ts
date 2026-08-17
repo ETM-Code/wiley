@@ -82,6 +82,11 @@ export type DiagramStamp = {
   role: DiagramElementRole;
   key?: string;
   theme?: DiagramThemeName;
+  /** Semantic styling carried by node elements for update-diagram reconstruction. */
+  nodeRole?: DiagramNodeRole;
+  emphasis?: DiagramNodeEmphasis;
+  backgroundColor?: string;
+  strokeColor?: string;
   /**
    * The semantic id of the container this element sits inside, so the live
    * scene alone is enough to rebuild the graph that produced it.
@@ -99,6 +104,8 @@ const ROLES = new Set<string>([
   "containerLabel",
 ]);
 const THEMES = new Set<string>(DIAGRAM_THEME_NAMES);
+const NODE_ROLES = new Set<string>(DIAGRAM_NODE_ROLES);
+const NODE_EMPHASES = new Set<string>(DIAGRAM_NODE_EMPHASES);
 
 /**
  * The mark on something the agent drew that belongs to no diagram: a
@@ -137,7 +144,17 @@ export function isAgentDrawn(element: unknown): boolean {
 export function readDiagramStamp(element: unknown): DiagramStamp | undefined {
   const customData = (element as { customData?: unknown } | null)?.customData;
   const wiley = (customData as { wiley?: unknown } | null | undefined)?.wiley as
-    | { diagram?: unknown; role?: unknown; key?: unknown; theme?: unknown; container?: unknown }
+    | {
+        diagram?: unknown;
+        role?: unknown;
+        key?: unknown;
+        theme?: unknown;
+        container?: unknown;
+        nodeRole?: unknown;
+        emphasis?: unknown;
+        backgroundColor?: unknown;
+        strokeColor?: unknown;
+      }
     | undefined;
   if (!wiley || typeof wiley.diagram !== "string") return undefined;
   if (typeof wiley.role !== "string" || !ROLES.has(wiley.role)) return undefined;
@@ -147,6 +164,18 @@ export function readDiagramStamp(element: unknown): DiagramStamp | undefined {
     ...(typeof wiley.key === "string" ? { key: wiley.key } : {}),
     ...(typeof wiley.theme === "string" && THEMES.has(wiley.theme)
       ? { theme: wiley.theme as DiagramThemeName }
+      : {}),
+    ...(typeof wiley.nodeRole === "string" && NODE_ROLES.has(wiley.nodeRole)
+      ? { nodeRole: wiley.nodeRole as DiagramNodeRole }
+      : {}),
+    ...(typeof wiley.emphasis === "string" && NODE_EMPHASES.has(wiley.emphasis)
+      ? { emphasis: wiley.emphasis as DiagramNodeEmphasis }
+      : {}),
+    ...(typeof wiley.backgroundColor === "string" && wiley.backgroundColor.length > 0
+      ? { backgroundColor: wiley.backgroundColor }
+      : {}),
+    ...(typeof wiley.strokeColor === "string" && wiley.strokeColor.length > 0
+      ? { strokeColor: wiley.strokeColor }
       : {}),
     ...(typeof wiley.container === "string" ? { container: wiley.container } : {}),
   };

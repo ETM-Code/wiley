@@ -102,7 +102,7 @@ describe("diagram layout quality", () => {
     for (const skeleton of plan.skeletons) {
       const role = plan.roles.get(String(skeleton.id))!;
       expect(String(skeleton.id).startsWith(`${DIAGRAM_ID}-`)).toBe(true);
-      expect(skeleton.customData).toEqual({
+      expect(skeleton.customData).toMatchObject({
         wiley: {
           diagram: DIAGRAM_ID,
           role: role.role,
