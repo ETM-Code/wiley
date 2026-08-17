@@ -66,9 +66,10 @@ let legacyDataDir: string | undefined;
  * WILEY_DATA_DIR and the one project it speaks for. One directory cannot be
  * every project's ledger, so anything else opened keeps its own, and coming
  * back to this project finds the override still in force rather than an empty
- * ledger where the session's work used to be.
+ * ledger where the session's work used to be. The project is unset until the
+ * first one opens, for a launch that had none to reopen.
  */
-let dataDirOverride: { project: string; dir: string } | undefined;
+let dataDirOverride: { project?: string; dir: string } | undefined;
 
 /** Reports delivery so callers with no live window fail fast instead of waiting for a timeout. */
 function sendToRenderer(channel: string, payload: unknown): boolean {
@@ -295,7 +296,7 @@ async function disposeParts(parts: RuntimeParts, reason: string): Promise<boolea
  */
 async function startRuntime(projectDir: string): Promise<void> {
   const settings = requireSettings();
-  const dataDir = dataDirOverride?.project === projectDir ? dataDirOverride.dir : projectDataDir(projectDir);
+  const dataDir = claimDataDirOverride(projectDir) ?? projectDataDir(projectDir);
   adoptLegacyLedger(dataDir);
   const parts: RuntimeParts = { projectDir };
   liveRuntimes.add(parts);
@@ -331,6 +332,18 @@ async function startRuntime(projectDir: string): Promise<void> {
   }
   active = parts;
   console.log(`Workspace: ${projectDir} (data in ${dataDir})`);
+}
+
+/**
+ * WILEY_DATA_DIR, if this is the project it speaks for. A launch that had no
+ * project to reopen has the first one chosen from the picker claim it, rather
+ * than the variable quietly doing nothing because of an unrelated saved
+ * setting. Every project after that keeps its own.
+ */
+function claimDataDirOverride(projectDir: string): string | undefined {
+  if (!dataDirOverride) return undefined;
+  if (dataDirOverride.project === undefined) dataDirOverride.project = projectDir;
+  return dataDirOverride.project === projectDir ? dataDirOverride.dir : undefined;
 }
 
 /**
@@ -390,6 +403,11 @@ async function switchProject(target: string): Promise<ProjectView> {
   // a project of "/" is always a mistake, however it was asked for.
   if (!projectDir) throw new Error(`${target || "That"} is not a folder Wiley can work in.`);
   if (!existsSync(projectDir)) throw new Error(`${projectDir} is no longer on disk.`);
+  // Open Recent lists the open project too, and the folder dialog will happily
+  // return it. Rebuilding for that would tear down a working session, drop a
+  // board edit still in flight and throw away the user's pan and zoom, all to
+  // arrive back where they already were.
+  if (active?.projectDir === projectDir) return projectView();
   // The renderer keeps its microphone exactly where it was, so a controller
   // that came up believing nobody is listening would disagree with the window.
   const listening = active?.controller?.getState().microphoneEnabled ?? false;
@@ -492,10 +510,10 @@ async function bootstrap(): Promise<void> {
     settings: settingsStore.get(),
     home: app.getPath("home"),
   });
-  // Bound to the launch project by name rather than by being used up, so
-  // leaving that project and coming back to it finds the same ledger.
+  // Bound to a project by name rather than by being used up, so leaving that
+  // project and coming back to it finds the same ledger.
   const override = env("DATA_DIR")?.trim();
-  if (override && launch) dataDirOverride = { project: launch, dir: override };
+  if (override) dataDirOverride = launch ? { project: launch, dir: override } : { dir: override };
 
   if (launch) {
     try {
@@ -521,6 +539,10 @@ async function bootstrap(): Promise<void> {
       lastProject: active.projectDir,
       recentProjects: recordRecentProject(requireSettings().get().recentProjects, active.projectDir),
     });
+    // Again, now that the registry knows about this project. The first menu
+    // was built before the write, so Open Recent would otherwise say there is
+    // nothing to open for the whole of the first session after an upgrade.
+    installAppMenu();
   }
 }
 
