@@ -14,9 +14,6 @@ test-results/
 build/icon.iconset/
 playwright-report/
 .e2e/
-# User-supplied music track; copyrighted audio never gets committed.
-src/renderer/assets/wearing-my-rolex.*
-
 # Agent-generated demo output
 site/
 

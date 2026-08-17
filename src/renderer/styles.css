@@ -276,23 +276,6 @@ button {
   stroke-linejoin: round;
 }
 
-.music-button--playing {
-  color: var(--wiley-on-accent);
-  background: var(--wiley-accent);
-  animation: music-playing 1.94s ease-in-out infinite;
-}
-
-.music-button--playing:hover {
-  background: var(--wiley-accent-hover);
-}
-
-@keyframes music-playing {
-  25%,
-  75% {
-    box-shadow: 0 0 0 5px var(--wiley-accent-ring);
-  }
-}
-
 .status-button {
   display: inline-flex;
   gap: 8px;

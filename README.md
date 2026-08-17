@@ -75,7 +75,7 @@ The two workers get different tiers, and the difference is real:
 
 So Claude gets prevention, and Codex gets containment plus detection. The tripwire tells you what happened; it cannot stop it happening.
 
-**Your models, your keys.** A settings panel picks the voice model (`gpt-realtime-2.1-mini` by default, `gpt-realtime-2.1` when you want the bigger ears), the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Agent-side models are the `gpt-5.6` family only: the picker offers nothing older, and an older id in a settings file from a previous version is migrated forward rather than kept. Fast mode, on by default, pins the root session to low thinking; turn it off when you want depth over latency. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
+**Your models, your keys.** A settings panel picks the voice model (`gpt-realtime-2.1-mini` by default, `gpt-realtime-2.1` when you want the bigger ears), the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Agent-side models are the `gpt-5.6` family only: the picker offers nothing older, and any other id found in a settings file is normalized forward to the current default rather than kept. Fast mode, on by default, pins the root session to low thinking; turn it off when you want depth over latency. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
 
 **One persona.** Voice model, orchestrator, and subagents present as a single coworker. Progress is first-person, at most one short sentence, and never narrates internal machinery.
 
@@ -117,7 +117,7 @@ Optional settings, for the cases the panel does not cover:
 
 The full list, including the end-to-end and packaging variables, is in [`.env.example`](.env.example).
 
-Everything else is in the settings panel. The persistent controls on the board are the microphone button in the bottom-right, the music toggle beside it, and the project chip, settings and new-session buttons in the top-right. Muting stops capture only; playback and background work continue.
+Everything else is in the settings panel. The persistent controls on the board are the microphone button in the bottom-right, and the project chip, settings and new-session buttons in the top-right. Muting stops capture only; background work continues.
 
 **Wiley Cloud.** The app supports a relay mode: point it at a relay base URL, sign in with a token, and models are proxied instead of billed to your own key. The relay service itself is a separate piece of infrastructure and still in progress. Bring-your-own key is the default and the supported path, and cloud mode never silently falls back to your own key when the relay fails.
 
