@@ -49,6 +49,7 @@ import {
 } from "./preview-state";
 import { pauseForStreaming, reportCanvasStreamProgress, shouldStreamCanvas } from "./streaming";
 import type { SceneElement } from "./types";
+import { agentOwnsViewport, frameContent } from "./viewport";
 
 type ShapeParams = {
   shape: "rectangle" | "ellipse" | "diamond";
@@ -470,14 +471,19 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
       captureUpdate: CaptureUpdateAction.EVENTUALLY,
     });
     reportDiagramPreviewProgress(params.nodes.length, (params.edges ?? []).length, previewVersion);
-    if (params.nodes.length !== diagramPreviewVersions.lastNodeCount) {
-      diagramPreviewVersions.lastNodeCount = params.nodes.length;
-      await api.scrollToContent(created, {
-        fitToViewport: true,
-        viewportZoomFactor: 0.9,
-        animate: false,
-      });
-    }
+    // Once, on the frame that brings a streaming draw into existence, and
+    // never again. Refitting on every node the stream added meant the view
+    // jumped and rescaled a dozen times while the person was trying to work
+    // on the same board, which is intolerable however well-intentioned each
+    // individual jump was.
+    //
+    // Only draw_diagram is ever previewed. An update is deliberately not:
+    // it evolves a diagram already on the board, in place, and the person is
+    // already looking at wherever they chose to look. If preview is ever
+    // extended to updates, this fit must not come with it.
+    const firstFrame = diagramPreviewVersions.lastNodeCount === 0;
+    diagramPreviewVersions.lastNodeCount = params.nodes.length;
+    if (firstFrame) await frameContent(api, created as unknown as SceneElement[]);
     return { preview: true, diagramId, nodes: params.nodes.length, edges: (params.edges ?? []).length };
   }
 
@@ -491,11 +497,14 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });
     reportCanvasStreamProgress(created.length, created.length);
-    await api.scrollToContent(created, {
-      fitToViewport: true,
-      viewportZoomFactor: 0.9,
-      animate: false,
-    });
+    // A diagram nobody has seen yet earns one camera move: there is nothing
+    // to take the view away from, and a drawing off the edge of the screen
+    // may as well not have been drawn. Where a preview already framed it,
+    // the finished shape is worth re-framing only if the person has not
+    // taken the view for themselves in the meantime.
+    if (!hadPreview || agentOwnsViewport(api)) {
+      await frameContent(api, created as unknown as SceneElement[]);
+    }
     return result;
   };
 
@@ -519,13 +528,10 @@ export async function layoutDiagram(api: ExcalidrawImperativeAPI, value: unknown
     if (!shouldStreamCanvas()) return applyFinalScene();
     streamed.push(...nodeGroups[index]);
     updateProgress();
-    if (index === 0) {
-      await api.scrollToContent(created, {
-        fitToViewport: true,
-        viewportZoomFactor: 0.9,
-        animate: false,
-      });
-    }
+    // The reveal is only reached when no preview ran, so this is the first
+    // time the diagram exists at all: it gets its one fit, sized to the whole
+    // finished drawing rather than to the single node showing so far.
+    if (index === 0) await frameContent(api, created as unknown as SceneElement[]);
     await pauseForStreaming(nodeDelay);
   }
 

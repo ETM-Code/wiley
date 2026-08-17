@@ -78,7 +78,7 @@ type SceneRecord = Record<string, unknown> & {
   text?: string;
   containerId?: string;
   groupIds?: string[];
-  customData?: { wiley?: { key?: string; role?: string; container?: string } };
+  customData?: { wiley?: { diagram?: string; key?: string; role?: string; container?: string } };
 };
 
 type Board = {
@@ -461,6 +461,92 @@ describe("update-diagram", () => {
       op: "update-diagram",
       params: { diagram: "wd-nothing", nodes: [{ id: "a", label: "A" }], edges: [] },
     })).rejects.toThrow(/No diagram/);
+  });
+});
+
+describe("where an update leaves the view and the drawing", () => {
+  /** Every element of the diagram, bound labels included, moved as one. */
+  function dragDiagram(target: Board, diagramId: string, dx: number, dy: number) {
+    const owned = new Set(target.elements()
+      .filter((element) => element.customData?.wiley?.diagram === diagramId)
+      .map((element) => element.id));
+    target.api.updateScene({
+      elements: target.elements().map((element) => {
+        const mine = owned.has(element.id)
+          || owned.has(String((element as { containerId?: string }).containerId ?? ""));
+        return mine ? { ...element, x: element.x + dx, y: element.y + dy } : element;
+      }) as never,
+    });
+  }
+
+  function nodePositions(target: Board) {
+    const positions = new Map<string, { x: number; y: number }>();
+    for (const element of target.elements()) {
+      const stamp = element.customData?.wiley;
+      if (stamp?.role !== "node" || !stamp.key) continue;
+      positions.set(stamp.key, { x: element.x, y: element.y });
+    }
+    return positions;
+  }
+
+  /**
+   * The person put the diagram where they wanted it. An edit is an edit, not
+   * an excuse to put it back where the layout engine would have chosen.
+   */
+  it("leaves a diagram the person moved exactly where they moved it", async () => {
+    const target = board();
+    const drawn = await drawFlow(target);
+    dragDiagram(target, drawn.diagramId, 600, 900);
+    const before = nodePositions(target);
+
+    await handleCanvasRequest(target.api, {
+      id: 3,
+      op: "update-diagram",
+      params: { diagram: drawn.diagramId, mode: "merge", nodes: [{ id: "queue", label: "Queued" }] },
+    });
+
+    const after = nodePositions(target);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [key, place] of before) expect(after.get(key)).toEqual(place);
+  });
+
+  // Nothing about an edit justifies rescaling the board. The person is
+  // already looking at wherever they chose to look.
+  it("never refits the view for an edit it can already see", async () => {
+    const target = board();
+    const drawn = await drawFlow(target);
+    (target.api.scrollToContent as ReturnType<typeof vi.fn>).mockClear();
+
+    await handleCanvasRequest(target.api, {
+      id: 4,
+      op: "update-diagram",
+      params: {
+        diagram: drawn.diagramId,
+        mode: "merge",
+        nodes: [{ id: "retry", label: "Retry" }],
+        edges: [{ from: "deliver", to: "retry" }],
+      },
+    });
+    expect(target.api.scrollToContent).not.toHaveBeenCalled();
+  });
+
+  // The one exception: an edit the person cannot see at all. Even then the
+  // view only slides, because the scale they picked is theirs to keep.
+  it("slides an edit into view when it is entirely off screen, without rezooming", async () => {
+    const target = board();
+    const drawn = await drawFlow(target);
+    dragDiagram(target, drawn.diagramId, 8_000, 6_000);
+    (target.api.scrollToContent as ReturnType<typeof vi.fn>).mockClear();
+
+    await handleCanvasRequest(target.api, {
+      id: 5,
+      op: "update-diagram",
+      params: { diagram: drawn.diagramId, mode: "merge", nodes: [{ id: "queue", label: "Queued" }] },
+    });
+
+    const scroll = target.api.scrollToContent as ReturnType<typeof vi.fn>;
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(scroll.mock.calls[0][1]).toEqual({ animate: false });
   });
 });
 

@@ -1274,6 +1274,54 @@ describe("diagram renderer", () => {
   });
 });
 
+describe("who moves the camera", () => {
+  /**
+   * A streamed draw arrives as a run of previews with a growing node count,
+   * and every one of them used to refit the view. That is the board zooming
+   * away under the person a dozen times inside one drawing, which is
+   * intolerable however reasonable each individual fit looked on its own.
+   */
+  it("frames a streaming preview once, not once per node it grows by", async () => {
+    forgetDiagramPreview();
+    let elements: Array<Record<string, unknown>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700, zoom: { value: 1 } }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    const nodes = [
+      { id: "one", label: "One" },
+      { id: "two", label: "Two" },
+      { id: "three", label: "Three" },
+      { id: "four", label: "Four" },
+    ];
+    for (let count = 1; count <= nodes.length; count++) {
+      await handleCanvasRequest(api, {
+        id: -(80 + count),
+        op: "preview-diagram",
+        params: {
+          __previewVersion: 500_000 + count,
+          nodes: nodes.slice(0, count),
+          edges: nodes.slice(0, count - 1).map((node, index) => ({ from: node.id, to: nodes[index + 1].id })),
+        },
+      });
+    }
+    expect(api.scrollToContent).toHaveBeenCalledOnce();
+
+    await handleCanvasRequest(api, {
+      id: -90,
+      op: "clear-diagram-preview",
+      params: { __previewVersion: 500_099 },
+    });
+    forgetDiagramPreview();
+  });
+});
+
 describe("concurrent board mutations", () => {
   /**
    * Two draws dispatched together used to read the same empty scene, place

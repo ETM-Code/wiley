@@ -49,6 +49,7 @@ import {
 } from "./human-merge";
 import { pauseForStreaming, reportCanvasStreamProgress, shouldStreamCanvas } from "./streaming";
 import type { SceneElement } from "./types";
+import { isVisible, panIntoView } from "./viewport";
 
 export type UpdateDiagramParams = Partial<LayoutParams> & {
   /** The diagram's own id, or the id of any element inside it. */
@@ -412,12 +413,27 @@ export async function updateDiagram(api: ExcalidrawImperativeAPI, value: unknown
     ...(shifted ? { shifted } : {}),
   };
 
+  /**
+   * An update never refits the view. The diagram is already on the board and
+   * the person is already looking at whatever they chose to look at; zooming
+   * the board out to frame an edit is how a small change came to feel like
+   * the whole drawing moving. The one exception is an edit the person cannot
+   * see at all, and even then the view only slides: the scale they picked is
+   * theirs to keep.
+   */
+  const showIfHidden = async () => {
+    const bounds = boundsOf(created as unknown as SceneElement[]);
+    if (!bounds || isVisible(api, bounds)) return;
+    await panIntoView(api, created as unknown as SceneElement[]);
+  };
+
   const applyFinalScene = async () => {
     api.updateScene({
       elements: [...foreignScene(), ...created],
       captureUpdate: CaptureUpdateAction.IMMEDIATELY,
     });
     reportCanvasStreamProgress(created.length, created.length);
+    await showIfHidden();
     return result;
   };
   if (!shouldStreamCanvas()) return applyFinalScene();

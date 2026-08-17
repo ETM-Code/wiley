@@ -9,6 +9,8 @@ import {
   subscribeToCanvasRequests,
   withoutDiagramPreviewElements,
 } from "./canvas-handlers";
+import type { SceneElement } from "./canvas/types";
+import { forgetAgentViewport, frameContent } from "./canvas/viewport";
 import { useColorScheme } from "./color-scheme";
 import ProjectPicker, { ProjectChip } from "./ProjectPicker";
 import { RealtimeVoiceController, type VoiceState } from "./realtime-voice";
@@ -210,6 +212,8 @@ export default function App() {
   const boardReadyRef = useRef(false);
   /** Bumped on every project switch, to strand anything the old one queued. */
   const boardGenerationRef = useRef(0);
+  /** Whether this board has been shown to the person once already. */
+  const boardFramedRef = useRef(false);
   const lastSubmittedElementsRef = useRef("");
   const snapshotPendingRef = useRef(false);
   const canvasMutationActiveRef = useRef(false);
@@ -263,20 +267,97 @@ export default function App() {
     };
   }, []);
 
+  /**
+   * Records the board as it currently stands, shortly after it stops changing.
+   *
+   * The scene is read at submit time rather than captured when the change
+   * happened, and a submit that cannot run yet waits instead of being thrown
+   * away. Dropping one used to lose the person's work outright: an agent
+   * mutation or a streaming preview would cancel the pending submit, nothing
+   * would fire onChange again, and the next sync would find the live board
+   * differing from a canonical snapshot that never learned about the edit and
+   * would faithfully undo it. Moving a diagram somewhere better and watching
+   * it jump back the moment the agent touched the board was this, every time.
+   */
+  const scheduleSnapshot = useCallback((delayMs = 120) => {
+    if (!boardReadyRef.current) return;
+    if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
+    // The board belongs to the project that was open when the change happened.
+    // A retry outliving a switch would write it into a different project's
+    // ledger, where the bridge would renumber it forward and silently replace
+    // that project's board with this one's.
+    const generation = boardGenerationRef.current;
+    const submit = async () => {
+      snapshotTimerRef.current = null;
+      if (generation !== boardGenerationRef.current) return;
+      const api = apiRef.current;
+      if (!api) {
+        snapshotPendingRef.current = false;
+        return;
+      }
+      // An agent mutation owns the scene while it runs and persists its own
+      // snapshot atomically with the tool result, and a streaming preview
+      // paints elements that are not part of the board at all. Wait either
+      // out; the edit is still on the board and will be read then.
+      if (canvasMutationActiveRef.current || isDiagramPreviewActive()) {
+        snapshotTimerRef.current = window.setTimeout(() => void submit(), 250);
+        return;
+      }
+      const appState = api.getAppState() as unknown as Record<string, unknown>;
+      const elementCopies = withoutDiagramPreviewElements(
+        api.getSceneElements() as unknown as readonly Record<string, unknown>[],
+      ).map((element) => ({ ...element }));
+      const elementsFingerprint = JSON.stringify(elementCopies);
+      if (elementsFingerprint === lastSubmittedElementsRef.current) {
+        snapshotPendingRef.current = false;
+        return;
+      }
+      const proposedRevision = boardRevisionRef.current + 1;
+      try {
+        const accepted = await bridge.submitBoardSnapshot({
+          revision: proposedRevision,
+          elements: elementCopies,
+          appState: {
+            viewBackgroundColor: appState.viewBackgroundColor,
+            scrollX: typeof appState.scrollX === "number" && Number.isFinite(appState.scrollX) ? appState.scrollX : 0,
+            scrollY: typeof appState.scrollY === "number" && Number.isFinite(appState.scrollY) ? appState.scrollY : 0,
+            zoom: appState.zoom && typeof appState.zoom === "object"
+              ? { ...appState.zoom, value: Number.isFinite((appState.zoom as { value?: number }).value)
+                ? (appState.zoom as { value: number }).value
+                : 1 }
+              : { value: 1 },
+          },
+          files: api.getFiles() as unknown as Record<string, unknown>,
+        });
+        // A switch may have landed while this was in flight, in which case
+        // this bookkeeping describes a board that is no longer on screen.
+        if (generation !== boardGenerationRef.current) return;
+        boardRevisionRef.current = Math.max(proposedRevision, accepted?.revision ?? 0);
+        lastSubmittedElementsRef.current = elementsFingerprint;
+        snapshotPendingRef.current = false;
+      } catch {
+        if (generation !== boardGenerationRef.current) return;
+        snapshotTimerRef.current = window.setTimeout(() => void submit(), 750);
+      }
+    };
+    snapshotPendingRef.current = true;
+    snapshotTimerRef.current = window.setTimeout(() => void submit(), delayMs);
+  }, []);
+
   useEffect(
     () => subscribeToCanvasRequests(
       () => apiRef.current,
       setToast,
       (active) => {
         canvasMutationActiveRef.current = active;
-        if (active && snapshotTimerRef.current !== null) {
-          window.clearTimeout(snapshotTimerRef.current);
-          snapshotTimerRef.current = null;
-          snapshotPendingRef.current = false;
-        }
+        // Whatever the person did while the agent held the board is still on
+        // the board and still unrecorded. Read it back now the scene is
+        // settled, rather than leaving the next sync to decide it never
+        // happened and undo it.
+        if (!active) scheduleSnapshot(200);
       },
     ),
-    [],
+    [scheduleSnapshot],
   );
 
   useEffect(
@@ -329,12 +410,15 @@ export default function App() {
       boardRevisionRef.current = Math.max(boardRevisionRef.current, snapshot.revision);
     }
     boardReadyRef.current = true;
-    if (applied && snapshot.elements.length > 0) {
-      await api.scrollToContent(api.getSceneElements(), {
-        fitToViewport: true,
-        viewportZoomFactor: 0.9,
-        animate: false,
-      });
+    // Only the first time a board arrives. This runs on a two-second timer and
+    // fits the entire board every time it reconciles anything, so leaving it
+    // ungated meant the view being wrenched back out to hold everything at
+    // regular intervals for as long as the person kept working: the single
+    // largest source of the board zooming away under them. Showing a restored
+    // board on the way in is worth one camera move; nothing after it is.
+    if (applied && snapshot.elements.length > 0 && !boardFramedRef.current) {
+      boardFramedRef.current = true;
+      await frameContent(api, api.getSceneElements() as unknown as SceneElement[]);
     }
     return true;
   }, []);
@@ -389,6 +473,9 @@ export default function App() {
     // thrown away. Its element ids would otherwise keep the board looking
     // mid-draw, and syncing waits for a preview to finish before it runs.
     forgetDiagramPreview();
+    // A remembered camera points at a scene that is about to be thrown away.
+    forgetAgentViewport();
+    boardFramedRef.current = false;
     boardGenerationRef.current += 1;
     boardRevisionRef.current = 0;
     boardReadyRef.current = false;
@@ -430,61 +517,6 @@ export default function App() {
     }
   }, [voice]);
 
-  const submitCanvasSnapshot = useCallback(
-    (elements: readonly Record<string, unknown>[], appState: Record<string, unknown>, files: Record<string, unknown>) => {
-      if (!boardReadyRef.current) return;
-      // Progressive agent frames are transient. The canvas bridge persists the
-      // final board snapshot atomically with the successful tool response.
-      if (canvasMutationActiveRef.current) return;
-      const elementCopies = withoutDiagramPreviewElements(elements).map((element) => ({ ...element }));
-      const elementsFingerprint = JSON.stringify(elementCopies);
-      if (elementsFingerprint === lastSubmittedElementsRef.current) return;
-      snapshotPendingRef.current = true;
-      if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
-      // These elements belong to the project that was open when the change
-      // happened. A retry outliving a switch would write them into a different
-      // project's ledger, where the bridge would renumber them forward and
-      // silently replace that project's board with this one's.
-      const generation = boardGenerationRef.current;
-      const submit = async () => {
-        if (generation !== boardGenerationRef.current) return;
-        if (canvasMutationActiveRef.current) {
-          snapshotPendingRef.current = false;
-          snapshotTimerRef.current = null;
-          return;
-        }
-        const proposedRevision = boardRevisionRef.current + 1;
-        try {
-          const accepted = await bridge.submitBoardSnapshot({
-            revision: proposedRevision,
-            elements: elementCopies,
-            appState: {
-              viewBackgroundColor: appState.viewBackgroundColor,
-              scrollX: typeof appState.scrollX === "number" && Number.isFinite(appState.scrollX) ? appState.scrollX : 0,
-              scrollY: typeof appState.scrollY === "number" && Number.isFinite(appState.scrollY) ? appState.scrollY : 0,
-              zoom: appState.zoom && typeof appState.zoom === "object"
-                ? { ...appState.zoom, value: Number.isFinite((appState.zoom as { value?: number }).value)
-                  ? (appState.zoom as { value: number }).value
-                  : 1 }
-                : { value: 1 },
-            },
-            files,
-          });
-          // A switch may have landed while this was in flight, in which case
-          // this bookkeeping describes a board that is no longer on screen.
-          if (generation !== boardGenerationRef.current) return;
-          boardRevisionRef.current = Math.max(proposedRevision, accepted?.revision ?? 0);
-          lastSubmittedElementsRef.current = elementsFingerprint;
-          snapshotPendingRef.current = false;
-        } catch {
-          if (generation !== boardGenerationRef.current) return;
-          snapshotTimerRef.current = window.setTimeout(() => void submit(), 750);
-        }
-      };
-      snapshotTimerRef.current = window.setTimeout(() => void submit(), 120);
-    },
-    [],
-  );
 
   // Nothing is running behind this and there is no board to show, so the
   // picker gets the whole window rather than floating over an empty canvas.
@@ -502,13 +534,7 @@ export default function App() {
       <Excalidraw
         theme={colorScheme}
         excalidrawAPI={captureApi}
-        onChange={(elements, appState, files) =>
-          submitCanvasSnapshot(
-            elements as unknown as readonly Record<string, unknown>[],
-            appState as unknown as Record<string, unknown>,
-            files as unknown as Record<string, unknown>,
-          )
-        }
+        onChange={() => scheduleSnapshot()}
         renderTopRightUI={() => (
           <>
             {projects ? <ProjectChip view={projects} onOpened={setProjects} onFailed={setToast} /> : null}
