@@ -134,7 +134,13 @@ export interface WileySettings {
   terminalApp: string;
 }
 
-export const DEFAULT_VOICE_MODEL = "gpt-realtime-mini-2.1";
+// Verified live against the real /v1/realtime/calls endpoint, not just the
+// token-mint endpoint (which accepts any model string without validating it
+// exists). "gpt-realtime", "gpt-realtime-mini", "gpt-realtime-2.1", and
+// "gpt-realtime-2.1-mini" all connect. Mini comes after the version in the id,
+// not before: "gpt-realtime-mini-2.1" mints a token fine but 404s
+// (model_not_found) at call setup and must never be offered.
+export const DEFAULT_VOICE_MODEL = "gpt-realtime-2.1-mini";
 export const DEFAULT_VOICE_NAME = "marin";
 export const DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
 

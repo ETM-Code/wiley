@@ -72,14 +72,14 @@ describe("normalizeRelayBaseUrl", () => {
 describe("CloudClient.mintRealtimeSecret", () => {
   it("posts the model and voice with a bearer token and returns the secret", async () => {
     const { fetch, calls } = recordingFetch(() => json({ value: "ek_abc", expires_at: 123 }));
-    const secret = await client(fetch).mintRealtimeSecret({ model: "gpt-realtime-mini-2.1", voice: "marin" });
+    const secret = await client(fetch).mintRealtimeSecret({ model: "gpt-realtime-2.1-mini", voice: "marin" });
 
     expect(secret).toEqual({ value: "ek_abc", expires_at: 123 });
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe("https://relay.example.com/v1/realtime/secret");
     expect(calls[0].init?.method).toBe("POST");
     expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe("Bearer tok_live");
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ model: "gpt-realtime-mini-2.1", voice: "marin" });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ model: "gpt-realtime-2.1-mini", voice: "marin" });
   });
 
   it("refuses before any request when no token is saved", async () => {

@@ -5,7 +5,7 @@ How to wire the [pi agent](https://github.com/earendil-works/pi) into the Wiley 
 The shape of the stack, end to end:
 
 ```
-Human ──voice──▶ Voice Model (gpt-realtime-mini-2.1) ──tool calling──▶ Pi Agent ──▶ Subagents
+Human ──voice──▶ Voice Model (gpt-realtime-2.1-mini) ──tool calling──▶ Pi Agent ──▶ Subagents
   │                                                                  │
   └──draws/views──▶ Excalidraw ◀──JSON (draw)──────────────────────┘
                         │
@@ -84,7 +84,7 @@ pi   # then /login, or rely on ANTHROPIC_API_KEY
 ┌──────────────┴──────────────────────────▼──────────────┐
 │  Renderer                                               │
 │  • <Excalidraw excalidrawAPI={...}/>  (whole window)    │
-│  • WebRTC to gpt-realtime-mini-2.1 (mic+speaker)        │
+│  • WebRTC to gpt-realtime-2.1-mini (mic+speaker)        │
 │  • mute button (bottom-right)                           │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -997,7 +997,7 @@ How this plays out:
 
 ---
 
-## 10. Voice model wiring (gpt-realtime-mini-2.1)
+## 10. Voice model wiring (gpt-realtime-2.1-mini)
 
 The voice model is the pretty frontend. It holds the conversation, dispatches to pi through a small tool surface, and narrates whatever pi pushes up.
 
@@ -1013,7 +1013,7 @@ ipcMain.handle("voice-token", async () => {
       expires_after: { anchor: "created_at", seconds: 600 },
       session: {
         type: "realtime",
-        model: "gpt-realtime-mini-2.1",
+        model: "gpt-realtime-2.1-mini",
         audio: { output: { voice: "marin" } },
       },
     }),
@@ -1024,7 +1024,7 @@ ipcMain.handle("voice-token", async () => {
 
 **Two ways to connect from the renderer:**
 
-- **SDK (recommended to start):** `bun add @openai/agents` and use `RealtimeAgent` + `RealtimeSession` from `@openai/agents/realtime`. It auto-selects WebRTC in the browser, manages audio, tool execution, and history: `await new RealtimeSession(agent, { model: "gpt-realtime-mini-2.1" }).connect({ apiKey: ephemeralKey })`.
+- **SDK (recommended to start):** `bun add @openai/agents` and use `RealtimeAgent` + `RealtimeSession` from `@openai/agents/realtime`. It auto-selects WebRTC in the browser, manages audio, tool execution, and history: `await new RealtimeSession(agent, { model: "gpt-realtime-2.1-mini" }).connect({ apiKey: ephemeralKey })`.
 - **Raw WebRTC** if you want full control of the event stream: `RTCPeerConnection`, add the mic track, `createDataChannel("oai-events")`, then POST the SDP offer to `https://api.openai.com/v1/realtime/calls` with `Authorization: Bearer <ek_...>` and `Content-Type: application/sdp`. All events below flow over that data channel as JSON.
 
 The raw shapes are shown below because you need them either way (the SDK is a thin wrapper, and the upward-channel injections use raw events).

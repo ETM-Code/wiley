@@ -1,4 +1,5 @@
 import { bridge, type VoiceInjection } from "./bridge";
+import { extractRealtimeErrorMessage } from "./realtime-error";
 
 export type VoiceState = {
   microphoneEnabled: boolean;
@@ -235,7 +236,11 @@ export class RealtimeVoiceController {
       },
       body: offer.sdp,
     });
-    if (!response.ok) throw new Error(`Voice connection failed (${response.status})`);
+    if (!response.ok) {
+      const raw = await response.text().catch(() => "");
+      const message = extractRealtimeErrorMessage(raw) ?? raw.slice(0, 200);
+      throw new Error(`Voice connection failed (${response.status})${message ? `: ${message}` : ""}`);
+    }
     await peer.setRemoteDescription({ type: "answer", sdp: await response.text() });
 
     await new Promise<void>((resolve, reject) => {

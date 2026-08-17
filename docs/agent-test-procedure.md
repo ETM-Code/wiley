@@ -1,6 +1,6 @@
 # Agent-Driven Test Procedure
 
-Automated, layered, peer-reviewed testing for the Wiley stack (Electron + Excalidraw + gpt-realtime-mini-2.1 + pi harness). The goal: every seam is exercised by machines, every result is judged by a fresh-context agent, and defects surface before a human ever puts on headphones.
+Automated, layered, peer-reviewed testing for the Wiley stack (Electron + Excalidraw + gpt-realtime-2.1-mini + pi harness). The goal: every seam is exercised by machines, every result is judged by a fresh-context agent, and defects surface before a human ever puts on headphones.
 
 Companion to `pi-harness-guide.md`; section numbers below refer to that guide.
 
@@ -86,7 +86,7 @@ The whole stack, real OpenAI realtime, real pi, real canvas, no human.
 - Feed them as the mic via Chromium fake-media flags: `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>` (Playwright launch args). Multi-turn scripts swap the capture file between turns.
 - Capture: output audio transcript (from `response.done` items), final board scene + screenshot, pi session JSONL, guard log.
 - A judge agent grades the full session against the scenario script: was the interruption honored immediately (not after the current task finished), did narration happen during (not only after) the run, does the final board match the request, was anything spoken that never happened (hallucinated success is an automatic FAIL), and does the voice stay in the Wiley persona throughout: first person, never mentioning agents, subagents, engines, or layers.
-- Budget guard: cap per-run spend; nightly runs use `gpt-realtime-mini-2.1` for the voice side where the scenario doesn't test voice quality itself.
+- Budget guard: cap per-run spend; nightly runs use `gpt-realtime-2.1-mini` for the voice side where the scenario doesn't test voice quality itself.
 
 ## Peer-review protocol (applies to every layer)
 

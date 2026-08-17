@@ -29,7 +29,7 @@ describe("normalizeSettings", () => {
   it("drops unknown fields at every level", () => {
     const normalized = normalizeSettings({
       surprise: true,
-      voice: { model: "gpt-realtime-mini-2.1", surprise: 1 },
+      voice: { model: "gpt-realtime-2.1-mini", surprise: 1 },
       agent: { model: "custom-model", nope: "x" },
       workers: { claude: { enabled: true, nope: 1 }, ghost: { enabled: true } },
     }) as unknown as Record<string, unknown>;
