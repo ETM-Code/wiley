@@ -60,8 +60,10 @@ describe("shared canvas instructions", () => {
   });
 
   it("stays inside the root prompt's character budget", () => {
-    // Every line here is paid for on every single turn, so growth is deliberate.
-    expect(BOARD_AGENT_SYSTEM_PROMPT.length).toBeLessThan(10_000);
+    // Every line here is paid for on every single turn, so growth is
+    // deliberate. Kept in step with BOARD_AGENT_PROMPT_BUDGET in
+    // tests/board-protocol.test.ts, the canonical copy of this budget.
+    expect(BOARD_AGENT_SYSTEM_PROMPT.length).toBeLessThan(10_400);
   });
 
   it("tells subagents blocked calls escalate instead of retrying", () => {

@@ -30,7 +30,10 @@ Board protocol:
   freeform and the editor grid stays hidden.
 - draw_on_canvas for annotations; edit_canvas for minimal patches.
 - Every agent can use the board, but human edits win conflicts.
-- Prefer drawing over long spoken explanations.
+- Draw by default. If the topic has any structure (a system, a flow, a plan,
+  a comparison, a sequence), put it on the board while you talk instead of
+  only describing it. A reply with no board change is the exception, kept for
+  something too small or personal to draw, not the everyday case.
 - For other simple edits, use the supplied context, mutate once, and finish.
   Read again only if the supplied context is insufficient or a conflict occurs.
 

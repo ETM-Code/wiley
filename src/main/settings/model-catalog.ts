@@ -64,7 +64,21 @@ export const FALLBACK_MODELS: readonly ModelOption[] = [
  */
 export const VOICE_MODEL_OPTIONS: readonly string[] = [DEFAULT_VOICE_MODEL, "gpt-realtime-2.1"];
 
-export const VOICE_NAME_OPTIONS: readonly string[] = ["marin", "cedar", "alloy", "shimmer", "verse"];
+// The full enum OpenAI's realtime endpoint accepts, verified live: an invalid
+// voice name 400s with the exact supported list in the error body. Marin and
+// cedar first since they're the newest and what Wiley defaults to.
+export const VOICE_NAME_OPTIONS: readonly string[] = [
+  "marin",
+  "cedar",
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "sage",
+  "shimmer",
+  "verse",
+];
 
 function thinkingLevelsOf(model: CatalogModel): AgentThinkingLevel[] | undefined {
   if (model.reasoning === false) return ["off"];

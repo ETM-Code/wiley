@@ -16,11 +16,12 @@ const skillPath = path.join(repoRoot, ".pi", "skills", "live-excalidraw", "SKILL
 
 /**
  * The prompt is the only place the board protocol reaches the model, so every
- * paragraph added here is paid for on every single turn. The cap is roughly
- * 12% above the prompt's size when this budget was set (~8,900 characters):
- * enough room for a rule or two, loud enough to stop a pasted essay.
+ * paragraph added here is paid for on every single turn. Raised deliberately
+ * to make room for the "draw by default" directive (2026-08-17); the cap
+ * still sits with headroom over the prompt's actual size, enough for a rule
+ * or two, loud enough to stop a pasted essay.
  */
-const BOARD_AGENT_PROMPT_BUDGET = 10_000;
+const BOARD_AGENT_PROMPT_BUDGET = 10_400;
 
 describe("board protocol single-sourcing", () => {
 	it("keeps the skill file's generated block identical to the canonical protocol", () => {
