@@ -136,6 +136,8 @@ export interface ProjectView {
   recent: ProjectEntry[];
   /** Whether this host can open another project at all. */
   canOpen: boolean;
+  /** Why the last attempt to open one did not work. Cleared by a success. */
+  problem?: string;
 }
 
 export interface RuntimeState {

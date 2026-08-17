@@ -84,7 +84,10 @@ export default function ProjectPicker(
           <FolderIcon />
           {busy ? "Opening…" : "Open Folder…"}
         </button>
-        {error ? <p className="settings-error" role="alert">{error}</p> : null}
+        {/* The host's own reason survives a reload; a fresh attempt replaces it. */}
+        {error ?? view.problem
+          ? <p className="settings-error" role="alert">{error ?? view.problem}</p>
+          : null}
         <h2>Recent</h2>
         <RecentList entries={view.recent} busy={busy} onOpen={(path) => void open(path)} />
       </div>

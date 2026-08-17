@@ -141,6 +141,14 @@ describe("describeProject and buildProjectView", () => {
     const view = buildProjectView({ canOpen: true, exists: world() });
     expect(view.current).toBeUndefined();
     expect(view.recent).toEqual([]);
+    expect(view.problem).toBeUndefined();
+  });
+
+  // The launch failure happens before there is a window, so the reason has to
+  // travel with the view rather than in a dialog that would hold the app shut.
+  it("carries the reason the last attempt did not work", () => {
+    const view = buildProjectView({ canOpen: true, problem: "app did not open: no such file", exists: world() });
+    expect(view.problem).toBe("app did not open: no such file");
   });
 });
 

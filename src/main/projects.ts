@@ -88,6 +88,7 @@ export function buildProjectView(options: {
   current?: string;
   recent?: readonly RecentProject[];
   canOpen: boolean;
+  problem?: string;
   exists?: Exists;
 }): ProjectView {
   const exists = options.exists ?? existsSync;
@@ -103,6 +104,7 @@ export function buildProjectView(options: {
     ...(current ? { current } : {}),
     recent: recent.map((entry) => describeProject(entry.path, entry.lastOpenedAt, exists)),
     canOpen: options.canOpen,
+    ...(options.problem ? { problem: options.problem } : {}),
   };
 }
 

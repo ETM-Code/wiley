@@ -50,14 +50,25 @@ const liveRuntimes = new Set<RuntimeParts>();
 let switching: Promise<void> = Promise.resolve();
 /** Set once quitting begins, so a start already under way unwinds itself. */
 let shuttingDown = false;
+/**
+ * Why the last attempt to open a project did not work. Carried in the view
+ * rather than shown in a dialog, because the launch failure lands before there
+ * is a window and a modal there would hold the app closed rather than open it.
+ */
+let projectProblem: string | undefined;
 let disposeIpc: (() => void) | undefined;
 let settingsStore: SettingsStore | undefined;
 let settingsService: SettingsService | undefined;
 let skillsDir: string | undefined;
 /** Where the pre-project global ledger lived. Consumed by the first project. */
 let legacyDataDir: string | undefined;
-/** WILEY_DATA_DIR, which belongs to the launch project alone. */
-let dataDirOverride: string | undefined;
+/**
+ * WILEY_DATA_DIR and the one project it speaks for. One directory cannot be
+ * every project's ledger, so anything else opened keeps its own, and coming
+ * back to this project finds the override still in force rather than an empty
+ * ledger where the session's work used to be.
+ */
+let dataDirOverride: { project: string; dir: string } | undefined;
 
 /** Reports delivery so callers with no live window fail fast instead of waiting for a timeout. */
 function sendToRenderer(channel: string, payload: unknown): boolean {
@@ -209,6 +220,7 @@ function projectView(): ProjectView {
     current: active?.projectDir,
     recent: requireSettings().get().recentProjects,
     canOpen: true,
+    problem: projectProblem,
   });
 }
 
@@ -255,7 +267,7 @@ async function disposeParts(parts: RuntimeParts, reason: string): Promise<boolea
  */
 async function startRuntime(projectDir: string): Promise<void> {
   const settings = requireSettings();
-  const dataDir = takeDataDirOverride() ?? projectDataDir(projectDir);
+  const dataDir = dataDirOverride?.project === projectDir ? dataDirOverride.dir : projectDataDir(projectDir);
   adoptLegacyLedger(dataDir);
   const parts: RuntimeParts = { projectDir };
   liveRuntimes.add(parts);
@@ -291,18 +303,6 @@ async function startRuntime(projectDir: string): Promise<void> {
   }
   active = parts;
   console.log(`Workspace: ${projectDir} (data in ${dataDir})`);
-}
-
-/**
- * WILEY_DATA_DIR names one directory, so honouring it on every project would
- * quietly point every project at one ledger while the title bar and the chip
- * insisted otherwise. It applies to the project the app launched with, and
- * anything opened afterwards keeps its own.
- */
-function takeDataDirOverride(): string | undefined {
-  const override = dataDirOverride;
-  dataDirOverride = undefined;
-  return override;
 }
 
 /**
@@ -368,6 +368,7 @@ async function switchProject(target: string): Promise<ProjectView> {
   try {
     await stopRuntime();
     await startRuntime(projectDir);
+    projectProblem = undefined;
     if (listening) active?.controller?.setMicrophoneEnabled(true);
     // The voice model has been told about the last project's files, board and
     // work, and would go on describing them as this one's. Silent context, so
@@ -381,6 +382,10 @@ async function switchProject(target: string): Promise<ProjectView> {
       lastProject: projectDir,
       recentProjects: recordRecentProject(settings.get().recentProjects, projectDir),
     });
+  } catch (error) {
+    projectProblem = `${projectName(projectDir)} did not open: ${
+      error instanceof Error ? error.message : String(error)}`;
+    throw error;
   } finally {
     // However it went. The previous project is gone either way, so a window
     // still showing its board would be one that can do nothing at all.
@@ -432,7 +437,6 @@ async function bootstrap(): Promise<void> {
   // Where every workspace's ledger used to live, before a project carried its
   // own. Only consulted to hand that history to the first project opened.
   legacyDataDir = app.getPath("userData");
-  dataDirOverride = env("DATA_DIR")?.trim() || undefined;
   skillsDir = resolveSkillsDir({ isPackaged: app.isPackaged, appRoot: app.getAppPath() });
   // A packaged app inherits launchd's PATH, which knows about none of the
   // places a CLI actually gets installed. Ask the user's login shell before
@@ -460,18 +464,35 @@ async function bootstrap(): Promise<void> {
     settings: settingsStore.get(),
     home: app.getPath("home"),
   });
-  if (launch) await startRuntime(launch);
+  // Bound to the launch project by name rather than by being used up, so
+  // leaving that project and coming back to it finds the same ledger.
+  const override = env("DATA_DIR")?.trim();
+  if (override && launch) dataDirOverride = { project: launch, dir: override };
+
+  if (launch) {
+    try {
+      await startRuntime(launch);
+    } catch (error) {
+      // Not a reason to refuse to start. A project folder can go read-only, or
+      // sit on a drive that is not plugged in this morning, and quitting over
+      // it would leave no way to reach the picker and choose another one. The
+      // picker opens instead and says what went wrong with this folder.
+      console.error(`Could not reopen ${launch}`, error);
+      projectProblem = `${projectName(launch)} did not open: ${
+        error instanceof Error ? error.message : String(error)}`;
+    }
+  } else {
+    console.log("No project to reopen: the window opens on the project picker");
+  }
   installAppMenu();
   mainWindow = await createWindow();
-  if (launch) {
+  if (active) {
     // Recorded after the window exists, so a project that fails to start is
     // never remembered as the one to reopen next time.
     requireSettings().update({
-      lastProject: launch,
-      recentProjects: recordRecentProject(requireSettings().get().recentProjects, launch),
+      lastProject: active.projectDir,
+      recentProjects: recordRecentProject(requireSettings().get().recentProjects, active.projectDir),
     });
-  } else {
-    console.log("No project to reopen: the window opens on the project picker");
   }
 }
 
