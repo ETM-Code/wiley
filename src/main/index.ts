@@ -225,6 +225,28 @@ function projectView(): ProjectView {
 }
 
 /**
+ * Comfortably past a worker's own wind-down and kill grace, and still short
+ * enough that a switch reports rather than hangs.
+ */
+const TEARDOWN_TIMEOUT_MS = 20_000;
+
+/** Rejects if the work has not settled in time. Never leaves a timer behind. */
+async function withDeadline<T>(work: Promise<T> | undefined, ms: number, what: string): Promise<T | undefined> {
+  if (!work) return undefined;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Tears down whatever of a runtime exists, in the reverse order it was built.
  *
  * Every step is independent and none of them can throw out of here. A failure
@@ -244,7 +266,13 @@ async function disposeParts(parts: RuntimeParts, reason: string): Promise<boolea
   await step("release the runtime controller", () => parts.controller?.dispose());
   await step("close the voice bridge", () => parts.voice?.close());
   await step("fail the pending canvas work", () => parts.canvas?.failPending(reason));
-  const stopped = await step("stop the agent and its workers", () => parts.pi?.dispose());
+  // Bounded, unlike the interrupt calls inside it. A worker CLI that never
+  // answers its interrupt would otherwise leave the switch waiting forever,
+  // and every later attempt to open a project queued behind that one.
+  const stopped = await step(
+    "stop the agent and its workers",
+    () => withDeadline(parts.pi?.dispose(), TEARDOWN_TIMEOUT_MS, "Stopping the agent"),
+  );
   await step("close the ledger", () => parts.ledger?.close());
   // Kept on the list when its workers may still be running, so the sweep at
   // exit still knows to signal them. Dropping it here is what would let a

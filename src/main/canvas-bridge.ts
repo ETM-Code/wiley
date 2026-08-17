@@ -14,12 +14,18 @@ interface PendingRequest {
  * answer resolve an unrelated request on the new board.
  */
 let nextRequestId = 0;
+let nextPreviewRequestId = 0;
+/**
+ * Preview versions must climb for the life of the renderer, not the life of a
+ * bridge. The renderer keeps one high-water mark and discards anything at or
+ * below it, so a new project restarting at 1 would have every preview frame
+ * silently judged stale and the drawing would stop being visible.
+ */
+let nextPreviewVersion = 0;
 
 export class CanvasBridge {
   /** Called with a short human-readable summary when the human edits the board. */
   onHumanChange?: (summary: string) => void;
-  #previewRequestSequence = 0;
-  #diagramPreviewVersion = 0;
   #pending = new Map<number, PendingRequest>();
   #snapshot: BoardSnapshot;
   #leases = new Map<string, { agentId: string; elementIds: Set<string>; expiresAt: number }>();
@@ -78,17 +84,17 @@ export class CanvasBridge {
 
   previewDiagram(params: Record<string, unknown>): boolean {
     return this.sendRequest({
-      id: -(++this.#previewRequestSequence),
+      id: -(++nextPreviewRequestId),
       op: "preview-diagram",
-      params: { ...params, __previewVersion: ++this.#diagramPreviewVersion },
+      params: { ...params, __previewVersion: ++nextPreviewVersion },
     }) !== false;
   }
 
   clearDiagramPreview(): boolean {
     return this.sendRequest({
-      id: -(++this.#previewRequestSequence),
+      id: -(++nextPreviewRequestId),
       op: "clear-diagram-preview",
-      params: { __previewVersion: ++this.#diagramPreviewVersion },
+      params: { __previewVersion: ++nextPreviewVersion },
     }) !== false;
   }
 
@@ -197,7 +203,7 @@ export class CanvasBridge {
     await this.ledger.appendBoardTransaction(transaction);
 
     const requestParams = transaction.operation === "layout-diagram"
-      ? { ...(transaction.params as Record<string, unknown>), __previewVersion: ++this.#diagramPreviewVersion }
+      ? { ...(transaction.params as Record<string, unknown>), __previewVersion: ++nextPreviewVersion }
       : transaction.params;
     const response = await this.request<Record<string, unknown>>(transaction.operation, requestParams, signal);
     const rendered = response.__boardSnapshot as Omit<BoardSnapshot, "revision"> | undefined;

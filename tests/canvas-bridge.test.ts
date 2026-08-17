@@ -182,4 +182,23 @@ describe("request identity across bridges", () => {
     ])).resolves.toHaveLength(3);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  // The renderer keeps one preview high-water mark for its whole life and
+  // discards anything at or below it, so a bridge restarting at 1 would have
+  // every frame of the new project's drawing judged stale and never painted.
+  it("keeps preview versions climbing across a new bridge", () => {
+    const versions: number[] = [];
+    const send = (request: CanvasRequest) => {
+      versions.push((request.params as { __previewVersion: number }).__previewVersion);
+      return true;
+    };
+    const first = new CanvasBridge(ledgerStub(), send, 50);
+    first.previewDiagram({ nodes: [] });
+    first.previewDiagram({ nodes: [] });
+    new CanvasBridge(ledgerStub(), send, 50).previewDiagram({ nodes: [] });
+
+    expect(versions).toHaveLength(3);
+    expect(versions[2]).toBeGreaterThan(versions[1]);
+    expect(versions[1]).toBeGreaterThan(versions[0]);
+  });
 });

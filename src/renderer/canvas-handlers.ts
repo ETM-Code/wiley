@@ -12,7 +12,7 @@ import { addElements } from "./canvas/skeletons";
 import { tidyDiagram } from "./canvas/tidy";
 
 export { MODEL_GRID_SIZE, snapModelCoordinate } from "./diagram-layout";
-export { isDiagramPreviewActive, withoutDiagramPreviewElements } from "./canvas/preview-state";
+export { forgetDiagramPreview, isDiagramPreviewActive, withoutDiagramPreviewElements } from "./canvas/preview-state";
 
 function mutationResult(api: ExcalidrawImperativeAPI, result: Record<string, unknown>) {
   return {

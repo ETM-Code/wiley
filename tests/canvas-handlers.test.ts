@@ -51,6 +51,7 @@ vi.mock("../src/renderer/bridge", () => ({
 }));
 
 import {
+  forgetDiagramPreview,
   handleCanvasRequest,
   isDiagramPreviewActive,
   MODEL_GRID_SIZE,
@@ -1264,5 +1265,37 @@ describe("diagram renderer", () => {
     expect(preview.preview).toBe(true);
     expect(preview.quality).toBeUndefined();
     await handleCanvasRequest(api, { id: 62, op: "clear-diagram-preview", params: { __previewVersion: 9_002 } });
+  });
+});
+
+describe("forgetDiagramPreview", () => {
+  // A project switch throws the scene away underneath a half-painted preview.
+  // Element ids left behind would keep the board looking mid-draw, and syncing
+  // waits for a preview to finish before it runs, so it would never run again.
+  it("lets go of a preview whose scene is gone", async () => {
+    let elements: Array<Record<string, unknown>> = [];
+    const api = {
+      getSceneElements: () => elements,
+      getAppState: () => ({ scrollX: 0, scrollY: 0, width: 1_000, height: 700 }),
+      getFiles: () => ({}),
+      updateScene: ({ elements: next }: { elements: Array<Record<string, unknown>> }) => {
+        elements = [...next];
+      },
+      scrollToContent: vi.fn(async () => undefined),
+    } as unknown as ExcalidrawImperativeAPI;
+
+    // Above every version the other tests in this file have used: the
+    // high-water mark is module-global and only ever climbs, which is the
+    // very property that makes forgetting the elements a separate job.
+    await handleCanvasRequest(api, {
+      id: -1,
+      op: "preview-diagram",
+      params: { __previewVersion: 9_000_001, nodes: [{ id: "one", label: "First block" }], edges: [] },
+    });
+    expect(isDiagramPreviewActive()).toBe(true);
+
+    forgetDiagramPreview();
+    expect(isDiagramPreviewActive()).toBe(false);
+    expect(withoutDiagramPreviewElements(elements)).toEqual(elements);
   });
 });

@@ -25,6 +25,20 @@ export function isDiagramPreviewActive(): boolean {
   return diagramPreviewElementIds.size > 0;
 }
 
+/**
+ * Forgets a preview whose scene has been thrown away underneath it, which is
+ * what a project switch does. The version high-water mark deliberately stays
+ * where it is: the host counts previews for the life of the process, and
+ * winding this back would make its next frame look older than one already
+ * painted. Without the rest of this, ids left behind here would keep
+ * isDiagramPreviewActive true forever and block every board sync after.
+ */
+export function forgetDiagramPreview(): void {
+  diagramPreviewElementIds.clear();
+  diagramPreviewVersions.lastNodeCount = 0;
+  diagramPreviewStream.diagramId = null;
+}
+
 export function withoutDiagramPreviewElements<T extends { id?: unknown }>(elements: readonly T[]): T[] {
   return elements.filter((element) => typeof element.id !== "string" || !diagramPreviewElementIds.has(element.id));
 }

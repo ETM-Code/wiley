@@ -4,6 +4,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { bridge, type AgentEvent, type AgentStatus, type ProjectView } from "./bridge";
 import {
+  forgetDiagramPreview,
   isDiagramPreviewActive,
   subscribeToCanvasRequests,
   withoutDiagramPreviewElements,
@@ -439,6 +440,10 @@ export default function App() {
       window.clearTimeout(snapshotTimerRef.current);
       snapshotTimerRef.current = null;
     }
+    // A preview left half-painted belongs to a scene that is about to be
+    // thrown away. Its element ids would otherwise keep the board looking
+    // mid-draw, and syncing waits for a preview to finish before it runs.
+    forgetDiagramPreview();
     boardGenerationRef.current += 1;
     boardRevisionRef.current = 0;
     boardReadyRef.current = false;
