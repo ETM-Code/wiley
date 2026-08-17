@@ -160,6 +160,59 @@ describe("canvas browser transport", () => {
     });
     expect(summaries).toHaveLength(2);
   });
+
+  it("names labelled elements newly enclosed by a drawn shape", async () => {
+    const bridge = new CanvasBridge(ledgerStub(), () => true, 1_000);
+    const summaries: string[] = [];
+    bridge.onHumanChange = (summary) => summaries.push(summary);
+
+    await bridge.submitHumanSnapshot({
+      revision: 1,
+      elements: [
+        { id: "login", type: "rectangle", x: 100, y: 100, width: 160, height: 60 },
+        { id: "login-label", type: "text", x: 120, y: 120, width: 60, height: 20, text: "Login", containerId: "login" },
+        { id: "dashboard", type: "rectangle", x: 320, y: 100, width: 180, height: 60 },
+        { id: "dashboard-label", type: "text", x: 340, y: 120, width: 100, height: 20, text: "Dashboard", containerId: "dashboard" },
+        { id: "ring", type: "ellipse", x: 50, y: 50, width: 500, height: 180 },
+      ],
+      appState: {},
+    });
+
+    expect(summaries[0]).toContain("User drew an ellipse around: Login, Dashboard");
+  });
+
+  it("keeps the existing summary when an enclosing shape contains nothing", async () => {
+    const bridge = new CanvasBridge(ledgerStub(), () => true, 1_000);
+    const summaries: string[] = [];
+    bridge.onHumanChange = (summary) => summaries.push(summary);
+
+    await bridge.submitHumanSnapshot({
+      revision: 1,
+      elements: [{ id: "ring", type: "ellipse", x: 50, y: 50, width: 500, height: 180 }],
+      appState: {},
+    });
+
+    expect(summaries[0]).toBe("User changed 1 ellipse; board now has 1 elements");
+  });
+
+  it("describes only the outer enclosure when nested shapes arrive together", async () => {
+    const bridge = new CanvasBridge(ledgerStub(), () => true, 1_000);
+    const summaries: string[] = [];
+    bridge.onHumanChange = (summary) => summaries.push(summary);
+
+    await bridge.submitHumanSnapshot({
+      revision: 1,
+      elements: [
+        { id: "item", type: "rectangle", x: 180, y: 120, width: 100, height: 50 },
+        { id: "inner", type: "ellipse", x: 140, y: 90, width: 180, height: 120 },
+        { id: "outer", type: "ellipse", x: 80, y: 40, width: 300, height: 220 },
+      ],
+      appState: {},
+    });
+
+    expect(summaries[0].match(/User drew an ellipse around:/g)).toHaveLength(1);
+    expect(summaries[0]).toContain("item");
+  });
 });
 
 describe("request identity across bridges", () => {

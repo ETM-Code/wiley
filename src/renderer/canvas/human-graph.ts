@@ -451,6 +451,7 @@ export function humanGraphPayload(graph: HumanGraph, limit = HUMAN_GRAPH_PAYLOAD
       id: node.elementId,
       shape: node.shape,
       ...(node.label ? { label: node.label } : {}),
+      ...(node.encloses?.length ? { encloses: node.encloses } : {}),
       bbox: {
         x: Math.round(node.bounds.x),
         y: Math.round(node.bounds.y),

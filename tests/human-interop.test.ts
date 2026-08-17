@@ -91,6 +91,19 @@ describe("reconstructSpec with the human sketch", () => {
   });
 });
 
+describe("scene summary containment", () => {
+  it("keeps an enclosing shape and its members available to later turns", () => {
+    const summary = sceneSummary([
+      { id: "login", type: "rectangle", x: 100, y: 100, width: 160, height: 60 } as SceneElement,
+      { id: "dashboard", type: "rectangle", x: 320, y: 100, width: 180, height: 60 } as SceneElement,
+      { id: "ring", type: "ellipse", x: 50, y: 50, width: 500, height: 180 } as SceneElement,
+    ]);
+    expect(summary.humanGraph.nodes.find((node) => node.id === "ring")).toMatchObject({
+      encloses: ["login", "dashboard"],
+    });
+  });
+});
+
 describe("materializeHumanNodes", () => {
   const human = inferHumanGraph(boardWithBridge() as unknown as SketchElement[]);
 

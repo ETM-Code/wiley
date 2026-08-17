@@ -23,6 +23,7 @@ Board protocol:
   persisted; do not re-read or screenshot the board to verify it unless the tool
   reports an error or the user explicitly asks for a visual critique.
 - get_canvas before drawing or editing; screenshot_canvas when visual layout matters.
+- If the user says "that", "this", or "what's this" after circling/pointing, use humanGraph.encloses; screenshot_canvas only for visual judgment, never ask "where" first.
 - draw_diagram for graph structure; never calculate structured layout coordinates.
 - Wiley canvas mutations automatically snap shape geometry to a hidden 20 px
   grid, while connector routes keep their exact computed geometry. Do not

@@ -1,5 +1,6 @@
 import type { BoardSnapshot, BoardTransaction, CanvasRequest, CanvasResponse } from "../shared/contracts";
 import type { RuntimeLedger } from "./ledger";
+import { inferHumanGraph, type SketchElement } from "../renderer/canvas/human-graph";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -152,11 +153,39 @@ export class CanvasBridge {
         texts.push(element.text.trim().slice(0, 40));
       }
     }
+    const graph = inferHumanGraph(
+      [...next.values()].map((serialized) => JSON.parse(serialized) as SketchElement),
+    );
+    const nodesById = new Map(graph.nodes.map((node) => [node.elementId, node]));
+    const changedEnclosures = graph.nodes.filter((node) => changedIds.has(node.elementId)
+      && node.encloses && node.encloses.length > 0);
+    const nestedEnclosures = new Set(changedEnclosures.flatMap((node) => node.encloses ?? []));
+    const enclosureParts: string[] = [];
+    let named = 0;
+    for (const node of changedEnclosures) {
+      // If two enclosing shapes arrive in one editor transaction, describe the
+      // outer ring once instead of repeating the same contained work twice.
+      if (nestedEnclosures.has(node.elementId)) continue;
+      const names: string[] = [];
+      for (const enclosedId of node.encloses ?? []) {
+        if (named >= 5) break;
+        const enclosed = nodesById.get(enclosedId);
+        names.push(enclosed?.label ?? enclosedId);
+        named += 1;
+      }
+      if (names.length > 0) {
+        const article = /^[aeiou]/i.test(node.shape) ? "an" : "a";
+        enclosureParts.push(`User drew ${article} ${node.shape} around: ${names.join(", ")}`);
+      }
+      if (named >= 5) break;
+    }
     const parts = [...typeCounts.entries()].map(([type, count]) => `${count} ${type}`);
     if (removed > 0) parts.push(`${removed} removed`);
     const summary = `User changed ${parts.join(", ") || "elements"};`
       + ` board now has ${this.#snapshot.elements.length} elements`;
-    return texts.length > 0 ? `${summary}. Text: ${texts.join(" | ")}` : summary;
+    const text = texts.length > 0 ? `. Text: ${texts.join(" | ")}` : "";
+    const enclosures = enclosureParts.length > 0 ? `. ${enclosureParts.join("; ")}` : "";
+    return `${summary}${text}${enclosures}`;
   }
 
   getSnapshot(): BoardSnapshot {
