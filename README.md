@@ -1,20 +1,9 @@
-<p align="center">
-  <img src="assets/wiley-logo.svg" alt="Wiley" width="340" />
-</p>
+![Wiley](assets/wiley-logo.svg)
 
-<p align="center">
-  <b>The cracked coworker at the whiteboard, with a laptop.</b><br/>
-  You talk and sketch. Wiley draws, codes, runs, and ships, live, on the same board.
-</p>
+**The cracked coworker at the whiteboard, with a laptop.**  
+You talk and sketch. Wiley draws, codes, runs, and ships, live, on the same board.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/voice-gpt--realtime--mini--2.1-4C6EF5" alt="voice model" />
-  <img src="https://img.shields.io/badge/agent-Pi%20orchestrator%20%C3%97%20Claude%20Code%20%2F%20Codex-E8590C" alt="agent stack" />
-  <img src="https://img.shields.io/badge/canvas-Excalidraw-2F9E44" alt="canvas" />
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20web-1E1E2E" alt="platform" />
-  <img src="https://img.shields.io/badge/license-Apache--2.0-5F3DC4" alt="license" />
-  <a href="https://github.com/ETM-Code/wiley/actions/workflows/ci.yml"><img src="https://github.com/ETM-Code/wiley/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-</p>
+![voice model](https://img.shields.io/badge/voice-gpt--realtime--mini--2.1-4C6EF5)![agent stack](https://img.shields.io/badge/agent-Pi%20orchestrator%20%C3%97%20Claude%20Code%20%2F%20Codex-E8590C)![canvas](https://img.shields.io/badge/canvas-Excalidraw-2F9E44)![platform](https://img.shields.io/badge/platform-macOS%20%7C%20web-1E1E2E)![license](https://img.shields.io/badge/license-Apache--2.0-5F3DC4)![CI](https://github.com/ETM-Code/wiley/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -22,13 +11,9 @@ Chat windows made AI feel like a ticketing system: type a request, wait, read a 
 
 One voice, one board, real hands.
 
-Said plainly before the pitch: Wiley runs shell commands and edits files in a project folder on your machine, and it holds an open Realtime voice session for as long as it is listening. Both cost you something. Both are guarded, and the guards are described below rather than assumed.
+![A Wiley board: an architecture diagram Wiley drew, a hand-drawn wireframe Wiley labelled, and the screenshot of the website it then built](assets/board.png)
 
-<p align="center">
-  <img src="assets/board.png" alt="A Wiley board: an architecture diagram Wiley drew, a hand-drawn wireframe Wiley labelled, and the screenshot of the website it then built" width="920" />
-</p>
-
-<p align="center"><sub>One unedited board from the automated end-to-end scenario: Wiley drew the architecture diagram, labelled a hand-drawn six-box wireframe without touching the sketch, built the site from it, and pinned the rendered screenshot beside the drawing.</sub></p>
+One unedited board from the automated end-to-end scenario: Wiley drew the architecture diagram, labelled a hand-drawn six-box wireframe without touching the sketch, built the site from it, and pinned the rendered screenshot beside the drawing.
 
 ## What a session feels like
 
@@ -43,39 +28,27 @@ Said plainly before the pitch: Wiley runs shell commands and edits files in a pr
 
 Wiley works out loud. It narrates what it is reading, what it just learned, and what it is about to draw, so the quiet stretches never feel dead. It draws the way a person does: a rough version early, refined as understanding builds, and anything proven wrong gets erased or corrected on the spot. You watch the picture converge instead of waiting for a reveal.
 
-The whole time, you can interrupt mid-sentence. Interruption is the default at every layer: your voice interrupts the orchestrator, the orchestrator interrupts its workers, and everyone verifies what their half-finished action actually did before continuing. Pile on corrections as fast as you can speak them; the delivery lock guarantees none get dropped.
+The whole time, you can interrupt mid-sentence. Interruption is the default at every layer: your voice interrupts the orchestrator, the orchestrator interrupts its workers, and everyone verifies what their half-finished action actually did before continuing. Pile on corrections as fast as you can speak them and the delivery lock guarantees none get dropped.
 
-<p align="center">
-  <img src="assets/site.png" alt="The landing page Wiley designed and built from a hand-drawn wireframe" width="880" />
-</p>
+![The landing page Wiley designed and built from a hand-drawn wireframe](assets/site.png)
 
-<p align="center"><sub>Wiley's own work: the landing page it designed, wrote, screenshotted, and opened, starting from six hand-drawn rectangles. Copy included.</sub></p>
+Wiley's own work: the landing page it designed, wrote, screenshotted, and opened, starting from six hand-drawn rectangles. Copy included.
 
 ## Why this is different
 
 **The board is shared ground truth, not a render target.** Humans and agents edit the same Excalidraw scene through a serialized transaction gateway with revision checks and leases. Human edits win conflicts. The agent can move, resize, recolor, relabel, and connect your hand-drawn elements as first-class citizens, and every mutation lands as a coherent undo step.
 
-**Drawing quality is engineered, not prompted.** Diagram layout runs through ELK with node sizes measured in the actual rendered font, connector ports spread by edge degree, and edge labels placed in reserved space. An eleven-check quality evaluator runs in production on every drawn diagram, twice: once on the plan and again on the converted Excalidraw scene, because bound labels and arrow bindings move during conversion. On the plan, node overlaps, edges through nodes, and containment breaks fail the tool call outright. The conversion pass re-checks overlaps and edges through nodes only, because the editor auto-fits a frame to its children and would report every member as a hair outside it. The rest (label collisions, shared and crowded ports, merged parallel runs, off-grid drift, container intrusion, style incoherence) are reported rather than fatal. A stress suite holds the same line across adversarial graphs, measured against real Excalifont glyph metrics.
+**Drawing quality is engineered, not prompted.** Diagram layout runs through ELK with node sizes measured in the actual rendered font, connector ports spread by edge degree, and edge labels placed in reserved space. An eleven-check quality evaluator runs in production on every drawn diagram, twice: once on the plan and again on the converted Excalidraw scene, because bound labels and arrow bindings move during conversion.
 
 **The picture stays a picture, not a redraw.** Six themes and seven node roles keep a diagram coherent, with label ink auto-chosen for 4.5:1 contrast against whatever it sits on. Nodes group into labelled containers and real Excalidraw frames, nesting up to two levels deep. `update_diagram` evolves a diagram in place: element ids are derived from the graph, so a diff falls out of set arithmetic and survivors tween to their new positions while additions fade in and removals fade out. And `tidy_diagram` straightens **your** sketch without ever replacing it, snapping sizes to the grid, evening out spacing, moving captions onto their shapes, and giving freehand arrows real bindings. Every element keeps its id, its colors, and its text. Only geometry moves.
 
 **The agent has real hands.** Behind the voice sits a persistent [Pi](https://github.com/earendil-works/pi) orchestrator with full read, bash, edit, write, grep, find, and ls tools plus up to four parallel subagent sessions, all sharing the canonical conversation and the board. It codes, tests, screenshots, and opens things on your machine.
 
-**It can also hire.** For heavier code work Wiley drives the CLIs you already have logged in: Claude Code and Codex. Those workers are code-only, with no board access and no way to speak; they take a task, they can be steered mid-run, and they report back. Claude is steered by pushing another message onto the same live session. Codex has no mid-turn channel, so a correction interrupts the turn and resumes the thread with the new instruction. Either one can be handed off to your terminal when you would rather drive it yourself.
+**It can also hire.** For heavier code work Wiley drives the CLIs you already have logged in: Claude Code and Codex. Those workers are code-only, with no board access and no way to speak; they take a task, they can be steered mid-run, and they report back.
 
 **Safety without ceremony.** A hard guard unconditionally blocks catastrophic destruction (home, root, disks, credential stores, fork bombs). Above it, a cheap approval model reviews risky bash, edit, and write calls against your recent spoken requests, fails open, and announces every block out loud so you hear "I stopped myself" in real time. Blocked agents must escalate to you by voice; they are forbidden to retry or work around it.
 
-The two workers get different tiers, and the difference is real:
-
-| | Claude Code worker | Codex worker |
-| --- | --- | --- |
-| Before a call runs | `canUseTool` gating on prompt-worthy calls, plus a `PreToolUse` hook as an unconditional hard floor that sees every call | nothing: Codex exposes no permission callback |
-| Containment | permission mode never escalates to bypass | runs in the CLI's own sandbox, read-only or workspace-write, never full access |
-| After a call runs | nothing needed; it was already gated | a command tripwire checks what already started, against the hard guard and the deny rules only |
-
-So Claude gets prevention, and Codex gets containment plus detection. The tripwire tells you what happened; it cannot stop it happening.
-
-**Your models, your keys.** A settings panel picks the voice model (`gpt-realtime-2.1-mini` by default, `gpt-realtime-2.1` when you want the bigger ears), the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Agent-side models are the `gpt-5.6` family only: the picker offers nothing older, and any other id found in a settings file is normalized forward to the current default rather than kept. Fast mode, on by default, pins the root session to low thinking; turn it off when you want depth over latency. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
+**Your models, your keys.** A settings panel picks the voice model, the voice itself, the orchestrator model, the model background work runs on, and the reviewer model, plus an allowlist naming exactly which models background work may spawn. Your OpenAI key is stored through the OS keychain and never reaches a browser tab.
 
 **One persona.** Voice model, orchestrator, and subagents present as a single coworker. Progress is first-person, at most one short sentence, and never narrates internal machinery.
 
@@ -105,17 +78,19 @@ A word on signing: `package.json` pins the Developer ID identity to the maintain
 
 Optional settings, for the cases the panel does not cover:
 
-| Variable | Effect |
-| --- | --- |
-| `WILEY_PROJECT_DIR` | Project folder the coding tools may edit; overrides the picker and the last project opened |
-| `WILEY_DATA_DIR` | Ledger directory for the project opened at launch; anything opened after it keeps its own `<project>/.wiley` |
-| `WILEY_CONFIG_DIR` | Where `settings.json` and the secret store live |
-| `VOICE_DISABLED=1` | Keeps Realtime offline and shows a text input for harness testing |
-| `WILEY_APPROVAL_MODEL` | Reviewer model for risky tool calls (default `gpt-5.6-luna`; `gpt-5.6` family only) |
-| `WILEY_APPROVAL_DISABLED=1` | Disables the reviewer; the catastrophic guard always stays on |
-| `WILEY_HOST`, `WILEY_PORT`, `WILEY_WEB_PORT` | Browser shell bind address and ports; read the warning above first |
 
-The full list, including the end-to-end and packaging variables, is in [`.env.example`](.env.example).
+| Variable                                     | Effect                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `WILEY_PROJECT_DIR`                          | Project folder the coding tools may edit; overrides the picker and the last project opened                   |
+| `WILEY_DATA_DIR`                             | Ledger directory for the project opened at launch; anything opened after it keeps its own `<project>/.wiley` |
+| `WILEY_CONFIG_DIR`                           | Where `settings.json` and the secret store live                                                              |
+| `VOICE_DISABLED=1`                           | Keeps Realtime offline and shows a text input for harness testing                                            |
+| `WILEY_APPROVAL_MODEL`                       | Reviewer model for risky tool calls (default `gpt-5.6-luna`; `gpt-5.6` family only)                          |
+| `WILEY_APPROVAL_DISABLED=1`                  | Disables the reviewer; the catastrophic guard always stays on                                                |
+| `WILEY_HOST`, `WILEY_PORT`, `WILEY_WEB_PORT` | Browser shell bind address and ports; read the warning above first                                           |
+
+
+The full list, including the end-to-end and packaging variables, is in `[.env.example](.env.example)`.
 
 Everything else is in the settings panel. The persistent controls on the board are the microphone button in the bottom-right, and the project chip, settings and new-session buttons in the top-right. Muting stops capture only; background work continues.
 
@@ -135,21 +110,13 @@ CI runs those first three on every pull request and every push to `main`, then `
 
 Packaging targets, all arm64 DMG in `release/`:
 
-| Command | Result |
-| --- | --- |
-| `npm run package:mac` | Signed with the Developer ID identity pinned in `package.json`, or whatever `CSC_NAME` names |
+
+| Command                         | Result                                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `npm run package:mac`           | Signed with the Developer ID identity pinned in `package.json`, or whatever `CSC_NAME` names             |
 | `npm run package:mac:notarized` | Also submitted to Apple and stapled; needs your own notarytool credentials exported (see `.env.example`) |
-| `npm run package:mac:unsigned` | No signing at all: the one that works on any Mac |
+| `npm run package:mac:unsigned`  | No signing at all: the one that works on any Mac                                                         |
 
-### The scenarios that have to work
-
-```bash
-npm run test:e2e:landing      # full build loop: sketch to shipped site
-npm run test:e2e:interactive  # co-presence: narration, live drawing, corrections, resets
-npm run test:e2e:worker       # a real Claude Code worker: spawn, work, report, exit clean
-```
-
-All three run against real models and a real browser canvas and cost tokens. The landing scenario drives sketch-to-shipped end to end: chat context, architecture diagram, a hand-drawn wireframe injected through the app's own pipeline, label fill-in on the human's boxes, website generation, screenshot placed on the board, and a real `open` of the built page. The interactive scenario verifies the coworker feel: narration while hands are busy, the board growing in visible steps, in-place correction of a wrong diagram without clearing, session-scoped status, and a full new-session reset. The worker scenario delegates one small job to a real Claude Code worker in a throwaway workspace, then checks the file it was asked for exists, its events reached the ledger, it reported completion, and no process it started outlived the run. Artifacts (logs, board JSON, voice feed, screenshots) land in `.e2e/`. Render any run's persisted board with `node scripts/board-shot.mjs <run>/data out.png`. Both screenshots above came straight out of the landing scenario.
 
 ## Runtime boundaries
 
