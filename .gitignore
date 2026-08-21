@@ -19,3 +19,30 @@ site/
 
 # Scratch design files that were never meant to ship with the source
 Plan.*
+
+# --- added by pre-wipe preflight; safe to delete later ---
+.venv/
+venv/
+.venv-dev/
+node_modules/
+__pycache__/
+*.py[cod]
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+target/
+.next/
+.turbo/
+.parcel-cache/
+*.pack
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.bin.zst
+.DS_Store
+# --- end preflight block ---
